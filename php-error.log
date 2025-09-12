@@ -1,0 +1,12 @@
+
+[11-Sep-2025 20:46:35 UTC] Error getting chats: SQLSTATE[HY093]: Invalid parameter number: number of bound variables does not match number of tokens
+[11-Sep-2025 20:46:39 UTC] Error getting chats: SQLSTATE[HY093]: Invalid parameter number: number of bound variables does not match number of tokens
+[11-Sep-2025 20:48:38 UTC] Error getting chats: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'u.name' in 'field list'
+[11-Sep-2025 20:49:23 UTC] Error getting chats: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'u.name' in 'field list'
+[11-Sep-2025 20:50:37 UTC] Error getting chats: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'u.name' in 'field list'
+[11-Sep-2025 20:51:04 UTC] Error getting chats: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'u.name' in 'field list'
+[11-Sep-2025 20:51:13 UTC] Error getting chats: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'u.name' in 'field list'
+[11-Sep-2025 20:51:19 UTC] Error getting chats: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'u.name' in 'field list'
+[11-Sep-2025 20:51:42 UTC] Error getting chats: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'u.name' in 'field list'
+[11-Sep-2025 20:51:49 UTC] Error getting chats: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'u.name' in 'field list'
+[11-Sep-2025 20:52:27 UTC] Error getting chats: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'u.name' in 'field list'

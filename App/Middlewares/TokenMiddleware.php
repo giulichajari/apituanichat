@@ -3,26 +3,63 @@ namespace App\Middlewares;
 
 use App\Models\UsersModel;
 use EasyProjects\SimpleRouter\Router;
+use Firebase\JWT\JWT;
+use Firebase\JWT\Key;
 
-class TokenMiddleware{
+class TokenMiddleware {
+    private string $secret = "TU_SECRET_KEY"; // Ideal mover a .env
+
     public function __construct(
         private ?UsersModel $usersModel = new UsersModel()
     ){}
 
-    public function strict(){
-        //Now you can use the Router class and access to Request and Response with Router::$request And Router::$response like:
-        if(!isset(Router::$request->headers->Authorization)){
-            Router::$response->status(401)->send(array("message" => "You must be logged in to access this resource"));
-        }else{
-            //Here the code to validate token and get user data from token
-            Router::$request->headers->Authorization = $this->usersModel->getUser(1);
+    public function strict() {
+        $authHeader = Router::$request->headers->Authorization ?? null;
+
+        if (!$authHeader || !str_starts_with($authHeader, 'Bearer ')) {
+            Router::$response->status(401)->send([
+                "message" => "Token requerido"
+            ]);
+        }
+
+        $jwt = substr($authHeader, 7); // quitar "Bearer "
+
+        try {
+            // 🔑 Decodificar el JWT
+            $decoded = JWT::decode($jwt, new Key($this->secret, 'HS256'));
+
+           
+            $user = $this->usersModel->getUser($decoded->user_id);
+
+            if (!$user) {
+                Router::$response->status(401)->send([
+                    "message" => "Usuario inválido"
+                ]);
+            }
+
+            // Guardar datos del user en el request para usarlos en el controller
+            Router::$request->user = $user;
+
+        } catch (\Exception $e) {
+            Router::$response->status(401)->send([
+                "message" => "Token inválido o expirado",
+                "error" => $e->getMessage()
+            ]);
         }
     }
 
-    public function optional(){
-        if(isset(Router::$request->headers->Authorization)){
-            //Here the code to validate token and get user data from token
-            Router::$request->headers->Authorization = $this->usersModel->getUser(1);
+    public function optional() {
+        $authHeader = Router::$request->headers->Authorization ?? null;
+
+        if ($authHeader && str_starts_with($authHeader, 'Bearer ')) {
+            $jwt = substr($authHeader, 7);
+
+            try {
+                $decoded = JWT::decode($jwt, new Key($this->secret, 'HS256'));
+                Router::$request->user = $this->usersModel->getUser($decoded->user_id);
+            } catch (\Exception $e) {
+                Router::$request->user = null; // sigue siendo opcional
+            }
         }
     }
 }

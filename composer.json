@@ -1,5 +1,7 @@
 {
     "require": {
-        "easy-projects/simple-router": "^7.4"
+        "easy-projects/simple-router": "^7.4",
+        "firebase/php-jwt": "^6.10",
+        "cboden/ratchet": "^0.4.4"
     }
 }

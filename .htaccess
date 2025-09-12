@@ -1,13 +1,20 @@
-
-<IfModule mime_module>
-    AddType text/css .min.css
-    AddType text/css .css
+<IfModule mod_mime.c>
+    AddType text/css .css .min.css
     AddType application/javascript .js
 </IfModule>
+
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteCond %{REQUEST_FILENAME} !-f
-    RewriteCond %{REQUEST_FILENAME} !-d
-    RewriteRule ^assets/(.*) App/Views/Assets/$1 [L]
+
+    # --- Servir archivos existentes directamente ---
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # --- Redirigir assets específicos (opcional) ---
+    RewriteRule ^assets/(.*)$ App/Views/Assets/$1 [L]
+
+    # --- Resto de rutas pasan a index.php ---
     RewriteRule ^ index.php [QSA,L]
 </IfModule>
+

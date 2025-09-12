@@ -2,98 +2,93 @@
 namespace App\Models;
 
 use App\Configs\Database;
-use stdClass;
+use PDO;
+use PDOException;
 
-class UsersModel{
-    public function __construct(
-        private ?Database $database = new Database(),
-    ){}
+class UsersModel {
+    private PDO $db;
 
-    public function getUsers(int $page): array|bool {
-        try{
-            $usuarios = $this->database->Users();
+    public function __construct() {
+        $this->db = Database::getInstance()->getConnection();
+    }
 
-            $usuarios = array_slice($usuarios, ($page - 1) * 10, 10);
-
-            return $usuarios;
-        }catch(\Exception $e){
+    // Obtener todos los usuarios paginados
+    public function getUsers(int $page, int $perPage = 10): array|bool {
+        try {
+            $offset = ($page - 1) * $perPage;
+            $stmt = $this->db->prepare("SELECT id, name, email FROM users LIMIT :limit OFFSET :offset");
+            $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
+            $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+            $stmt->execute();
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
             return false;
         }
     }
 
-    public function getUser(int $idUser): array|bool {
-        try{
-            $usuarios = $this->database->Users();
-
-            foreach($usuarios as $usuario){
-                if($usuario["id"] == $idUser){
-                    return $usuario;
-                }
-            }
-
-            return array();
-        }catch(\Exception $e){
+    // Obtener un usuario por ID
+    public function getUser(int $id): array|bool {
+        try {
+            $stmt = $this->db->prepare("SELECT id,  email FROM users WHERE id = :id");
+            $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+            $stmt->execute();
+            return $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        } catch (PDOException $e) {
             return false;
         }
     }
 
-    public function addUser(int $id, string $name, string $email, stdClass|array $social): bool{
-        try{
-            $users = $this->database->Users();
-
-            foreach($users as $user){
-                if($user["id"] == $id){
-                    return false;
-
-                    throw new \Exception("The id is already in use");
-                }
-            }
-
-            $newUser = array(
-                "id" => $id,
-                "name" => $name,
-                "email" => $email,
-                "social" => $social
-            );
-
-            array_push($users, $newUser);
-
-            return $this->database->Users($users);
-        }catch(\Exception $e){
-            return false;
-        }
-    }
-        
-    public function updateUser(int $id, string $name, string $email, stdClass|array $social): bool {
-        try{
-            $usuarios = $this->database->Users();
-
-            for ($i=0; $i < count($usuarios); $i++) { 
-                if($usuarios[$i]["id"] == $id){
-                    $usuarios[$i]["name"] = $name;
-                    $usuarios[$i]["email"] = $email;
-                    $usuarios[$i]["social"] = $social;
-
-                    return $this->database->Users($usuarios);
-                }
-            }
-        }catch(\Exception $e){
+    // Crear un usuario
+    public function addUser(string $name, string $email, string $password): bool {
+        try {
+            $stmt = $this->db->prepare("INSERT INTO users (name, email, password) VALUES (:name, :email, :password)");
+            $stmt->bindValue(':name', $name);
+            $stmt->bindValue(':email', $email);
+            $stmt->bindValue(':password', password_hash($password, PASSWORD_DEFAULT));
+            return $stmt->execute();
+        } catch (PDOException $e) {
             return false;
         }
     }
 
-    public function deleteUser(int $id): bool{
-        try{
-            $usuarios = $this->database->Users();
+    // Actualizar usuario
+    public function updateUser(int $id, string $name, string $email): bool {
+        try {
+            $stmt = $this->db->prepare("UPDATE users SET name = :name, email = :email WHERE id = :id");
+            $stmt->bindValue(':name', $name);
+            $stmt->bindValue(':email', $email);
+            $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+            return $stmt->execute();
+        } catch (PDOException $e) {
+            return false;
+        }
+    }
 
-            foreach($usuarios as $key => $usuario){
-                if($usuario["id"] == $id){
-                    unset($usuarios[$key]);
+    // Borrar usuario
+    public function deleteUser(int $id): bool {
+        try {
+            $stmt = $this->db->prepare("DELETE FROM users WHERE id = :id");
+            $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+            return $stmt->execute();
+        } catch (PDOException $e) {
+            return false;
+        }
+    }
 
-                    return $this->database->Users($usuarios);
-                }
+    // Verificar login
+    public function verifyCredentials(string $email, string $password): array|bool {
+        try {
+            $stmt = $this->db->prepare("SELECT * FROM users WHERE email = :email");
+            $stmt->bindValue(':email', $email);
+            $stmt->execute();
+            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+     
+
+            if ($user && password_verify($password, $user['pass'])) {
+                return $user;
             }
-        }catch(\Exception $e){
+            return false;
+        } catch (PDOException $e) {
             return false;
         }
     }

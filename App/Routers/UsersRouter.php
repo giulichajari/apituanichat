@@ -1,43 +1,55 @@
 <?php
+
 namespace App\Routers;
 
 use App\Controllers\UsersController;
 use App\Middlewares\TokenMiddleware;
 use EasyProjects\SimpleRouter\Router;
+use App\Controllers\AuthController;
 
-class UsersRouter{
+class UsersRouter
+{
     public function __construct(
         ?Router $router,
         ?TokenMiddleware $tokenMiddleware = new TokenMiddleware(),
         ?UsersController $usersController = new UsersController(),
-    ){
+        ?AuthController $authController = new AuthController(),
+
+    ) {
 
         //First param, the route
-        $router->get('/users/page/{page}',
+        $router->get(
+            '/users/page/{page}',
             //This is the first Middleware 
-            fn () => $tokenMiddleware->strict(),
+            fn() => $tokenMiddleware->strict(),
             //This is the controller
-            fn () => $usersController->getUsers()
+            fn() => $usersController->getUsers()
         );
 
-        $router->get('/user/{idUser}',
-            fn () => $tokenMiddleware->strict(),
-            fn () => $usersController->getUser()
+        $router->get(
+            '/user/{idUser}',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $usersController->getUser()
         );
 
-        $router->post('/user',
-            fn () => $tokenMiddleware->strict(),
-            fn () => $usersController->addUser()
+        $router->post(
+            '/user',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $usersController->addUser()
         );
 
-        $router->put('/user/{idUser}',
-            fn () => $tokenMiddleware->strict(),
-            fn () => $usersController->updateUser()
+        $router->put(
+            '/user/{idUser}',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $usersController->updateUser()
         );
 
-        $router->delete('/user/{idUser}',
-            fn () => $tokenMiddleware->strict(),
-            fn () => $usersController->deleteUser()
+        $router->delete(
+            '/user/{idUser}',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $usersController->deleteUser()
         );
+        $router->post("/login", fn() => $authController->login());
+        $router->post("/verify-otp", fn() => $authController->verifyOtp());
     }
 }
