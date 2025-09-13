@@ -14,7 +14,8 @@ ini_set('error_log', __DIR__ . '/php-error.log'); // Ruta del log
 error_reporting(E_ALL);
 
 // CORS: permitimos el frontend de React
-$router->cors()->setAllowedOrigins("http://localhost:3000", "localhost");
+//$router->cors()->setAllowedOrigins("http://localhost:3000", "localhost");
+$router->cors()->setAllowedOrigins("http://tuanichat.com", "https://tuanichat.com");
 $router->cors()->setAllowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS");
 $router->cors()->setAllowedHeaders("Content-Type", "Authorization");
 
