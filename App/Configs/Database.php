@@ -12,7 +12,7 @@ class Database {
         $host = "localhost";
         $dbname = "tuanichatbd";
         $user = "root";
-        $pass = "";
+        $pass = "Argentina1991!";
 
         try {
             $this->connection = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8", $user, $pass);
