@@ -6,7 +6,7 @@ use App\Routers\ProfileRouter;
 use App\Routers\SignalRouter; // <--- importar tu router nuevo
 use App\Routers\ChatRouter; // <--- importar tu router nuevo
 use EasyProjects\SimpleRouter\Router;
-
+try{
 $router = new Router();
 ini_set('display_errors', 0);        // No mostrar errores en pantalla
 ini_set('log_errors', 1);            // Guardar errores en log
@@ -15,7 +15,7 @@ error_reporting(E_ALL);
 
 // CORS: permitimos el frontend de React
 //$router->cors()->setAllowedOrigins("http://localhost:3000", "localhost");
-$router->cors()->setAllowedOrigins("http://tuanichat.com", "https://tuanichat.com");
+$router->cors()->setAllowedOrigins("https://www.tuanichat.com", "https://tuanichat.com");
 $router->cors()->setAllowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS");
 $router->cors()->setAllowedHeaders("Content-Type", "Authorization");
 
@@ -34,4 +34,12 @@ new ProfileRouter($router);
 new SignalRouter($router);  // <--- aquí sumamos el signaling
 new ChatRouter($router);
 // Ejecutamos router
-$router->start();
+
+    $router->start();
+} catch (Exception $e) {
+    // Captura cualquier excepción que ocurra
+    echo "Ocurrió un error al iniciar el router: " . $e->getMessage();
+    // Opcional: registrar el error en un log
+    error_log($e->getMessage());
+}
+

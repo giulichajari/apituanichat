@@ -13,69 +13,75 @@ class AuthController
 
   public static function login()
   {
-    $body = Router::$request->body;
-    $email = $body->email ?? null;
-    $password = $body->password ?? null;
 
-    if (!$email || !$password) {
-      Router::$response->json(['error' => 'Email y contraseña requeridos'], 400);
-      return;
-    }
 
-    $usersModel = new UsersModel();
-    $user = $usersModel->verifyCredentials($email, $password);
+      $body = Router::$request->body;
+      $email = $body->email ?? null;
+      $password = $body->password ?? null;
 
-    if (!$user) {
-      Router::$response->json(['error' => 'Credenciales inválidas'], 401);
-      return;
-    }
+      if (!$email || !$password) {
+        Router::$response->json(['error' => 'Email y contraseña requeridos'], 400);
+        return;
+      }
+ 
+      $usersModel = new UsersModel();
+      $user = $usersModel->verifyCredentials($email, $password);
 
-    // 🔹 Generar OTP si querés
-    $otp = rand(100000, 999999);
+      if (!$user) {
+        Router::$response->json(['error' => 'Credenciales inválidas'], 401);
+        return;
+      }
 
-    $db = \App\Configs\Database::getInstance()->getConnection();
-    $stmt = $db->prepare("
+      // 🔹 Generar OTP si querés
+      $otp = rand(100000, 999999);
+
+      $db = \App\Configs\Database::getInstance()->getConnection();
+
+
+
+      $stmt = $db->prepare("
         UPDATE users 
         SET otp = :otp, otp_created_at = NOW() 
         WHERE id = :id
     ");
-    $stmt->bindValue(':otp', $otp);
-    $stmt->bindValue(':id', $user['id']);
-    $stmt->execute();
+      $stmt->bindValue(':otp', $otp);
+      $stmt->bindValue(':id', $user['id']);
+      $stmt->execute();
 
-    // 🔹 Generar JWT
-    $secretKey = "TU_SECRET_KEY"; // debe coincidir con tu TokenMiddleware
-    $payload = [
-      'user_id' => $user['id'],
-      'email' => $user['email'],
-      'iat' => time(),
-      'exp' => time() + 3600 // expira en 1 hora
-    ];
-    $jwt = JWT::encode($payload, $secretKey, 'HS256');
+      // 🔹 Generar JWT
+      $secretKey = "TU_SECRET_KEY"; // debe coincidir con tu TokenMiddleware
+      $payload = [
+        'user_id' => $user['id'],
+        'email' => $user['email'],
+        'iat' => time(),
+        'exp' => time() + 3600 // expira en 1 hora
+      ];
+      $jwt = JWT::encode($payload, $secretKey, 'HS256');
 
-    // 🔹 Guardar el token en DB si querés (opcional, para revocarlo)
-    $expiresAt = date('Y-m-d H:i:s', time() + 3600); // 1 hora desde ahora
-    $createdAt = date('Y-m-d H:i:s');
+      // 🔹 Guardar el token en DB si querés (opcional, para revocarlo)
+      $expiresAt = date('Y-m-d H:i:s', time() + 3600); // 1 hora desde ahora
+      $createdAt = date('Y-m-d H:i:s');
 
-    $stmt = $db->prepare("
+      $stmt = $db->prepare("
     UPDATE user_tokens 
     SET token = :token, created_at = :created_at, expires_at = :expires_at
     WHERE id = :id
 ");
-    $stmt->bindValue(':token', $jwt);
-    $stmt->bindValue(':created_at', $createdAt);
-    $stmt->bindValue(':expires_at', $expiresAt);
-    $stmt->bindValue(':id', $user['id']);
-    $stmt->execute();
+      $stmt->bindValue(':token', $jwt);
+      $stmt->bindValue(':created_at', $createdAt);
+      $stmt->bindValue(':expires_at', $expiresAt);
+      $stmt->bindValue(':id', $user['id']);
+      $stmt->execute();
 
 
-    // 🔹 Devolver token al frontend
-    Router::$response->json([
-      'message' => 'Login exitoso',
-      'token' => $jwt,
-      'otp' => $otp,
-      'user_id' => $user['id']
-    ], 200);
+      // 🔹 Devolver token al frontend
+      Router::$response->json([
+        'message' => 'Login exitoso',
+        'token' => $jwt,
+        'otp' => $otp,
+        'user_id' => $user['id']
+      ], 200);
+    
   }
 
   public static function verifyOtp()

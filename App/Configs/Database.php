@@ -9,17 +9,23 @@ class Database {
     private PDO $connection;
 
     private function __construct() {
-        $host = "localhost";
+        $host = "127.0.0.1";
         $dbname = "tuanichatbd";
-        $user = "root";
+        $user = "random";
         $pass = "Argentina1991!";
-
+ 
         try {
             $this->connection = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8", $user, $pass);
             $this->connection->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         } catch (PDOException $e) {
-            die("Error en la conexión: " . $e->getMessage());
-        }
+    // Guardar en php-error.log
+error_log("DB CONNECTION ERROR: " . $e->getMessage(), 3, "/var/www/apituanichat/php-error.log");
+
+
+
+    // Opcional: responder JSON para APIs
+    header('Content-Type: application/json');  echo json_encode(['error' => $e->getMessage()]); 
+}
     }
 
     public static function getInstance(): Database {
