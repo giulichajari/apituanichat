@@ -15,7 +15,13 @@ error_reporting(E_ALL);
 
 // CORS: permitimos el frontend de React
 //$router->cors()->setAllowedOrigins("http://localhost:3000", "localhost");
+<<<<<<< HEAD
 $router->cors()->setAllowedOrigins("https://www.tuanichat.com", "https://tuanichat.com");
+=======
+$router->cors()->setAllowedOrigins("*");
+
+
+>>>>>>> 7f47dd7b63e977d36ae941def79120a83386e839
 $router->cors()->setAllowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS");
 $router->cors()->setAllowedHeaders("Content-Type", "Authorization");
 

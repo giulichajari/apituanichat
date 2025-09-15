@@ -6,6 +6,7 @@ use Firebase\JWT\JWT;
 use EasyProjects\SimpleRouter\Router;
 use PDO;
 use App\Models\UsersModel;
+use Exception;
 
 class AuthController
 {
@@ -13,6 +14,7 @@ class AuthController
 
   public static function login()
   {
+<<<<<<< HEAD
 
 
       $body = Router::$request->body;
@@ -37,6 +39,31 @@ class AuthController
 
       $db = \App\Configs\Database::getInstance()->getConnection();
 
+=======
+    try {
+      $body = Router::$request->body;
+      $email = $body->email ?? null;
+      $password = $body->password ?? null;
+
+      if (!$email || !$password) {
+        Router::$response->json(['error' => 'Email y contraseña requeridos'], 400);
+        return;
+      }
+ 
+      $usersModel = new UsersModel();
+      $user = $usersModel->verifyCredentials($email, $password);
+
+      if (!$user) {
+        Router::$response->json(['error' => 'Credenciales inválidas'], 401);
+        return;
+      }
+
+      // 🔹 Generar OTP si querés
+      $otp = rand(100000, 999999);
+
+      $db = \App\Configs\Database::getInstance()->getConnection();
+
+>>>>>>> 7f47dd7b63e977d36ae941def79120a83386e839
 
 
       $stmt = $db->prepare("
@@ -81,7 +108,15 @@ class AuthController
         'otp' => $otp,
         'user_id' => $user['id']
       ], 200);
+<<<<<<< HEAD
     
+=======
+    } catch (Exception $e) {
+      error_log("Login SQL ERROR: " . $e->getMessage(), 3, "/var/www/apituanichat/php-error.log");
+      Router::$response->json(['error' => 'Error en base de datos'], 500);
+      return;
+    }
+>>>>>>> 7f47dd7b63e977d36ae941def79120a83386e839
   }
 
   public static function verifyOtp()
