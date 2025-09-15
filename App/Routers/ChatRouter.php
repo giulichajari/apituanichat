@@ -15,14 +15,12 @@ class ChatRouter
     ) {
 
         // Listar todos los chats del usuario logueado
-       $router->get('/chats', function($req, $res){
+   $router->get('/chats', function($req, $res) use ($tokenMiddleware) {
+$user = $tokenMiddleware->strict(); // ahora devuelve el user
+    $userId = $user['id'];
+
     $controller = new \App\Controllers\ChatController();
-    $userId = Router::$request->query->user_id ?? null; // Obtener userId desde query
-    if (!$userId) {
-        Router::$response->status(400)->send(["message" => "Missing user_id"]);
-        return;
-    }
-    $controller->getChatsByUser($userId); // ✅ Método correcto
+    $controller->getChatsByUser($userId);
 });
 
 

@@ -1,35 +1,47 @@
 <?php
+
 namespace App\Configs;
 
 use PDO;
 use PDOException;
 
-class Database {
+class Database
+{
     private static ?Database $instance = null;
     private PDO $connection;
 
-    private function __construct() {
+    private function __construct()
+    {
         $host = "localhost";
         $dbname = "tuanichatbd";
-        $user = "root";
+        $user = "tuanichat";
         $pass = "Argentina1991!";
 
         try {
             $this->connection = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8", $user, $pass);
             $this->connection->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         } catch (PDOException $e) {
-            die("Error en la conexión: " . $e->getMessage());
+            // Guardar en php-error.log
+            error_log("DB CONNECTION ERROR: " . $e->getMessage());
+
+            // Opcional: responder JSON para APIs
+            header('Content-Type: application/json');
+            http_response_code(500);
+            echo json_encode(['error' => 'Error en la conexión a la base de datos']);
+            exit();
         }
     }
 
-    public static function getInstance(): Database {
+    public static function getInstance(): Database
+    {
         if (self::$instance === null) {
             self::$instance = new Database();
         }
         return self::$instance;
     }
 
-    public function getConnection(): PDO {
+    public function getConnection(): PDO
+    {
         return $this->connection;
     }
 }
