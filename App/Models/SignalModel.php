@@ -20,21 +20,34 @@ class SignalModel
      */
     public function addSignal(string $sessionId, string $type, array|string $payload): bool
     {
+        $logFile = __DIR__ . '/ws.log';
+        $payloadToStore = is_array($payload) ? json_encode($payload) : $payload;
+
         try {
             $stmt = $this->db->prepare("
-                INSERT INTO webrtc_signaling (session_id, type, payload)
-                VALUES (:session_id, :type, :payload)
-            ");
-            return $stmt->execute([
+            INSERT INTO webrtc_signaling (session_id, type, payload)
+            VALUES (:session_id, :type, :payload)
+        ");
+
+            // Log de la query y parámetros
+            $logMsg = date('Y-m-d H:i:s') . " | addSignal | SQL params: session_id=$sessionId, type=$type, payload=$payloadToStore\n";
+            file_put_contents($logFile, $logMsg, FILE_APPEND);
+
+            $result = $stmt->execute([
                 ':session_id' => $sessionId,
                 ':type' => $type,
-                ':payload' => is_array($payload) ? json_encode($payload) : $payload
+                ':payload' => $payloadToStore
             ]);
+
+            file_put_contents($logFile, date('Y-m-d H:i:s') . " | addSignal | Execute result: " . ($result ? "success" : "fail") . "\n", FILE_APPEND);
+
+            return $result;
         } catch (PDOException $e) {
-            error_log("Error adding signal: " . $e->getMessage());
+            file_put_contents($logFile, date('Y-m-d H:i:s') . " | addSignal | PDOException: " . $e->getMessage() . "\n", FILE_APPEND);
             return false;
         }
     }
+
 
     /**
      * Obtener la última señal por tipo (offer o answer)
