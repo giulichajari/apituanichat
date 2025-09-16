@@ -1,37 +1,40 @@
 <?php
+
 use Ratchet\MessageComponentInterface;
 use Ratchet\ConnectionInterface;
 
 require __DIR__ . '/vendor/autoload.php';
 
-class SignalServer implements MessageComponentInterface {
+class SignalServer implements MessageComponentInterface
+{
     protected $clients;
     protected $sessions;
 
-    public function __construct() {
+    public function __construct()
+    {
         $this->clients = new \SplObjectStorage();
         $this->sessions = []; // session_id => array of connections
         echo "WebSocket server started on ws://localhost:8080\n";
     }
 
-    public function onOpen(ConnectionInterface $conn) {
+    public function onOpen(ConnectionInterface $conn)
+    {
         $this->clients->attach($conn);
         echo "New connection: {$conn->resourceId}\n";
     }
 
-    public function onMessage(ConnectionInterface $from, $msg) {
+    public function onMessage(ConnectionInterface $from, $msg)
+    {
         $data = json_decode($msg, true);
-        if (!$data || !isset($data['session_id'], $data['type'], $data['payload'])) return;
+        if (!$data || !isset($data['session_id'], $data['type'])) return;
 
         $sessionId = $data['session_id'];
 
-        // Agregar la conexión a la sesión
         if (!isset($this->sessions[$sessionId])) {
             $this->sessions[$sessionId] = new \SplObjectStorage();
         }
         $this->sessions[$sessionId]->attach($from);
 
-        // Enviar a todos los demás en la misma sesión
         foreach ($this->sessions[$sessionId] as $client) {
             if ($client !== $from) {
                 $client->send(json_encode($data));
@@ -39,7 +42,9 @@ class SignalServer implements MessageComponentInterface {
         }
     }
 
-    public function onClose(ConnectionInterface $conn) {
+
+    public function onClose(ConnectionInterface $conn)
+    {
         $this->clients->detach($conn);
         // Eliminar de todas las sesiones
         foreach ($this->sessions as $sessionId => $clients) {
@@ -47,7 +52,8 @@ class SignalServer implements MessageComponentInterface {
         }
     }
 
-    public function onError(ConnectionInterface $conn, \Exception $e) {
+    public function onError(ConnectionInterface $conn, \Exception $e)
+    {
         $conn->close();
     }
 }
