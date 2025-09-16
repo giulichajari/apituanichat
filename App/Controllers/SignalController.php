@@ -12,30 +12,37 @@ class SignalController
     ) {}
 
     // Guardar una oferta (User A inicia llamada)
-    public function addOffer()
-    {
+   public function addOffer() {
+    $sessionId = Router::$request->body->session_id ?? Router::$request->body->chatId;
+    $payload = Router::$request->body->sdp ?? null;
 
-        $sessionId = Router::$request->body->session_id ?? Router::$request->body->chatId;
-        $payload = Router::$request->body->sdp ?? null;
-        error_log("addOffer | sessionId: " . $sessionId);
-        error_log("addOffer | payload: " . json_encode($payload));
+    // Preparar log personalizado
+    $logFile = __DIR__ . '/ws.log';
+    $logMsg = date('Y-m-d H:i:s') . " | addOffer | sessionId: " . $sessionId . " | payload: " . json_encode($payload) . "\n";
+    file_put_contents($logFile, $logMsg, FILE_APPEND);
 
-        if (!$sessionId || !$payload) {
-            Router::$response->status(400)->send(["message" => "Missing session_id or sdp"]);
-            return;
-        }
-
-        // Convertir stdClass a array
-        if (is_object($payload)) {
-            $payload = json_decode(json_encode($payload), true);
-        }
-
-        if ($this->signalModel->addSignal($sessionId, 'offer', $payload)) {
-            Router::$response->status(201)->send(["message" => "Offer stored"]);
-        } else {
-            Router::$response->status(500)->send(["message" => "Error storing offer"]);
-        }
+    if (!$sessionId || !$payload) {
+        $errorLog = date('Y-m-d H:i:s') . " | addOffer | Missing session_id or sdp\n";
+        file_put_contents($logFile, $errorLog, FILE_APPEND);
+        Router::$response->status(400)->send(["message" => "Missing session_id or sdp"]);
+        return;
     }
+
+    // Convertir stdClass a array si hace falta
+    if (is_object($payload)) {
+        $payload = json_decode(json_encode($payload), true);
+    }
+
+    if ($this->signalModel->addSignal($sessionId, 'offer', $payload)) {
+        $successLog = date('Y-m-d H:i:s') . " | addOffer | Offer stored successfully\n";
+        file_put_contents($logFile, $successLog, FILE_APPEND);
+        Router::$response->status(201)->send(["message" => "Offer stored"]);
+    } else {
+        $failLog = date('Y-m-d H:i:s') . " | addOffer | Error storing offer\n";
+        file_put_contents($logFile, $failLog, FILE_APPEND);
+        Router::$response->status(500)->send(["message" => "Error storing offer"]);
+    }
+}
 
     // Obtener oferta (User B recibe)
     public function getOffer()
