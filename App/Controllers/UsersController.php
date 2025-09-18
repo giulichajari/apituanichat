@@ -93,4 +93,99 @@ class UsersController{
             ]);
         }
     }
+     /**
+     * Registro de usuario
+     */
+    public function register() {
+        $name = Router::$request->body->name ?? null;
+        $email = Router::$request->body->email ?? null;
+        $password = Router::$request->body->password ?? null;
+
+        if (!$name || !$email || !$password) {
+            return Router::$response->status(400)->send([
+                "message" => "Missing required fields"
+            ]);
+        }
+
+        // 🔐 Hashear contraseña antes de guardar
+        $hashed = password_hash($password, PASSWORD_BCRYPT);
+
+        $success = $this->usuariosModel->addUser(null, $name, $email, $hashed);
+        if ($success) {
+            Router::$response->status(201)->send([
+                "message" => "User registered successfully"
+            ]);
+        } else {
+            Router::$response->status(500)->send([
+                "message" => "Error registering user"
+            ]);
+        }
+    }
+
+    /**
+     * Recuperar contraseña (envío de enlace al correo)
+     */
+    public function forgotPassword() {
+        $email = Router::$request->body->email ?? null;
+
+        if (!$email) {
+            return Router::$response->status(400)->send([
+                "message" => "Email is required"
+            ]);
+        }
+
+        $user = $this->usuariosModel->getUserByEmail($email);
+        if (!$user) {
+            return Router::$response->status(404)->send([
+                "message" => "User not found"
+            ]);
+        }
+
+        // 🔑 Generar token temporal de reseteo
+        $token = bin2hex(random_bytes(32));
+        $this->usuariosModel->storeResetToken($user["id"], $token);
+
+        // Enviar email (placeholder)
+        // En un proyecto real usarías PHPMailer o similar
+        // mail($email, "Password reset", "Use this token: $token");
+
+        Router::$response->status(200)->send([
+            "message" => "Password reset link sent",
+            "token_dev" => $token // 👈 solo para pruebas
+        ]);
+    }
+
+    /**
+     * Restablecer contraseña con token
+     */
+    public function resetPassword() {
+        $token = Router::$request->body->token ?? null;
+        $newPassword = Router::$request->body->password ?? null;
+
+        if (!$token || !$newPassword) {
+            return Router::$response->status(400)->send([
+                "message" => "Token and new password are required"
+            ]);
+        }
+
+        $userId = $this->usuariosModel->getUserIdByResetToken($token);
+        if (!$userId) {
+            return Router::$response->status(400)->send([
+                "message" => "Invalid or expired token"
+            ]);
+        }
+
+        $hashed = password_hash($newPassword, PASSWORD_BCRYPT);
+        $updated = $this->usuariosModel->updatePassword($userId, $hashed);
+
+        if ($updated) {
+            Router::$response->status(200)->send([
+                "message" => "Password updated successfully"
+            ]);
+        } else {
+            Router::$response->status(500)->send([
+                "message" => "Error updating password"
+            ]);
+        }
+    }
 }
