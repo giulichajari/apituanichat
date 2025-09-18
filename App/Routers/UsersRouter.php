@@ -51,8 +51,19 @@ class UsersRouter
         );
         $router->post("/login", fn() => $authController->login());
         $router->post("/verify-otp", fn() => $authController->verifyOtp());
-        $router->post('/users/register', [UsersController::class, 'register']);
-        $router->post('/users/forgot-password', [UsersController::class, 'forgotPassword']);
-        $router->post('/users/reset-password', [UsersController::class, 'resetPassword']);
+        $router->post('/users/register', function () {
+            $controller = new UsersController();
+            $controller->register();
+        });
+
+        $router->post('/users/forgot-password', function () {
+            $controller = new UsersController();
+            $controller->forgotPassword();
+        });
+
+        $router->post('/users/reset-password', function () {
+            $controller = new UsersController();
+            $controller->resetPassword();
+        });
     }
 }
