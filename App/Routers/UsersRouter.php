@@ -65,5 +65,9 @@ class UsersRouter
             $controller = new UsersController();
             $controller->resetPassword();
         });
+        $router->get('/user/{idUser}/status', function () {
+            $controller = new UsersController();
+            $controller->status();
+        });
     }
 }

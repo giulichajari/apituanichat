@@ -69,6 +69,16 @@ class UsersModel
             return false;
         }
     }
+public function getUserStatus(int $id): array|bool {
+    try {
+        $stmt = $this->db->prepare("SELECT last_seen, is_verified FROM users WHERE id = :id");
+        $stmt->bindValue(':id', $id, \PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    } catch (\PDOException $e) {
+        return false;
+    }
+}
 
     // Actualizar usuario
     public function updateUser(int $id, string $name, string $email, string $phone = ""): bool
