@@ -96,31 +96,50 @@ class UsersController{
      /**
      * Registro de usuario
      */
-    public function register() {
-        $name = Router::$request->body->name ?? null;
-        $email = Router::$request->body->email ?? null;
-        $password = Router::$request->body->password ?? null;
+public function register() {
+    $name = Router::$request->body->name ?? null;
+    $email = Router::$request->body->email ?? null;
+    $password = Router::$request->body->password ?? null;
+    $phone = Router::$request->body->phone ?? null;
 
-        if (!$name || !$email || !$password) {
-            return Router::$response->status(400)->send([
-                "message" => "Missing required fields"
-            ]);
-        }
-
-        // 🔐 Hashear contraseña antes de guardar
-        $hashed = password_hash($password, PASSWORD_BCRYPT);
-
-        $success = $this->usuariosModel->addUser(null, $name, $email, $hashed);
-        if ($success) {
-            Router::$response->status(201)->send([
-                "message" => "User registered successfully"
-            ]);
-        } else {
-            Router::$response->status(500)->send([
-                "message" => "Error registering user"
-            ]);
-        }
+    if (!$name || !$email || !$password || !$phone) {
+        return Router::$response->status(400)->send([
+            "message" => "Missing required fields"
+        ]);
     }
+
+    // 🔎 Verificar si el email o el teléfono ya existen
+    $existingByEmail = $this->usuariosModel->getUserByEmail($email);
+    $existingByPhone = $this->usuariosModel->getUserByPhone($phone); // <-- hay que crear este método
+
+    if ($existingByEmail) {
+        return Router::$response->status(409)->send([
+            "message" => "Email already registered"
+        ]);
+    }
+
+    if ($existingByPhone) {
+        return Router::$response->status(409)->send([
+            "message" => "Phone number already registered"
+        ]);
+    }
+
+    // 🔐 Hashear contraseña antes de guardar
+    $hashed = password_hash($password, PASSWORD_BCRYPT);
+
+    $success = $this->usuariosModel->addUser($name, $email, $hashed, $phone);
+
+    if ($success) {
+        Router::$response->status(201)->send([
+            "message" => "User registered successfully"
+        ]);
+    } else {
+        Router::$response->status(500)->send([
+            "message" => "Error registering user"
+        ]);
+    }
+}
+
 
     /**
      * Recuperar contraseña (envío de enlace al correo)
