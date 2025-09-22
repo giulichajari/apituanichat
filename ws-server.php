@@ -39,6 +39,11 @@ class SignalServer implements MessageComponentInterface
         }
 
         $sessionId = $data['session_id'];
+$ids = [];
+foreach ($this->sessions[$sessionId] as $client) {
+    $ids[] = $client->resourceId;
+}
+file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | Clientes en sesión $sessionId: " . json_encode($ids) . "\n", FILE_APPEND);
 
         // Inicializar sesión si no existe
         if (!isset($this->sessions[$sessionId])) {
@@ -47,11 +52,12 @@ class SignalServer implements MessageComponentInterface
             file_put_contents(__DIR__ . '/ws.log', $sessionLog, FILE_APPEND);
         }
 
-       
+        // Agregar conexión a la sesión solo si no estaba ya
+        if (!$this->sessions[$sessionId]->contains($from)) {
             $this->sessions[$sessionId]->attach($from);
             $attachLog = date('Y-m-d H:i:s') . " | Cliente {$from->resourceId} agregado a sesión $sessionId\n";
             file_put_contents(__DIR__ . '/ws.log', $attachLog, FILE_APPEND);
-      
+        }
 
         // Enviar a otros clientes de la misma sesión
         foreach ($this->sessions[$sessionId] as $client) {
