@@ -39,6 +39,8 @@ class SignalServer implements MessageComponentInterface
         }
 
         $sessionId = $data['session_id'];
+        file_put_contents(__DIR__ . '/ws.log', "DEBUG: sessions: " . json_encode($this->sessions) . "\n", FILE_APPEND);
+
 $ids = [];
 foreach ($this->sessions[$sessionId] as $client) {
     $ids[] = $client->resourceId;
