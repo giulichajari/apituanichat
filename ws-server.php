@@ -18,10 +18,14 @@ class SignalServer implements MessageComponentInterface
     }
 
     public function onOpen(ConnectionInterface $conn)
-    {
-        $this->clients->attach($conn);
-        echo "New connection: {$conn->resourceId}\n";
-    }
+{
+    $this->clients->attach($conn);
+    echo "New connection: {$conn->resourceId}\n";
+
+    // Log en archivo
+    file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | Nueva conexión: {$conn->resourceId}\n", FILE_APPEND);
+}
+
 
     public function onMessage(ConnectionInterface $from, $msg)
     {
