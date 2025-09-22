@@ -14,32 +14,6 @@ class AuthController
 
   public static function login()
   {
-<<<<<<< HEAD
-
-
-      $body = Router::$request->body;
-      $email = $body->email ?? null;
-      $password = $body->password ?? null;
-
-      if (!$email || !$password) {
-        Router::$response->json(['error' => 'Email y contraseña requeridos'], 400);
-        return;
-      }
- 
-      $usersModel = new UsersModel();
-      $user = $usersModel->verifyCredentials($email, $password);
-
-      if (!$user) {
-        Router::$response->json(['error' => 'Credenciales inválidas'], 401);
-        return;
-      }
-
-      // 🔹 Generar OTP si querés
-      $otp = rand(100000, 999999);
-
-      $db = \App\Configs\Database::getInstance()->getConnection();
-
-=======
     try {
       $body = Router::$request->body;
       $email = $body->email ?? null;
@@ -49,7 +23,7 @@ class AuthController
         Router::$response->json(['error' => 'Email y contraseña requeridos'], 400);
         return;
       }
- 
+
       $usersModel = new UsersModel();
       $user = $usersModel->verifyCredentials($email, $password);
 
@@ -63,12 +37,11 @@ class AuthController
 
       $db = \App\Configs\Database::getInstance()->getConnection();
 
->>>>>>> 7f47dd7b63e977d36ae941def79120a83386e839
 
 
       $stmt = $db->prepare("
         UPDATE users 
-        SET otp = :otp, otp_created_at = NOW() 
+        SET otp = :otp, otp_created_at = NOW(), last_seen = NOW(),online=1
         WHERE id = :id
     ");
       $stmt->bindValue(':otp', $otp);
@@ -108,15 +81,11 @@ class AuthController
         'otp' => $otp,
         'user_id' => $user['id']
       ], 200);
-<<<<<<< HEAD
-    
-=======
     } catch (Exception $e) {
       error_log("Login SQL ERROR: " . $e->getMessage(), 3, "/var/www/apituanichat/php-error.log");
       Router::$response->json(['error' => 'Error en base de datos'], 500);
       return;
     }
->>>>>>> 7f47dd7b63e977d36ae941def79120a83386e839
   }
 
   public static function verifyOtp()
@@ -173,5 +142,38 @@ class AuthController
     $stmt->execute();
 
     Router::$response->json(['token' => $jwt], 200);
+  }
+  public static function logout()
+  {
+    try {
+      $body = Router::$request->body;
+      $userId = $body->user_id ?? null;
+
+      if (!$userId) {
+        Router::$response->json(['error' => 'user_id requerido'], 400);
+        return;
+      }
+
+      $db = \App\Configs\Database::getInstance()->getConnection();
+
+      // Marcar offline y actualizar last_seen
+      $stmt = $db->prepare("
+            UPDATE users 
+            SET online = 0, last_seen = NOW() 
+            WHERE id = :id
+        ");
+      $stmt->bindValue(':id', $userId, PDO::PARAM_INT);
+      $stmt->execute();
+
+      // Opcional: invalidar token guardado
+      $stmt = $db->prepare("DELETE FROM user_tokens WHERE id = :id");
+      $stmt->bindValue(':id', $userId, PDO::PARAM_INT);
+      $stmt->execute();
+
+      Router::$response->json(['message' => 'Logout exitoso'], 200);
+    } catch (Exception $e) {
+      error_log("Logout SQL ERROR: " . $e->getMessage(), 3, "/var/www/apituanichat/php-error.log");
+      Router::$response->json(['error' => 'Error en base de datos'], 500);
+    }
   }
 }
