@@ -41,11 +41,19 @@ class SignalServer implements MessageComponentInterface
         $sessionId = $data['session_id'];
         file_put_contents(__DIR__ . '/ws.log', "DEBUG: sessions: " . json_encode($this->sessions) . "\n", FILE_APPEND);
 
-$ids = [];
-foreach ($this->sessions[$sessionId] as $client) {
-    $ids[] = $client->resourceId;
+$sessionId = $data['session_id'];
+
+// Inicializar sesión si no existe
+if (!isset($this->sessions[$sessionId])) {
+    $this->sessions[$sessionId] = new \SplObjectStorage();
+    file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | Sesión $sessionId creada\n", FILE_APPEND);
 }
-file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | Clientes en sesión $sessionId: " . json_encode($ids) . "\n", FILE_APPEND);
+
+// Agregar cliente si no está en la sesión
+if (!$this->sessions[$sessionId]->contains($from)) {
+    $this->sessions[$sessionId]->attach($from);
+    file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | Cliente {$from->resourceId} agregado a sesión $sessionId\n", FILE_APPEND);
+}
 
         // Inicializar sesión si no existe
         if (!isset($this->sessions[$sessionId])) {
