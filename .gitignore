@@ -1,2 +1,17 @@
+# Dependencias de Composer
 /vendor
-composer.lock
+
+# Dependencias de Node
+/node_modules
+
+# Archivos de entorno
+.env
+
+# Logs y temporales
+*.log
+*.cache
+*.tmp
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
