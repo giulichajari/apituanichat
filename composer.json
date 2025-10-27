@@ -2,6 +2,7 @@
     "require": {
         "easy-projects/simple-router": "^7.4",
         "firebase/php-jwt": "^6.10",
-        "cboden/ratchet": "^0.4.4"
+        "cboden/ratchet": "^0.4.4",
+        "vlucas/phpdotenv": "^5.6"
     }
 }

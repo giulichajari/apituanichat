@@ -42,79 +42,102 @@ class ChatModel
             return false;
         }
     }
-
-    /**
-     * Obtener todos los chats de un usuario
-     */
-    public function getChatsByUser(int $userId): array|false
-    {
-        try {
-$stmt = $this->db->prepare("
-    SELECT c.id AS chat_id,
-           u.name AS name,
-           c.created_at
-    FROM chats c
-    JOIN chat_usuarios cu ON cu.chat_id = c.id
-    JOIN users u ON u.id = (
-        SELECT user_id 
-        FROM chat_usuarios 
-        WHERE chat_id = c.id AND user_id != :user_id
-        LIMIT 1
-    )
-    WHERE cu.user_id = :user_id;
-");
-
-$stmt->execute([':user_id' => $userId]);
-
-
-            return $stmt->fetchAll(PDO::FETCH_ASSOC);
-        } catch (PDOException $e) {
-            error_log("Error getting chats: " . $e->getMessage());
-            return false;
-        }
-    }
-
-    /**
-     * Enviar mensaje en un chat
-     */
-    public function sendMessage(int $chatId, int $userId, string $content, string $tipo = 'texto'): int|false
+    // En el método sendMessage del ChatModel
+    public function sendMessage($chatId, $userId, $contenido, $tipo)
     {
         try {
             $stmt = $this->db->prepare("
-                INSERT INTO mensajes (chat_id, user_id, contenido, tipo)
-                VALUES (:chat_id, :user_id, :contenido, :tipo)
-            ");
+            INSERT INTO mensajes (chat_id, user_id, contenido, tipo) 
+            VALUES (:chat_id, :user_id, :contenido, :tipo)
+        ");
             $stmt->execute([
-                ':chat_id'   => $chatId,
-                ':user_id'   => $userId,
-                ':contenido' => $content,
-                ':tipo'      => $tipo
+                ':chat_id' => $chatId,
+                ':user_id' => $userId,
+                ':contenido' => $contenido,
+                ':tipo' => $tipo
             ]);
-            return (int)$this->db->lastInsertId();
+
+            $messageId = $this->db->lastInsertId();
+
+            // Actualizar last_message_at
+            $this->db->prepare("
+            UPDATE chats SET last_message_at = NOW()
+            WHERE id = :chat_id
+        ")->execute([':chat_id' => $chatId]);
+
+            return $messageId;
         } catch (PDOException $e) {
-            error_log("Error sending message: " . $e->getMessage());
-            return false;
+            error_log("Error en sendMessage: " . $e->getMessage());
+            throw $e;
         }
     }
 
-    /**
-     * Obtener mensajes de un chat
-     */
-    public function getMessages(int $chatId): array|false
+    // 📄 Obtener mensajes - CORREGIDO
+    public function getMessages($chatId, $userId = null)
     {
-        try {
-            $stmt = $this->db->prepare("
-                SELECT m.id, m.chat_id, m.user_id, m.contenido, m.tipo, m.enviado_en, u.username
-                FROM mensajes m
-                INNER JOIN users u ON u.id = m.user_id
-                WHERE m.chat_id = :chat_id
-                ORDER BY m.enviado_en ASC
-            ");
-            $stmt->execute([':chat_id' => $chatId]);
-            return $stmt->fetchAll(PDO::FETCH_ASSOC);
-        } catch (PDOException $e) {
-            error_log("Error getting messages: " . $e->getMessage());
-            return false;
-        }
+        $limit = (int)($_GET['limit'] ?? 50);
+        $offset = (int)($_GET['offset'] ?? 0);
+
+        $stmt = $this->db->prepare("
+            SELECT m.*, 
+                   u.name as user_name,
+                   u.email as user_email,
+                   CASE WHEN m.user_id = :user_id THEN 1 ELSE 0 END as is_own
+            FROM mensajes m
+            LEFT JOIN users u ON m.user_id = u.id
+            WHERE m.chat_id = :chat_id
+            ORDER BY m.id ASC
+            LIMIT :limit OFFSET :offset
+        ");
+        $stmt->bindValue(':chat_id', $chatId, PDO::PARAM_INT);
+        $stmt->bindValue(':user_id', $userId, PDO::PARAM_INT);
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+        $stmt->execute();
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    // ✅ Marcar como leído - CORREGIDO
+    public function markAsRead($chatId, $userId)
+    {
+        // Obtener último mensaje
+        $stmt = $this->db->prepare("
+            SELECT id FROM mensajes 
+            WHERE chat_id = :chat_id 
+            ORDER BY id DESC LIMIT 1
+        ");
+        $stmt->execute([':chat_id' => $chatId]);
+        $lastId = $stmt->fetchColumn();
+
+        $stmt = $this->db->prepare("
+            UPDATE chat_usuarios 
+            SET ultimo_no_leido = :ultimo, leido = 1
+            WHERE chat_id = :chat_id AND user_id = :user_id
+        ");
+        $stmt->execute([
+            ':ultimo' => $lastId ?? 0,
+            ':chat_id' => $chatId,
+            ':user_id' => $userId
+        ]);
+
+        return true;
+    }
+
+    // 📬 Listar chats del usuario
+    public function getChatsByUser($userId)
+    {
+        $stmt = $this->db->prepare("
+            SELECT c.*, 
+                   (SELECT contenido FROM mensajes m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) as ultimo_mensaje,
+                   (SELECT enviado_en FROM mensajes m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) as ultimo_mensaje_fecha
+            FROM chats c
+            JOIN chat_usuarios cu ON cu.chat_id = c.id
+            WHERE cu.user_id = :user_id
+            ORDER BY c.last_message_at DESC
+        ");
+        $stmt->execute([':user_id' => $userId]);
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 }

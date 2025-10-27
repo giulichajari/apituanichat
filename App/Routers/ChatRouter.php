@@ -15,18 +15,18 @@ class ChatRouter
     ) {
 
         // Listar todos los chats del usuario logueado
-   $router->get('/chats', function($req, $res) use ($tokenMiddleware) {
-$user = $tokenMiddleware->strict(); // ahora devuelve el user
-    $userId = $user['id'];
+        $router->get('/chats', function ($req, $res) use ($tokenMiddleware) {
+            $user = $tokenMiddleware->strict(); // ahora devuelve el user
+            $userId = $user['id'];
 
-    $controller = new \App\Controllers\ChatController();
-    $controller->getChatsByUser($userId);
-});
+            $controller = new \App\Controllers\ChatController();
+            $controller->getChatsByUser($userId);
+        });
 
 
         // Ver mensajes de un chat
         $router->get(
-            '/chats/{chat_id}/messages',
+            '/messages',
             fn() => $tokenMiddleware->strict(),
             fn() => $chatController->getMessages()
         );
@@ -43,6 +43,12 @@ $user = $tokenMiddleware->strict(); // ahora devuelve el user
             '/chats',
             fn() => $tokenMiddleware->strict(),
             fn() => $chatController->createChat()
+        );
+        // Marcar como leído
+        $router->patch(
+            '/chats/{chat_id}/read',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $chatController->markAsRead()
         );
     }
 }

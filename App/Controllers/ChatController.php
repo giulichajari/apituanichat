@@ -1,17 +1,22 @@
 <?php
+
 namespace App\Controllers;
 
 use App\Models\ChatModel;
 use EasyProjects\SimpleRouter\Router;
 
-class ChatController {
+class ChatController
+{
     public function __construct(
         private ?ChatModel $chatModel = new ChatModel(),
-    ){}
+    ) {}
 
-    // Crear un chat nuevo (1 a 1 o grupal)
-    public function createChat(){
-        $userIds = Router::$request->body->users ?? null; // [1,2] para chat entre 2
+    // ✅ Crear un chat nuevo (1 a 1 o grupal)
+    public function createChat()
+    {
+        $body = Router::$request->body;
+        $userIds = $body->users ?? null;
+
         if (!$userIds || !is_array($userIds)) {
             Router::$response->status(400)->send(["message" => "Missing users"]);
             return;
@@ -29,8 +34,78 @@ class ChatController {
         }
     }
 
-    // Obtener todos los chats de un usuario
-    public function getChatsByUser($userId){
+    // 📨 Enviar mensaje en un chat
+    public function sendMessage()
+    {
+        // ✅ Usuario desde Request (consistente)
+        $user = Router::$request->user;
+        $userId = $user->id ?? null;
+
+        // ✅ Body del request
+        $body = Router::$request->body;
+        $chatId = $body->chat_id ?? null;
+        $contenido = trim($body->contenido ?? '');
+        $tipo = $body->tipo ?? 'texto';
+
+        if (!$chatId || !$contenido || !$userId) {
+            Router::$response->status(400)->send([
+                "message" => "Missing parameters"
+            ]);
+            return;
+        }
+
+        $msgId = $this->chatModel->sendMessage($chatId, $userId, $contenido, $tipo);
+
+        Router::$response->status(201)->send([
+            "message_id" => $msgId,
+            "chat_id" => $chatId,
+            "message" => "Message sent"
+        ]);
+    }
+
+    // 📄 Obtener mensajes de un chat - CORREGIDO
+    public function getMessages()
+    {
+        // ✅ Usar Router::$request de manera consistente
+        $query = Router::$request->query;
+        $chatId = $query->chat_id ?? null;
+
+        if (!$chatId) {
+            Router::$response->status(400)->send(["message" => "Missing chat_id"]);
+            return;
+        }
+
+        // ✅ Obtener userId del usuario autenticado
+        $user = Router::$request->user;
+        $userId = $user->id ?? null;
+
+        if (!$userId) {
+            Router::$response->status(401)->send(["message" => "Usuario no autenticado"]);
+            return;
+        }
+
+        // Traer mensajes desde el modelo
+        $messages = $this->chatModel->getMessages($chatId, $userId);
+
+        Router::$response->status(200)->send([
+            "data" => $messages,
+            "chat_id" => $chatId,
+            "message" => "Messages retrieved"
+        ]);
+    }
+
+    // 📬 Listar chats de un usuario - CORREGIDO
+    public function getChatsByUser()
+    {
+        // ✅ Obtener userId del usuario autenticado
+        $user = Router::$request->user;
+        $userId = $user->id ?? null;
+
+        if (!$userId) {
+            Router::$response->status(401)->send(["message" => "Usuario no autenticado"]);
+            return;
+        }
+
         $chats = $this->chatModel->getChatsByUser($userId);
 
         Router::$response->status(200)->send([
@@ -39,37 +114,26 @@ class ChatController {
         ]);
     }
 
-    // Enviar mensaje en un chat
-    public function sendMessage(){
-        $chatId = Router::$request->body->chat_id ?? null;
-        $userId = Router::$request->body->user_id ?? null;
-        $content = Router::$request->body->contenido ?? null;
-        $tipo = Router::$request->body->tipo ?? 'texto';
+    // ✅ Marcar chat como leído - CORREGIDO
+    public function markAsRead()
+    {
+        // ✅ Usar Router::$request de manera consistente
+        $body = Router::$request->body;
+        $user = Router::$request->user;
 
-        if (!$chatId || !$userId || !$content) {
+        $chatId = $body->chat_id ?? null;
+        $userId = $user->id ?? null;
+
+        if (!$chatId || !$userId) {
             Router::$response->status(400)->send(["message" => "Missing parameters"]);
             return;
         }
 
-        $msgId = $this->chatModel->sendMessage($chatId, $userId, $content, $tipo);
-
-        if ($msgId) {
-            Router::$response->status(201)->send([
-                "message_id" => $msgId,
-                "message" => "Message sent"
-            ]);
-        } else {
-            Router::$response->status(500)->send(["message" => "Error sending message"]);
-        }
-    }
-
-    // Obtener mensajes de un chat
-    public function getMessages($chatId){
-        $messages = $this->chatModel->getMessages($chatId);
+        $result = $this->chatModel->markAsRead($chatId, $userId);
 
         Router::$response->status(200)->send([
-            "data" => $messages,
-            "message" => "Messages retrieved"
+            "chat_id" => $chatId,
+            "message" => "Chat marked as read"
         ]);
     }
 }

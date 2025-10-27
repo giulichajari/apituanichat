@@ -5,7 +5,12 @@ use App\Routers\UsersRouter;
 use App\Routers\ProfileRouter;
 use App\Routers\SignalRouter; // <--- importar tu router nuevo
 use App\Routers\ChatRouter; // <--- importar tu router nuevo
+use App\Routers\DriversRouter;
+use App\Routers\PaymentsRouter;
 use EasyProjects\SimpleRouter\Router;
+
+
+
 
 try {
     $router = new Router();
@@ -15,11 +20,13 @@ try {
     error_reporting(E_ALL);
 
     // CORS: permitimos el frontend de React
-    //$router->cors()->setAllowedOrigins("http://localhost:3000", "localhost");
-
     $router->cors()->setAllowedOrigins("*");
 
-    $router->cors()->setAllowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS");
+
+    //  $router->cors()->setAllowedOrigins("http://localhost:3000");
+
+
+    $router->cors()->setAllowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH");
     $router->cors()->setAllowedHeaders("Content-Type", "Authorization");
 
     // Responder preflight OPTIONS
@@ -36,7 +43,10 @@ try {
     new ProfileRouter($router);
     new SignalRouter($router);  // <--- aquí sumamos el signaling
     new ChatRouter($router);
+    new DriversRouter($router);
+    new PaymentsRouter($router);
     // Ejecutamos router
+    // Cargar variables de entorno desde la raíz del proyecto
 
     $router->start();
 } catch (Exception $e) {

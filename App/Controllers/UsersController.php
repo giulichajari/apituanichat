@@ -3,13 +3,14 @@
 namespace App\Controllers;
 
 use App\Models\UsersModel;
-use App\Models\UsuariosModel;
+use App\Models\DriverModel; 
 use EasyProjects\SimpleRouter\Router;
 
 class UsersController
 {
     public function __construct(
         private ?UsersModel $usuariosModel = new UsersModel(),
+        private ?DriverModel $driverModel = new DriverModel(),
     ) {}
 
     public function getUsers()
@@ -58,7 +59,8 @@ class UsersController
             Router::$request->body->id,
             Router::$request->body->name,
             Router::$request->body->email,
-            Router::$request->body->social
+            Router::$request->body->social,
+            Router::$request->body->rol
         )) {
             Router::$response->status(201)->send([
                 "message" => "The user has been created"
@@ -109,6 +111,7 @@ class UsersController
         $email = Router::$request->body->email ?? null;
         $password = Router::$request->body->password ?? null;
         $phone = Router::$request->body->phone ?? null;
+        $rol = Router::$request->body->role ?? null;
 
         if (!$name || !$email || !$password || !$phone) {
             return Router::$response->status(400)->send([
@@ -118,7 +121,7 @@ class UsersController
 
         // 🔎 Verificar si el email o el teléfono ya existen
         $existingByEmail = $this->usuariosModel->getUserByEmail($email);
-        $existingByPhone = $this->usuariosModel->getUserByPhone($phone); // <-- hay que crear este método
+        $existingByPhone = $this->usuariosModel->getUserByPhone($phone);
 
         if ($existingByEmail) {
             return Router::$response->status(409)->send([
@@ -135,18 +138,28 @@ class UsersController
         // 🔐 Hashear contraseña antes de guardar
         $hashed = password_hash($password, PASSWORD_BCRYPT);
 
-        $success = $this->usuariosModel->addUser($name, $email, $hashed, $phone);
+        // 🔹 Guardar usuario
+        $userId = $this->usuariosModel->addUser($name, $email, $hashed, $phone, $rol);
 
-        if ($success) {
-            Router::$response->status(201)->send([
-                "message" => "User registered successfully"
-            ]);
-        } else {
-            Router::$response->status(500)->send([
+        if (!$userId) {
+            return Router::$response->status(500)->send([
                 "message" => "Error registering user"
             ]);
         }
+
+        // 🧩 Si el rol es driver, crear también un registro vacío en la tabla drivers
+        if ($rol === 'Driver') {
+            $driverModel = new DriverModel();
+            $driverModel->createEmptyProfile($userId); // <-- id retornado de addUser
+        }
+
+
+        return Router::$response->status(201)->send([
+            "message" => "User registered successfully",
+            "user_id" => $userId
+        ]);
     }
+
 
 
     /**

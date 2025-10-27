@@ -7,6 +7,7 @@ use EasyProjects\SimpleRouter\Router;
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
 
+
 class TokenMiddleware
 {
     private string $secret = "TU_SECRET_KEY"; // Ideal mover a .env
@@ -41,10 +42,9 @@ class TokenMiddleware
                     "message" => "Usuario inválido"
                 ]);
             }
+            Router::$request->user = (object)$user;
+
             return $user;
-
-
-
         } catch (\Exception $e) {
             Router::$response->status(401)->send([
                 "message" => "Token inválido o expirado",
