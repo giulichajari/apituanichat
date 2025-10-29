@@ -16,8 +16,8 @@ class Database
         $dbname = "tuanichatbd";
 $user = "tuanichat";
 $pass = "Argentina1991!";
-    //    $user = "root";
-     //    $pass = "";
+        $user = "root";
+         $pass = "";
         try {
             $this->connection = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8", $user, $pass);
             $this->connection->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
@@ -28,7 +28,7 @@ $pass = "Argentina1991!";
             // Opcional: responder JSON para APIs
             header('Content-Type: application/json');
             http_response_code(500);
-            echo json_encode(['error' => $e->getMessage()]);
+            echo json_encode(['error' => 'Error en la conexión a la base de datos']);
             exit();
         }
     }
