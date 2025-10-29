@@ -28,7 +28,7 @@ $pass = "Argentina1991!";
             // Opcional: responder JSON para APIs
             header('Content-Type: application/json');
             http_response_code(500);
-            echo json_encode(['error' => 'Error en la conexión a la base de datos']);
+            echo json_encode(['error' => $e->getMessage()]);
             exit();
         }
     }
