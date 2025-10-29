@@ -12,7 +12,7 @@ class Database
 
     private function __construct()
     {
-        $host = "localhost";
+        $host = "127.0.0.1";
         $dbname = "tuanichatbd";
 $user = "tuanichat";
 $pass = "Argentina1991!";
