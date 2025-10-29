@@ -14,10 +14,10 @@ class Database
     {
         $host = "localhost";
         $dbname = "tuanichatbd";
-        $user = "tuanichat";
-        $pass = "Argentina1991!";
-        //  $user = "root";
-        //  $pass = "";
+//$user = "tuanichat";
+//$pass = "Argentina1991!";
+        $user = "root";
+         $pass = "";
         try {
             $this->connection = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8", $user, $pass);
             $this->connection->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);

@@ -23,7 +23,11 @@ class ChatRouter
             $controller->getChatsByUser($userId);
         });
 
-
+   $router->post(
+            '/chats/{chat_id}/upload',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $chatController->uploadFile()
+        );
         // Ver mensajes de un chat
         $router->get(
             '/messages',

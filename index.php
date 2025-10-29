@@ -1,12 +1,14 @@
 <?php
 require_once __DIR__ . '/vendor/autoload.php';
 
+use App\Models\RestaurantModel;
 use App\Routers\UsersRouter;
 use App\Routers\ProfileRouter;
 use App\Routers\SignalRouter; // <--- importar tu router nuevo
 use App\Routers\ChatRouter; // <--- importar tu router nuevo
 use App\Routers\DriversRouter;
 use App\Routers\PaymentsRouter;
+use App\Routers\RestaurantsRouter;
 use EasyProjects\SimpleRouter\Router;
 
 
@@ -45,6 +47,7 @@ try {
     new ChatRouter($router);
     new DriversRouter($router);
     new PaymentsRouter($router);
+    new RestaurantsRouter($router);
     // Ejecutamos router
     // Cargar variables de entorno desde la raíz del proyecto
 

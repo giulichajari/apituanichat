@@ -80,7 +80,7 @@ class AuthController
         'token' => $jwt,
         'otp' => $otp,
         'user_id' => $user['id'],
-        'role' => $user['rol'] 
+        'rol' => $user['rol'] 
       ], 200);
     } catch (Exception $e) {
       error_log("Login SQL ERROR: " . $e->getMessage(), 3, "/var/www/apituanichat/php-error.log");
