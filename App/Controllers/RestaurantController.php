@@ -69,13 +69,45 @@ class RestaurantController
             $filePath = $uploadDir . $fileName;
 
             // Mover el archivo subido
-            if (!move_uploaded_file($uploadedFile['tmp_name'], $filePath)) {
-                Router::$response->status(500)->json([
-                    'success' => false,
-                    'message' => 'Error al guardar el archivo en el servidor'
-                ]);
-                return;
-            }
+           // Mover el archivo subido con manejo de errores detallado
+try {
+    $result = move_uploaded_file($uploadedFile['tmp_name'], $filePath);
+    
+    if (!$result) {
+        // Obtener último error de PHP
+        $lastError = error_get_last();
+        
+        // Verificar permisos y existencia
+        $checks = [
+            'tmp_exists' => file_exists($uploadedFile['tmp_name']),
+            'tmp_readable' => is_readable($uploadedFile['tmp_name']),
+            'dir_exists' => is_dir($uploadDir),
+            'dir_writable' => is_writable($uploadDir),
+            'disk_space' => disk_free_space($uploadDir)
+        ];
+        
+        error_log("move_uploaded_file failed - Checks: " . print_r($checks, true));
+        error_log("Last error: " . print_r($lastError, true));
+        
+        throw new Exception(
+            "No se pudo mover el archivo. " . 
+            ($lastError ? $lastError['message'] : 'Error desconocido')
+        );
+    }
+    
+} catch (\Exception $e) {
+    Router::$response->status(500)->json([
+        'success' => false,
+        'message' => 'Error al guardar el archivo en el servidor',
+        'error' => $e->getMessage(),
+        'debug_info' => [
+            'tmp_file' => $uploadedFile['tmp_name'],
+            'destination' => $filePath,
+            'file_size' => $uploadedFile['size']
+        ]
+    ]);
+    return;
+}
 
             // URL accesible del archivo
             $baseUrl = $this->getBaseUrl();
