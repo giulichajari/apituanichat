@@ -22,7 +22,7 @@ class RestaurantsRouter
             fn() => $restaurantController->getRestaurantsByOwner()
         );
   $router->post(
-            '/upload',
+            '/restaurants/upload',
             fn() => $tokenMiddleware->strict(),
             fn() => $restaurantController->uploadFile()
         );
