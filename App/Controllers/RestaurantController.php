@@ -5,7 +5,7 @@ namespace App\Controllers;
 use App\Models\RestaurantModel;
 use App\Models\DishModel;
 use EasyProjects\SimpleRouter\Router;
-
+use Exception;
 class RestaurantController
 {
     private RestaurantModel $restaurantModel;
