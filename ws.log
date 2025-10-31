@@ -1,0 +1,128 @@
+2025-10-31 10:13:07 | Nueva conexión: 49
+2025-10-31 10:13:07 | Nueva conexión: 81
+2025-10-31 10:13:07 | Mensaje recibido (raw): {"type":"auth","user_id":"2","token":"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoyLCJlbWFpbCI6ImFkbWluMkBhZG1pbjIiLCJpYXQiOjE3NjE5MDQ0MjcsImV4cCI6MTc2MTkwODAyN30.PRVR9rVFHxdoEPCiiz_3TdKBIQiRgYHw5HgWPLPC84Y"}
+2025-10-31 10:13:07 | Usuario 2 autenticado en conexión 49
+2025-10-31 10:13:07 | Mensaje recibido (raw): {"type":"auth","user_id":"21","token":"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoyMSwiZW1haWwiOiJjYXJ1QGFkbWluMjM2MyIsImlhdCI6MTc2MTkwNDQ3MywiZXhwIjoxNzYxOTA4MDczfQ.WLtJNmaFF2Mo5Finmh2fLRwY87QLwY_24xBF7aCj2EE"}
+2025-10-31 10:13:07 | Usuario 21 autenticado en conexión 81
+2025-10-31 10:13:07 | Conexión 49 cerrada
+2025-10-31 10:13:08 | Nueva conexión: 92
+2025-10-31 10:13:08 | Mensaje recibido (raw): {"type":"auth","user_id":"2","token":"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoyLCJlbWFpbCI6ImFkbWluMkBhZG1pbjIiLCJpYXQiOjE3NjE5MDQ0MjcsImV4cCI6MTc2MTkwODAyN30.PRVR9rVFHxdoEPCiiz_3TdKBIQiRgYHw5HgWPLPC84Y"}
+2025-10-31 10:13:08 | Usuario 2 autenticado en conexión 92
+2025-10-31 10:13:11 | Conexión 81 cerrada
+2025-10-31 10:13:13 | Nueva conexión: 99
+2025-10-31 10:13:13 | Mensaje recibido (raw): {"type":"auth","user_id":"21","token":"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoyMSwiZW1haWwiOiJjYXJ1QGFkbWluMjM2MyIsImlhdCI6MTc2MTkwNDQ3MywiZXhwIjoxNzYxOTA4MDczfQ.WLtJNmaFF2Mo5Finmh2fLRwY87QLwY_24xBF7aCj2EE"}
+2025-10-31 10:13:13 | Usuario 21 autenticado en conexión 99
+2025-10-31 10:13:13 | Mensaje recibido (raw): {"type":"join_chat","chat_id":4,"user_id":"21"}
+2025-10-31 10:13:13 | Sesión de chat 4 creada
+2025-10-31 10:13:13 | Cliente 99 (usuario 21) agregado al chat 4
+2025-10-31 10:13:13 | Chat 4 con 1 cliente(s): 99(user:21)
+2025-10-31 10:13:23 | Mensaje recibido (raw): {"type":"join_chat","chat_id":4,"user_id":"2"}
+2025-10-31 10:13:23 | Cliente 92 (usuario 2) agregado al chat 4
+2025-10-31 10:13:23 | Chat 4 con 2 cliente(s): 99(user:21), 92(user:2)
+2025-10-31 10:16:55 | Cliente 92 removido del chat 4
+2025-10-31 10:16:55 | Conexión 92 cerrada
+2025-10-31 10:16:56 | Nueva conexión: 114
+2025-10-31 10:16:56 | Mensaje recibido (raw): {"type":"auth","user_id":"2","token":"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoyLCJlbWFpbCI6ImFkbWluMkBhZG1pbjIiLCJpYXQiOjE3NjE5MDQ0MjcsImV4cCI6MTc2MTkwODAyN30.PRVR9rVFHxdoEPCiiz_3TdKBIQiRgYHw5HgWPLPC84Y"}
+2025-10-31 10:16:56 | Usuario 2 autenticado en conexión 114
+2025-10-31 10:16:57 | Mensaje recibido (raw): {"type":"join_chat","chat_id":4,"user_id":"2"}
+2025-10-31 10:16:57 | Cliente 114 (usuario 2) agregado al chat 4
+2025-10-31 10:16:57 | Chat 4 con 2 cliente(s): 99(user:21), 114(user:2)
+2025-10-31 10:21:27 | Cliente 114 removido del chat 4
+2025-10-31 10:21:27 | Conexión 114 cerrada
+2025-10-31 10:21:28 | Nueva conexión: 125
+2025-10-31 10:21:28 | Mensaje recibido (raw): {"type":"auth","user_id":"2","token":"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoyLCJlbWFpbCI6ImFkbWluMkBhZG1pbjIiLCJpYXQiOjE3NjE5MDQ0MjcsImV4cCI6MTc2MTkwODAyN30.PRVR9rVFHxdoEPCiiz_3TdKBIQiRgYHw5HgWPLPC84Y"}
+2025-10-31 10:21:28 | Usuario 2 autenticado en conexión 125
+2025-10-31 10:21:29 | Mensaje recibido (raw): {"type":"join_chat","chat_id":4,"user_id":"2"}
+2025-10-31 10:21:29 | Cliente 125 (usuario 2) agregado al chat 4
+2025-10-31 10:21:29 | Chat 4 con 2 cliente(s): 99(user:21), 125(user:2)
+2025-10-31 10:21:36 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"2","contenido":"pp","tipo":"texto","timestamp":"2025-10-31T10:21:36.917Z","temp_id":"temp_1761906096917"}
+2025-10-31 10:21:36 | Mensaje de 2 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:21:46 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"21","contenido":"ff","tipo":"texto","timestamp":"2025-10-31T10:21:46.618Z","temp_id":"temp_1761906106618"}
+2025-10-31 10:21:46 | Mensaje de 21 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:21:52 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"2","contenido":"gg","tipo":"texto","timestamp":"2025-10-31T10:21:52.811Z","temp_id":"temp_1761906112811"}
+2025-10-31 10:21:52 | Mensaje de 2 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:22:02 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"2","contenido":"dfgserye","tipo":"texto","timestamp":"2025-10-31T10:22:02.786Z","temp_id":"temp_1761906122786"}
+2025-10-31 10:22:02 | Mensaje de 2 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:22:08 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"21","contenido":"ghsd","tipo":"texto","timestamp":"2025-10-31T10:22:08.023Z","temp_id":"temp_1761906128022"}
+2025-10-31 10:22:08 | Mensaje de 21 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:22:14 | Cliente 125 removido del chat 4
+2025-10-31 10:22:14 | Conexión 125 cerrada
+2025-10-31 10:22:15 | Nueva conexión: 146
+2025-10-31 10:22:16 | Mensaje recibido (raw): {"type":"auth","user_id":"2","token":"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoyLCJlbWFpbCI6ImFkbWluMkBhZG1pbjIiLCJpYXQiOjE3NjE5MDQ0MjcsImV4cCI6MTc2MTkwODAyN30.PRVR9rVFHxdoEPCiiz_3TdKBIQiRgYHw5HgWPLPC84Y"}
+2025-10-31 10:22:16 | Usuario 2 autenticado en conexión 146
+2025-10-31 10:22:17 | Mensaje recibido (raw): {"type":"join_chat","chat_id":4,"user_id":"2"}
+2025-10-31 10:22:17 | Cliente 146 (usuario 2) agregado al chat 4
+2025-10-31 10:22:17 | Chat 4 con 2 cliente(s): 99(user:21), 146(user:2)
+2025-10-31 10:22:22 | Cliente 99 removido del chat 4
+2025-10-31 10:22:22 | Conexión 99 cerrada
+2025-10-31 10:22:22 | Nueva conexión: 157
+2025-10-31 10:22:22 | Mensaje recibido (raw): {"type":"auth","user_id":"21","token":"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoyMSwiZW1haWwiOiJjYXJ1QGFkbWluMjM2MyIsImlhdCI6MTc2MTkwNDQ3MywiZXhwIjoxNzYxOTA4MDczfQ.WLtJNmaFF2Mo5Finmh2fLRwY87QLwY_24xBF7aCj2EE"}
+2025-10-31 10:22:22 | Usuario 21 autenticado en conexión 157
+2025-10-31 10:22:23 | Mensaje recibido (raw): {"type":"join_chat","chat_id":4,"user_id":"21"}
+2025-10-31 10:22:23 | Cliente 157 (usuario 21) agregado al chat 4
+2025-10-31 10:22:23 | Chat 4 con 2 cliente(s): 146(user:2), 157(user:21)
+2025-10-31 10:22:28 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"21","contenido":"holas","tipo":"texto","timestamp":"2025-10-31T10:22:28.255Z","temp_id":"temp_1761906148255"}
+2025-10-31 10:22:28 | Mensaje de 21 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:22:35 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"2","contenido":"como va","tipo":"texto","timestamp":"2025-10-31T10:22:35.154Z","temp_id":"temp_1761906155153"}
+2025-10-31 10:22:35 | Mensaje de 2 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:22:40 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"21","contenido":"bnbn","tipo":"texto","timestamp":"2025-10-31T10:22:40.103Z","temp_id":"temp_1761906160103"}
+2025-10-31 10:22:40 | Mensaje de 21 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:22:55 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"21","contenido":"nn","tipo":"texto","timestamp":"2025-10-31T10:22:55.562Z","temp_id":"temp_1761906175562"}
+2025-10-31 10:22:55 | Mensaje de 21 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:23:02 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"2","contenido":"ff","tipo":"texto","timestamp":"2025-10-31T10:23:02.469Z","temp_id":"temp_1761906182469"}
+2025-10-31 10:23:02 | Mensaje de 2 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:23:07 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"21","contenido":"gg","tipo":"texto","timestamp":"2025-10-31T10:23:07.986Z","temp_id":"temp_1761906187986"}
+2025-10-31 10:23:07 | Mensaje de 21 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:23:31 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"21","contenido":"ll","tipo":"texto","timestamp":"2025-10-31T10:23:31.344Z","temp_id":"temp_1761906211344"}
+2025-10-31 10:23:31 | Mensaje de 21 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:23:37 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"2","contenido":"asd","tipo":"texto","timestamp":"2025-10-31T10:23:37.172Z","temp_id":"temp_1761906217172"}
+2025-10-31 10:23:37 | Mensaje de 2 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:23:46 | Cliente 157 removido del chat 4
+2025-10-31 10:23:46 | Conexión 157 cerrada
+2025-10-31 10:23:46 | Nueva conexión: 184
+2025-10-31 10:23:46 | Mensaje recibido (raw): {"type":"auth","user_id":"21","token":"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoyMSwiZW1haWwiOiJjYXJ1QGFkbWluMjM2MyIsImlhdCI6MTc2MTkwNDQ3MywiZXhwIjoxNzYxOTA4MDczfQ.WLtJNmaFF2Mo5Finmh2fLRwY87QLwY_24xBF7aCj2EE"}
+2025-10-31 10:23:46 | Usuario 21 autenticado en conexión 184
+2025-10-31 10:23:47 | Mensaje recibido (raw): {"type":"join_chat","chat_id":4,"user_id":"21"}
+2025-10-31 10:23:47 | Cliente 184 (usuario 21) agregado al chat 4
+2025-10-31 10:23:47 | Chat 4 con 2 cliente(s): 146(user:2), 184(user:21)
+2025-10-31 10:23:53 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"21","contenido":"gg","tipo":"texto","timestamp":"2025-10-31T10:23:53.364Z","temp_id":"temp_1761906233364"}
+2025-10-31 10:23:53 | Mensaje de 21 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:23:58 | Cliente 146 removido del chat 4
+2025-10-31 10:23:58 | Conexión 146 cerrada
+2025-10-31 10:23:58 | Nueva conexión: 197
+2025-10-31 10:24:00 | Mensaje recibido (raw): {"type":"auth","user_id":"2","token":"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoyLCJlbWFpbCI6ImFkbWluMkBhZG1pbjIiLCJpYXQiOjE3NjE5MDQ0MjcsImV4cCI6MTc2MTkwODAyN30.PRVR9rVFHxdoEPCiiz_3TdKBIQiRgYHw5HgWPLPC84Y"}
+2025-10-31 10:24:00 | Usuario 2 autenticado en conexión 197
+2025-10-31 10:24:01 | Mensaje recibido (raw): {"type":"join_chat","chat_id":4,"user_id":"2"}
+2025-10-31 10:24:01 | Cliente 197 (usuario 2) agregado al chat 4
+2025-10-31 10:24:01 | Chat 4 con 2 cliente(s): 184(user:21), 197(user:2)
+2025-10-31 10:24:04 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"2","contenido":"jko","tipo":"texto","timestamp":"2025-10-31T10:24:04.603Z","temp_id":"temp_1761906244602"}
+2025-10-31 10:24:04 | Mensaje de 2 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:24:15 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"21","contenido":"lpo","tipo":"texto","timestamp":"2025-10-31T10:24:15.873Z","temp_id":"temp_1761906255873"}
+2025-10-31 10:24:15 | Mensaje de 21 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:24:29 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"2","contenido":"fghrdsgh","tipo":"texto","timestamp":"2025-10-31T10:24:29.568Z","temp_id":"temp_1761906269567"}
+2025-10-31 10:24:29 | Mensaje de 2 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:25:12 | Cliente 197 removido del chat 4
+2025-10-31 10:25:12 | Conexión 197 cerrada
+2025-10-31 10:25:12 | Nueva conexión: 214
+2025-10-31 10:25:13 | Mensaje recibido (raw): {"type":"auth","user_id":"2","token":"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoyLCJlbWFpbCI6ImFkbWluMkBhZG1pbjIiLCJpYXQiOjE3NjE5MDQ0MjcsImV4cCI6MTc2MTkwODAyN30.PRVR9rVFHxdoEPCiiz_3TdKBIQiRgYHw5HgWPLPC84Y"}
+2025-10-31 10:25:13 | Usuario 2 autenticado en conexión 214
+2025-10-31 10:25:14 | Mensaje recibido (raw): {"type":"join_chat","chat_id":4,"user_id":"2"}
+2025-10-31 10:25:14 | Cliente 214 (usuario 2) agregado al chat 4
+2025-10-31 10:25:14 | Chat 4 con 2 cliente(s): 184(user:21), 214(user:2)
+2025-10-31 10:25:46 | Cliente 184 removido del chat 4
+2025-10-31 10:25:46 | Conexión 184 cerrada
+2025-10-31 10:25:46 | Nueva conexión: 225
+2025-10-31 10:25:46 | Mensaje recibido (raw): {"type":"auth","user_id":"21","token":"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoyMSwiZW1haWwiOiJjYXJ1QGFkbWluMjM2MyIsImlhdCI6MTc2MTkwNDQ3MywiZXhwIjoxNzYxOTA4MDczfQ.WLtJNmaFF2Mo5Finmh2fLRwY87QLwY_24xBF7aCj2EE"}
+2025-10-31 10:25:46 | Usuario 21 autenticado en conexión 225
+2025-10-31 10:25:48 | Mensaje recibido (raw): {"type":"join_chat","chat_id":4,"user_id":"21"}
+2025-10-31 10:25:48 | Cliente 225 (usuario 21) agregado al chat 4
+2025-10-31 10:25:48 | Chat 4 con 2 cliente(s): 214(user:2), 225(user:21)
+2025-10-31 10:29:56 | Mensaje recibido (raw): {"type":"chat_message","chat_id":4,"user_id":"2","contenido":"pp","tipo":"texto","timestamp":"2025-10-31T10:29:56.845Z","temp_id":"temp_1761906596845"}
+2025-10-31 10:29:56 | Mensaje de 2 en chat 4 enviado a 1 cliente(s)
+2025-10-31 10:30:12 | Mensaje recibido (raw): {"type":"join_chat","chat_id":4,"user_id":"2"}
+2025-10-31 10:30:12 | Chat 4 con 2 cliente(s): 214(user:2), 225(user:21)
+2025-10-31 10:32:16 | Cliente 225 removido del chat 4
+2025-10-31 10:32:16 | Conexión 225 cerrada
+2025-10-31 10:32:16 | Cliente 214 removido del chat 4
+2025-10-31 10:32:16 | Sesión de chat 4 eliminada (sin clientes)
+2025-10-31 10:32:16 | Conexión 214 cerrada

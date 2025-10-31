@@ -1,6 +1,7 @@
 <?php
 
 namespace App\Services;
+
 use App\Models\ChatModel;
 
 class FileUploadService
@@ -77,21 +78,26 @@ class FileUploadService
                 ];
             }
 
-            // Crear mensaje en la base de datos
+            // ✅ CORREGIDO: Crear MENSAJE en la base de datos, no un chat
             $messageData = [
-                'contenido' => $file['name'],
+                'contenido' => $file['name'], // Nombre original del archivo
                 'tipo' => strpos($file['type'], 'image/') === 0 ? 'image' : 'file',
                 'chat_id' => $chatId,
                 'user_id' => $userId,
-                'file_name' => $file['name'],
+                'file_name' => $file['name'], // Nombre original
                 'file_size' => $file['size'],
                 'file_type' => $file['type'],
-                'file_path' => $filePath
+                'file_path' => $filePath // Ruta donde se guardó
             ];
 
-            
-        $chatModel = new ChatModel();
-$messageId= $chatModel->createChat($messageData);
+            $chatModel = new ChatModel();
+
+            // ✅ CORREGIDO: Usar el método correcto para crear mensajes
+            // Asumo que tienes un método como addMessage o createMessage
+            $messageId = $chatModel->addMessage($messageData);
+
+            // Si no tienes ese método, necesitarás crearlo en tu ChatModel
+
             // URL accesible (ajustar según tu configuración)
             $fileUrl = '/uploads/chats/' . $chatId . '/' . $fileName;
 
@@ -102,7 +108,6 @@ $messageId= $chatModel->createChat($messageData);
                 'file_url' => $fileUrl,
                 'message_id' => $messageId
             ];
-
         } catch (\Exception $e) {
             return [
                 'success' => false,
@@ -144,7 +149,7 @@ $messageId= $chatModel->createChat($messageData);
         // Verificaciones básicas de seguridad
         $blacklistedExtensions = ['php', 'exe', 'js', 'html', 'htm'];
         $fileExtension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-        
+
         if (in_array($fileExtension, $blacklistedExtensions)) {
             return false;
         }

@@ -15,9 +15,32 @@ class ChatModel
         $this->db = Database::getInstance()->getConnection();
     }
 
-    /**
-     * Crear un chat nuevo y asociar usuarios
-     */
+    // En tu ChatModel.php
+    public function addMessage($messageData)
+    {
+        try {
+            $stmt = $this->db->prepare("
+            INSERT INTO mensajes (chat_id, user_id, contenido, tipo, file_name, file_size, file_type, file_path, enviado_en) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        ");
+
+            $stmt->execute([
+                $messageData['chat_id'],
+                $messageData['user_id'],
+                $messageData['contenido'],
+                $messageData['tipo'],
+                $messageData['file_name'] ?? null,
+                $messageData['file_size'] ?? null,
+                $messageData['file_type'] ?? null,
+                $messageData['file_path'] ?? null
+            ]);
+
+            return $this->db->lastInsertId();
+        } catch (\Exception $e) {
+            error_log("Error al crear mensaje: " . $e->getMessage());
+            return false;
+        }
+    }
     public function createChat(array $userIds): int|false
     {
         try {

@@ -29,11 +29,11 @@ class SignalServer implements MessageComponentInterface
     public function onMessage(ConnectionInterface $from, $msg)
     {
         file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | Mensaje recibido (raw): " . $msg . "\n", FILE_APPEND);
-        
+
         try {
             // 🔹 PRIMERO validar y decodificar el mensaje
             $data = json_decode($msg, true);
-            
+
             // 🔹 VERIFICAR si el JSON es válido
             if (!$data || !is_array($data)) {
                 file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | ERROR: JSON inválido\n", FILE_APPEND);
@@ -47,37 +47,133 @@ class SignalServer implements MessageComponentInterface
             }
 
             // 🔹 Manejar diferentes tipos de mensajes
+            // En el switch de onMessage, agrega:
             switch ($data['type']) {
                 case 'auth':
                     $this->handleAuth($from, $data);
                     break;
-                    
+
                 case 'join_chat':
                     $this->handleJoinChat($from, $data);
                     break;
-                    
+
                 case 'chat_message':
                     $this->handleChatMessage($from, $data);
                     break;
-                    
+
+                // ✅ AGREGAR ESTOS CASOS PARA ARCHIVOS
+                case 'image':
+                case 'file':
+                    $this->handleFileUpload($from, $data);
+                    break;
+
                 case 'ride_request':
                     $this->handleRideRequest($from, $data);
                     break;
-                    
+
                 case 'ride_accepted':
                     $this->handleRideAccepted($from, $data);
                     break;
-                    
+
                 default:
                     file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | Tipo de mensaje desconocido: {$data['type']}\n", FILE_APPEND);
                     break;
             }
-
         } catch (\Exception $e) {
             file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | ERROR procesando mensaje: " . $e->getMessage() . "\n", FILE_APPEND);
         }
     }
+    // 🔹 En SignalServer.php - Agrega este método
+    private function handleFileUpload(ConnectionInterface $from, $data)
+    {
+        if (!isset($data['chat_id'], $data['user_id'], $data['file_url'], $data['file_name'])) {
+            file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | ERROR: Datos de archivo incompletos\n", FILE_APPEND);
+            return;
+        }
 
+        $chatId = $data['chat_id'];
+        $userId = $data['user_id'];
+        $fileUrl = $data['file_url'];
+        $fileName = $data['file_name'];
+        $fileSize = $data['file_size'] ?? 0;
+        $fileType = $data['file_type'] ?? 'application/octet-stream';
+
+        // Determinar el tipo de mensaje
+        $tipo = strpos($fileType, 'image/') === 0 ? 'image' : 'file';
+
+        // Crear contenido para el mensaje
+        $contenido = $tipo === 'image' ? '📷 Imagen' : "📄 {$fileName}";
+
+        // ✅ GUARDAR EN LA BASE DE DATOS
+        $messageId = $this->saveFileMessageToDB($chatId, $userId, $contenido, $tipo, $fileName, $fileSize, $fileType, $fileUrl);
+
+        if (!$messageId) {
+            file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | ❌ ERROR: No se pudo guardar el archivo en BD\n", FILE_APPEND);
+            return;
+        }
+
+        // ✅ ACTUALIZAR EL CHAT
+        $this->updateChatLastMessage($chatId, $contenido);
+
+        // ✅ PREPARAR MENSAJE PARA BROADCAST
+        $messageData = [
+            'type' => 'new_message',
+            'id' => $messageId,
+            'chat_id' => $chatId,
+            'user_id' => $userId,
+            'contenido' => $contenido,
+            'tipo' => $tipo,
+            'timestamp' => date('c'),
+            'file_data' => [
+                'url' => $fileUrl,
+                'name' => $fileName,
+                'size' => $fileSize,
+                'type' => $fileType
+            ]
+        ];
+
+        // ✅ ENVIAR A TODOS LOS CLIENTES EN EL CHAT
+        if (!isset($this->sessions[$chatId])) {
+            $this->sessions[$chatId] = new \SplObjectStorage();
+        }
+
+        $sentCount = 0;
+        foreach ($this->sessions[$chatId] as $client) {
+            try {
+                $client->send(json_encode($messageData));
+                $sentCount++;
+            } catch (Exception $e) {
+                file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | ❌ Error enviando archivo: " . $e->getMessage() . "\n", FILE_APPEND);
+            }
+        }
+
+        file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | ✅ Archivo {$fileName} guardado como mensaje {$messageId} y enviado a {$sentCount} cliente(s)\n", FILE_APPEND);
+    }
+
+    // 🔹 Método para guardar archivos en la BD
+    private function saveFileMessageToDB($chatId, $userId, $contenido, $tipo, $fileName, $fileSize, $fileType, $fileUrl)
+    {
+        try {
+            if (!$this->db) {
+                throw new Exception("No hay conexión a la BD");
+            }
+
+            $stmt = $this->db->prepare("
+            INSERT INTO mensajes (chat_id, user_id, contenido, tipo, file_name, file_size, file_type, file_url, enviado_en) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        ");
+
+            $stmt->execute([$chatId, $userId, $contenido, $tipo, $fileName, $fileSize, $fileType, $fileUrl]);
+            $messageId = $this->db->lastInsertId();
+
+            file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | 💾 Archivo guardado en BD - ID: {$messageId}, Tipo: {$tipo}, Archivo: {$fileName}\n", FILE_APPEND);
+
+            return $messageId;
+        } catch (Exception $e) {
+            file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | ERROR guardando archivo en BD: " . $e->getMessage() . "\n", FILE_APPEND);
+            return null;
+        }
+    }
     // 🔹 Manejar autenticación
     private function handleAuth(ConnectionInterface $from, $data)
     {
@@ -88,9 +184,9 @@ class SignalServer implements MessageComponentInterface
 
         $userId = $data['user_id'];
         $from->userId = $userId; // Guardar user_id en la conexión
-        
+
         file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | Usuario {$userId} autenticado en conexión {$from->resourceId}\n", FILE_APPEND);
-        
+
         // Enviar confirmación
         $from->send(json_encode([
             'type' => 'auth_success',
@@ -109,7 +205,7 @@ class SignalServer implements MessageComponentInterface
 
         $chatId = $data['chat_id'];
         $userId = $data['user_id'];
-        
+
         // Crear sesión si no existe
         if (!isset($this->sessions[$chatId])) {
             $this->sessions[$chatId] = new \SplObjectStorage();
@@ -188,7 +284,7 @@ class SignalServer implements MessageComponentInterface
         }
 
         $chatId = $data['chat_id'];
-        
+
         if (!isset($this->sessions[$chatId])) {
             file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | ERROR: Chat {$chatId} no existe para ride_request\n", FILE_APPEND);
             return;
@@ -226,7 +322,7 @@ class SignalServer implements MessageComponentInterface
         }
 
         $chatId = $data['chat_id'];
-        
+
         if (!isset($this->sessions[$chatId])) {
             return;
         }
@@ -254,7 +350,7 @@ class SignalServer implements MessageComponentInterface
             if ($clients->contains($conn)) {
                 $clients->detach($conn);
                 file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | Cliente {$conn->resourceId} removido del chat {$chatId}\n", FILE_APPEND);
-                
+
                 // Eliminar sesión si está vacía
                 if ($clients->count() === 0) {
                     unset($this->sessions[$chatId]);

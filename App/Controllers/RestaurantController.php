@@ -6,6 +6,7 @@ use App\Models\RestaurantModel;
 use App\Models\DishModel;
 use EasyProjects\SimpleRouter\Router;
 use Exception;
+
 class RestaurantController
 {
     private RestaurantModel $restaurantModel;
@@ -59,11 +60,15 @@ class RestaurantController
                 return;
             }
 
-            // Crear directorio de uploads si no existe
-            $uploadDir = __DIR__ . '/../../public/uploads/';
+            // Usar ruta absoluta en lugar de relativa
+            $uploadDir = '/var/www/apituanichat/public/uploads/';
+
             if (!is_dir($uploadDir)) {
                 mkdir($uploadDir, 0755, true);
             }
+
+            // Dar permisos después de crear (por si acaso)
+            chmod($uploadDir, 0755);
 
             // Generar nombre único para el archivo
             $fileExtension = pathinfo($uploadedFile['name'], PATHINFO_EXTENSION);
