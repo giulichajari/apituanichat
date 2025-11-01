@@ -17,7 +17,8 @@ class FileUploadService
     ];
 
     private $maxFileSize = 10 * 1024 * 1024; // 10MB
-    private $uploadPath = __DIR__ . '/../../uploads/';
+    private $uploadPath =  '/var/www/apituanichat/public/uploads/';
+
 
     public function validateFile($file)
     {
@@ -56,139 +57,138 @@ class FileUploadService
         return ['success' => true];
     }
 
-  public function upload($file, $chatId, $userId)
-{
-    try {
-        // Validar que el archivo se subió correctamente
-        if ($file['error'] !== UPLOAD_ERR_OK) {
-            return [
-                'success' => false,
-                'message' => 'Error en la subida del archivo: ' . $file['error']
-            ];
-        }
-
-        // Validar tipo de archivo
-        if (!isset($this->allowedTypes[$file['type']])) {
-            return [
-                'success' => false,
-                'message' => 'Tipo de archivo no permitido'
-            ];
-        }
-
-        // Crear directorio si no existe
-        $chatPath = $this->uploadPath . 'chats/' . $chatId . '/';
-        if (!is_dir($chatPath)) {
-            if (!mkdir($chatPath, 0755, true)) {
+    public function upload($file, $chatId, $userId)
+    {
+        try {
+            // Validar que el archivo se subió correctamente
+            if ($file['error'] !== UPLOAD_ERR_OK) {
                 return [
                     'success' => false,
-                    'message' => 'No se pudo crear el directorio para el chat'
+                    'message' => 'Error en la subida del archivo: ' . $file['error']
                 ];
             }
-        }
 
-        // Verificar permisos de escritura
-        if (!is_writable($chatPath)) {
+            // Validar tipo de archivo
+            if (!isset($this->allowedTypes[$file['type']])) {
+                return [
+                    'success' => false,
+                    'message' => 'Tipo de archivo no permitido'
+                ];
+            }
+
+            // Crear directorio si no existe
+            $chatPath = $this->uploadPath . 'chats/' . $chatId . '/';
+            if (!is_dir($chatPath)) {
+                if (!mkdir($chatPath, 0755, true)) {
+                    return [
+                        'success' => false,
+                        'message' => 'No se pudo crear el directorio para el chat'
+                    ];
+                }
+            }
+
+            // Verificar permisos de escritura
+            if (!is_writable($chatPath)) {
+                return [
+                    'success' => false,
+                    'message' => 'El directorio no tiene permisos de escritura'
+                ];
+            }
+
+            // Generar nombre único
+            $extension = $this->allowedTypes[$file['type']];
+            $fileName = uniqid() . '_' . $userId . '.' . $extension;
+            $filePath = $chatPath . $fileName;
+
+            // Mover archivo
+            if (!move_uploaded_file($file['tmp_name'], $filePath)) {
+                return [
+                    'success' => false,
+                    'message' => 'Error al guardar el archivo en el servidor'
+                ];
+            }
+
+            // Determinar tipo de mensaje
+            $tipo = 'file';
+            if (strpos($file['type'], 'image/') === 0) {
+                $tipo = 'image';
+            } elseif (strpos($file['type'], 'video/') === 0) {
+                $tipo = 'video';
+            } elseif (strpos($file['type'], 'audio/') === 0) {
+                $tipo = 'audio';
+            }
+
+            // Preparar datos del mensaje
+            $messageData = [
+                'contenido' => $file['name'], // Nombre original del archivo
+                'tipo' => $tipo,
+                'chat_id' => $chatId,
+                'user_id' => $userId,
+                'file_name' => $file['name'], // Nombre original
+                'file_size' => $file['size'],
+                'file_type' => $file['type'],
+                'file_path' => 'chats/' . $chatId . '/' . $fileName // Ruta relativa
+            ];
+
+            $chatModel = new ChatModel();
+
+            // Intentar crear el mensaje usando diferentes métodos posibles
+            $messageId = null;
+
+            if (method_exists($chatModel, 'addMessage')) {
+                $messageId = $chatModel->addMessage($messageData);
+            } elseif (method_exists($chatModel, 'createMessage')) {
+                $messageId = $chatModel->createMessage($messageData);
+            } elseif (method_exists($chatModel, 'insertMessage')) {
+                $messageId = $chatModel->insertMessage($messageData);
+            } else {
+                // Si no existe ningún método, usar inserción directa
+                $messageId = $chatModel->insert($messageData);
+            }
+
+            if (!$messageId) {
+                // Si falla la inserción, eliminar el archivo subido
+                unlink($filePath);
+                return [
+                    'success' => false,
+                    'message' => 'Error al guardar el mensaje en la base de datos'
+                ];
+            }
+
+            // URL accesible (ajustar según tu configuración)
+            $fileUrl = '/uploads/chats/' . $chatId . '/' . $fileName;
+
+            return [
+                'success' => true,
+                'file_name' => $fileName,
+                'file_path' => $filePath,
+                'file_url' => $fileUrl,
+                'message_id' => $messageId,
+                'tipo' => $tipo,
+                'original_name' => $file['name'],
+                'size' => $this->formatFileSize($file['size'])
+            ];
+        } catch (\Exception $e) {
+            // Log del error
+            error_log("Error en upload: " . $e->getMessage());
+
             return [
                 'success' => false,
-                'message' => 'El directorio no tiene permisos de escritura'
+                'message' => 'Error durante la subida: ' . $e->getMessage()
             ];
         }
-
-        // Generar nombre único
-        $extension = $this->allowedTypes[$file['type']];
-        $fileName = uniqid() . '_' . $userId . '.' . $extension;
-        $filePath = $chatPath . $fileName;
-
-        // Mover archivo
-        if (!move_uploaded_file($file['tmp_name'], $filePath)) {
-            return [
-                'success' => false,
-                'message' => 'Error al guardar el archivo en el servidor'
-            ];
-        }
-
-        // Determinar tipo de mensaje
-        $tipo = 'file';
-        if (strpos($file['type'], 'image/') === 0) {
-            $tipo = 'image';
-        } elseif (strpos($file['type'], 'video/') === 0) {
-            $tipo = 'video';
-        } elseif (strpos($file['type'], 'audio/') === 0) {
-            $tipo = 'audio';
-        }
-
-        // Preparar datos del mensaje
-        $messageData = [
-            'contenido' => $file['name'], // Nombre original del archivo
-            'tipo' => $tipo,
-            'chat_id' => $chatId,
-            'user_id' => $userId,
-            'file_name' => $file['name'], // Nombre original
-            'file_size' => $file['size'],
-            'file_type' => $file['type'],
-            'file_path' => 'chats/' . $chatId . '/' . $fileName // Ruta relativa
-        ];
-
-        $chatModel = new ChatModel();
-
-        // Intentar crear el mensaje usando diferentes métodos posibles
-        $messageId = null;
-        
-        if (method_exists($chatModel, 'addMessage')) {
-            $messageId = $chatModel->addMessage($messageData);
-        } elseif (method_exists($chatModel, 'createMessage')) {
-            $messageId = $chatModel->createMessage($messageData);
-        } elseif (method_exists($chatModel, 'insertMessage')) {
-            $messageId = $chatModel->insertMessage($messageData);
-        } else {
-            // Si no existe ningún método, usar inserción directa
-            $messageId = $chatModel->insert($messageData);
-        }
-
-        if (!$messageId) {
-            // Si falla la inserción, eliminar el archivo subido
-            unlink($filePath);
-            return [
-                'success' => false,
-                'message' => 'Error al guardar el mensaje en la base de datos'
-            ];
-        }
-
-        // URL accesible (ajustar según tu configuración)
-        $fileUrl = '/uploads/chats/' . $chatId . '/' . $fileName;
-
-        return [
-            'success' => true,
-            'file_name' => $fileName,
-            'file_path' => $filePath,
-            'file_url' => $fileUrl,
-            'message_id' => $messageId,
-            'tipo' => $tipo,
-            'original_name' => $file['name'],
-            'size' => $this->formatFileSize($file['size'])
-        ];
-
-    } catch (\Exception $e) {
-        // Log del error
-        error_log("Error en upload: " . $e->getMessage());
-        
-        return [
-            'success' => false,
-            'message' => 'Error durante la subida: ' . $e->getMessage()
-        ];
     }
-}
 
-// Método auxiliar para formatear tamaño de archivo
-private function formatFileSize($bytes)
-{
-    if ($bytes == 0) return "0 B";
-    
-    $sizes = ['B', 'KB', 'MB', 'GB'];
-    $i = floor(log($bytes, 1024));
-    
-    return round($bytes / pow(1024, $i), 2) . ' ' . $sizes[$i];
-}
+    // Método auxiliar para formatear tamaño de archivo
+    private function formatFileSize($bytes)
+    {
+        if ($bytes == 0) return "0 B";
+
+        $sizes = ['B', 'KB', 'MB', 'GB'];
+        $i = floor(log($bytes, 1024));
+
+        return round($bytes / pow(1024, $i), 2) . ' ' . $sizes[$i];
+    }
     public function deleteFile($filePath)
     {
         try {
