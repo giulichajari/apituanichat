@@ -109,60 +109,72 @@ class FileUploadService
             }
 
             // Determinar tipo de mensaje
-            $tipo = 'file';
+            $tipo = 'archivo';
             if (strpos($file['type'], 'image/') === 0) {
-                $tipo = 'image';
+                $tipo = 'imagen';
             } elseif (strpos($file['type'], 'video/') === 0) {
-                $tipo = 'video';
+                $tipo = 'archivo'; // O 'video' si lo agregas al ENUM
             } elseif (strpos($file['type'], 'audio/') === 0) {
-                $tipo = 'audio';
+                $tipo = 'archivo'; // O 'audio' si lo agregas al ENUM
             }
 
-            // Preparar datos del mensaje
-            $messageData = [
-                'contenido' => $file['name'], // Nombre original del archivo
-                'tipo' => $tipo,
-                'chat_id' => $chatId,
-                'user_id' => $userId,
-                'file_name' => $file['name'], // Nombre original
-                'file_size' => $file['size'],
-                'file_type' => $file['type'],
-                'file_path' => 'chats/' . $chatId . '/' . $fileName // Ruta relativa
-            ];
+            // URL accesible (ajustar según tu configuración)
+            $fileUrl = '/uploads/chats/' . $chatId . '/' . $fileName;
 
+            // Instanciar ChatModel
             $chatModel = new ChatModel();
 
-            // Intentar crear el mensaje usando diferentes métodos posibles
-            $messageId = null;
+            // 1. Primero guardar el archivo en la tabla files
+            $fileData = [
+                'name' => $fileName, // Nombre único generado
+                'original_name' => $file['name'], // Nombre original del archivo
+                'path' => $filePath, // Ruta física completa
+                'url' => $fileUrl, // URL accesible
+                'size' => $file['size'],
+                'mime_type' => $file['type'],
+                'chat_id' => $chatId,
+                'user_id' => $userId
+            ];
 
-            if (method_exists($chatModel, 'addMessage')) {
-                $messageId = $chatModel->addMessage($messageData);
-            } elseif (method_exists($chatModel, 'createMessage')) {
-                $messageId = $chatModel->createMessage($messageData);
-            } elseif (method_exists($chatModel, 'insertMessage')) {
-                $messageId = $chatModel->insertMessage($messageData);
-            } else {
-                // Si no existe ningún método, usar inserción directa
-                $messageId = $chatModel->insert($messageData);
+            $fileId = $chatModel->saveFile($fileData);
+
+            if (!$fileId) {
+                // Si falla guardar el archivo, eliminar el archivo subido
+                unlink($filePath);
+                return [
+                    'success' => false,
+                    'message' => 'Error al guardar la información del archivo en la base de datos'
+                ];
             }
 
+            // 2. Luego crear el mensaje con referencia al file_id
+            $messageData = [
+                'chat_id' => $chatId,
+                'user_id' => $userId,
+                'contenido' => $file['name'], // Nombre original como contenido del mensaje
+                'tipo' => $tipo,
+                'file_id' => $fileId
+            ];
+
+            $messageId = $chatModel->addMessage($messageData);
+
             if (!$messageId) {
-                // Si falla la inserción, eliminar el archivo subido
+                // Si falla el mensaje, eliminar el archivo y el registro de files
                 unlink($filePath);
+                // Opcional: eliminar el registro de files también
+                // $chatModel->deleteFile($fileId);
                 return [
                     'success' => false,
                     'message' => 'Error al guardar el mensaje en la base de datos'
                 ];
             }
 
-            // URL accesible (ajustar según tu configuración)
-            $fileUrl = '/uploads/chats/' . $chatId . '/' . $fileName;
-
             return [
                 'success' => true,
                 'file_name' => $fileName,
                 'file_path' => $filePath,
                 'file_url' => $fileUrl,
+                'file_id' => $fileId,
                 'message_id' => $messageId,
                 'tipo' => $tipo,
                 'original_name' => $file['name'],
@@ -179,15 +191,15 @@ class FileUploadService
         }
     }
 
-    // Método auxiliar para formatear tamaño de archivo
+    // Método auxiliar para formatear tamaño de archivo (si no lo tienes)
     private function formatFileSize($bytes)
     {
-        if ($bytes == 0) return "0 B";
+        if ($bytes == 0) return '0 B';
 
-        $sizes = ['B', 'KB', 'MB', 'GB'];
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
         $i = floor(log($bytes, 1024));
 
-        return round($bytes / pow(1024, $i), 2) . ' ' . $sizes[$i];
+        return round($bytes / pow(1024, $i), 2) . ' ' . $units[$i];
     }
     public function deleteFile($filePath)
     {
