@@ -9,6 +9,7 @@ use App\Routers\ChatRouter; // <--- importar tu router nuevo
 use App\Routers\DriversRouter;
 use App\Routers\PaymentsRouter;
 use App\Routers\RestaurantsRouter;
+use App\Routers\ProductRouter;
 use EasyProjects\SimpleRouter\Router;
 
 
@@ -48,6 +49,7 @@ try {
     new DriversRouter($router);
     new PaymentsRouter($router);
     new RestaurantsRouter($router);
+    new ProductsRouter($router);
     // Ejecutamos router
     // Cargar variables de entorno desde la raíz del proyecto
 
