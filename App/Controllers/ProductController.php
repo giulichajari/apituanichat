@@ -7,13 +7,13 @@ use App\Models\CategoryModel;
 use App\Models\CountryModel;
 use App\Models\File;
 use App\Services\FileUploadService;
-use App\Services\ProductService;
+
 use EasyProjects\SimpleRouter\Router;
 
 class ProductController
 {
     private FileUploadService $fileUploadService;
-    private ProductService $productService;
+  
 
     public function __construct(
         private ?ProductModel $productModel = new ProductModel(),
@@ -21,7 +21,7 @@ class ProductController
         private ?CountryModel $countryModel = new CountryModel()
     ) {
         $this->fileUploadService = new FileUploadService();
-        $this->productService = new ProductService();
+
     }
 
     // ✅ Obtener productos por vendedor
