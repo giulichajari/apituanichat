@@ -75,7 +75,7 @@ class ProductModel
 
         $stmt = $this->db->prepare($sql);
         $stmt->execute([$productId]);
-        
+
         $product = $stmt->fetch(PDO::FETCH_ASSOC);
         return $product ?: null;
     }
@@ -83,10 +83,12 @@ class ProductModel
     /**
      * Obtener productos con filtros
      */
+
     public function getProducts(array $filters = [], ?int $userId = null): array
     {
         $whereConditions = ["p.is_active = 1"];
         $params = [];
+        $types = []; // Para especificar tipos de parámetros
 
         // Solo mostrar productos aprobados para usuarios no admin
         if (!$this->isAdmin($userId)) {
@@ -97,31 +99,37 @@ class ProductModel
         if (!empty($filters['category_id'])) {
             $whereConditions[] = "p.category_id = ?";
             $params[] = $filters['category_id'];
+            $types[] = PDO::PARAM_INT;
         }
 
         if (!empty($filters['country_id'])) {
             $whereConditions[] = "p.country_id = ?";
             $params[] = $filters['country_id'];
+            $types[] = PDO::PARAM_INT;
         }
 
         if (!empty($filters['category_name'])) {
             $whereConditions[] = "c.name = ?";
             $params[] = $filters['category_name'];
+            $types[] = PDO::PARAM_STR;
         }
 
         if (!empty($filters['country_name'])) {
             $whereConditions[] = "co.name = ?";
             $params[] = $filters['country_name'];
+            $types[] = PDO::PARAM_STR;
         }
 
         if (!empty($filters['min_price'])) {
             $whereConditions[] = "p.price >= ?";
             $params[] = $filters['min_price'];
+            $types[] = PDO::PARAM_STR; // DECIMAL se maneja como string
         }
 
         if (!empty($filters['max_price'])) {
             $whereConditions[] = "p.price <= ?";
             $params[] = $filters['max_price'];
+            $types[] = PDO::PARAM_STR;
         }
 
         if (!empty($filters['search'])) {
@@ -129,29 +137,32 @@ class ProductModel
             $searchTerm = "%{$filters['search']}%";
             $params[] = $searchTerm;
             $params[] = $searchTerm;
+            $types[] = PDO::PARAM_STR;
+            $types[] = PDO::PARAM_STR;
         }
 
         if (!empty($filters['location'])) {
             $whereConditions[] = "u.city LIKE ?";
             $params[] = "%{$filters['location']}%";
+            $types[] = PDO::PARAM_STR;
         }
 
         $sql = "
-            SELECT 
-                p.*,
-                c.name as category_name,
-                co.name as country_name,
-                co.code as country_code,
-                u.first_name as seller_name,
-                u.rating as seller_rating,
-                AVG(pr.rating) as average_rating,
-                COUNT(pr.id) as review_count
-            FROM products p
-            JOIN categories c ON p.category_id = c.id
-            JOIN countries co ON p.country_id = co.id
-            JOIN users u ON p.seller_id = u.id
-            LEFT JOIN product_reviews pr ON p.id = pr.product_id
-        ";
+        SELECT 
+            p.*,
+            c.name as category_name,
+            co.name as country_name,
+            co.code as country_code,
+            u.first_name as seller_name,
+            u.rating as seller_rating,
+            AVG(pr.rating) as average_rating,
+            COUNT(pr.id) as review_count
+        FROM products p
+        JOIN categories c ON p.category_id = c.id
+        JOIN countries co ON p.country_id = co.id
+        JOIN users u ON p.seller_id = u.id
+        LEFT JOIN product_reviews pr ON p.id = pr.product_id
+    ";
 
         if (!empty($whereConditions)) {
             $sql .= " WHERE " . implode(" AND ", $whereConditions);
@@ -159,39 +170,77 @@ class ProductModel
 
         $sql .= " GROUP BY p.id ORDER BY p.created_at DESC";
 
-        // Aplicar límite y offset
+        // Aplicar límite y offset - SIN PARÁMETROS, directamente en el SQL
         if (!empty($filters['limit'])) {
-            $sql .= " LIMIT ?";
-            $params[] = (int)$filters['limit'];
+            $limit = (int)$filters['limit'];
+            $sql .= " LIMIT $limit";
         }
 
         if (!empty($filters['offset'])) {
-            $sql .= " OFFSET ?";
-            $params[] = (int)$filters['offset'];
+            $offset = (int)$filters['offset'];
+            $sql .= " OFFSET $offset";
         }
 
         $stmt = $this->db->prepare($sql);
-        $stmt->execute($params);
+
+        // Bind parameters con tipos específicos si existen
+        if (!empty($types)) {
+            foreach ($params as $index => $value) {
+                $stmt->bindValue($index + 1, $value, $types[$index]);
+            }
+            $stmt->execute();
+        } else {
+            $stmt->execute($params);
+        }
+
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
     /**
      * Contar productos con filtros
      */
+
     public function getProductsCount(array $filters = []): int
     {
         $whereConditions = ["p.is_active = 1", "p.is_approved = 1"];
         $params = [];
+        $types = [];
 
         // Aplicar filtros (misma lógica que getProducts)
         if (!empty($filters['category_id'])) {
             $whereConditions[] = "p.category_id = ?";
             $params[] = $filters['category_id'];
+            $types[] = PDO::PARAM_INT;
         }
 
         if (!empty($filters['country_id'])) {
             $whereConditions[] = "p.country_id = ?";
             $params[] = $filters['country_id'];
+            $types[] = PDO::PARAM_INT;
+        }
+
+        if (!empty($filters['category_name'])) {
+            $whereConditions[] = "c.name = ?";
+            $params[] = $filters['category_name'];
+            $types[] = PDO::PARAM_STR;
+        }
+
+        if (!empty($filters['country_name'])) {
+            $whereConditions[] = "co.name = ?";
+            $params[] = $filters['country_name'];
+            $types[] = PDO::PARAM_STR;
+        }
+
+        if (!empty($filters['min_price'])) {
+            $whereConditions[] = "p.price >= ?";
+            $params[] = $filters['min_price'];
+            $types[] = PDO::PARAM_STR;
+        }
+
+        if (!empty($filters['max_price'])) {
+            $whereConditions[] = "p.price <= ?";
+            $params[] = $filters['max_price'];
+            $types[] = PDO::PARAM_STR;
         }
 
         if (!empty($filters['search'])) {
@@ -199,18 +248,41 @@ class ProductModel
             $searchTerm = "%{$filters['search']}%";
             $params[] = $searchTerm;
             $params[] = $searchTerm;
+            $types[] = PDO::PARAM_STR;
+            $types[] = PDO::PARAM_STR;
         }
 
-        $sql = "SELECT COUNT(*) as total FROM products p";
-        
+        if (!empty($filters['location'])) {
+            $whereConditions[] = "u.city LIKE ?";
+            $params[] = "%{$filters['location']}%";
+            $types[] = PDO::PARAM_STR;
+        }
+
+        $sql = "
+        SELECT COUNT(DISTINCT p.id) as total 
+        FROM products p
+        JOIN categories c ON p.category_id = c.id
+        JOIN countries co ON p.country_id = co.id
+        JOIN users u ON p.seller_id = u.id
+    ";
+
         if (!empty($whereConditions)) {
             $sql .= " WHERE " . implode(" AND ", $whereConditions);
         }
 
         $stmt = $this->db->prepare($sql);
-        $stmt->execute($params);
+
+        // Bind parameters con tipos específicos
+        if (!empty($types)) {
+            foreach ($params as $index => $value) {
+                $stmt->bindValue($index + 1, $value, $types[$index]);
+            }
+            $stmt->execute();
+        } else {
+            $stmt->execute($params);
+        }
+
         $result = $stmt->fetch(PDO::FETCH_ASSOC);
-        
         return $result['total'] ?? 0;
     }
 
@@ -259,8 +331,17 @@ class ProductModel
             $params = [':id' => $productId, ':user_id' => $userId];
 
             $allowedFields = [
-                'name', 'description', 'price', 'category_id', 'country_id',
-                'stock_quantity', 'weight', 'dimensions', 'sku', 'image_url', 'is_active'
+                'name',
+                'description',
+                'price',
+                'category_id',
+                'country_id',
+                'stock_quantity',
+                'weight',
+                'dimensions',
+                'sku',
+                'image_url',
+                'is_active'
             ];
 
             foreach ($allowedFields as $field) {
@@ -412,7 +493,7 @@ class ProductModel
 
             $sql = "INSERT INTO product_images (product_id, image_url, is_primary) 
                     VALUES (:product_id, :image_url, :is_primary)";
-            
+
             $stmt = $this->db->prepare($sql);
             $success = $stmt->execute([
                 ':product_id' => $productId,
@@ -566,9 +647,9 @@ class ProductModel
     {
         $filters = ['limit' => 10];
         $products = $this->getProducts($filters, $userId);
-        
+
         // Ordenar por ventas (aquí necesitarías una tabla de ventas/orders)
-        usort($products, function($a, $b) {
+        usort($products, function ($a, $b) {
             return ($b['total_sales'] ?? 0) - ($a['total_sales'] ?? 0);
         });
 
@@ -623,7 +704,7 @@ class ProductModel
             $sql = "INSERT INTO product_reviews 
                     (product_id, user_id, rating, comment) 
                     VALUES (:product_id, :user_id, :rating, :comment)";
-            
+
             $stmt = $this->db->prepare($sql);
             $success = $stmt->execute([
                 ':product_id' => $productId,
@@ -757,7 +838,7 @@ class ProductModel
     private function isAdmin(?int $userId): bool
     {
         if (!$userId) return false;
-        
+
         // Implementar lógica para verificar si es admin
         // Por ahora retornamos false por seguridad
         return false;
