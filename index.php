@@ -9,7 +9,7 @@ use App\Routers\ChatRouter; // <--- importar tu router nuevo
 use App\Routers\DriversRouter;
 use App\Routers\PaymentsRouter;
 use App\Routers\RestaurantsRouter;
-use App\Routers\ProductRouter;
+use App\Routers\ProductsRouter;
 use EasyProjects\SimpleRouter\Router;
 
 
