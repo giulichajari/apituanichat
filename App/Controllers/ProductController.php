@@ -195,51 +195,56 @@ class ProductController
         }
     }
 
-    // ✅ Actualizar producto completo
-    public function updateProduct($id)
-    {
-        $user = Router::$request->user;
-        $userId = $user->id ?? null;
+public function updateProduct($id)
+{
+    $user = Router::$request->user;
+    $userId = $user->id ?? null;
 
-        if (!$userId) {
-            Router::$response->status(401)->send(["message" => "Unauthorized"]);
-            return;
-        }
+    if (!$userId) {
+        Router::$response->status(401)->send(["message" => "Unauthorized"]);
+        return;
+    }
 
-        $body = Router::$request->body;
+    $body = Router::$request->body;
 
-        $productData = [
-            'name' => $body->name ?? null,
-            'description' => $body->description ?? null,
-            'price' => $body->price ?? null,
-            'category_id' => $body->category_id ?? null,
-            'country_id' => $body->country_id ?? null,
-            'stock_quantity' => $body->stock_quantity ?? null,
-            'weight' => $body->weight ?? null,
-            'dimensions' => $body->dimensions ?? null,
-            'sku' => $body->sku ?? null,
-            'image_url' => $body->image_url ?? null,
-            'is_active' => $body->is_active ?? null
-        ];
+    // Solo actualizar los campos que vienen en el request
+    $productData = [];
+    $allowedFields = [
+        'name', 'description', 'price', 'category_id', 'country_id',
+        'stock_quantity', 'weight', 'dimensions', 'sku', 'image_url', 'is_active'
+    ];
 
-        // Verificar que el producto pertenezca al usuario
-        $product = $this->productModel->getProduct($id, $userId);
-        if (!$product) {
-            Router::$response->status(404)->send(["message" => "Product not found or access denied"]);
-            return;
-        }
-
-        $result = $this->productModel->updateProduct($id, $productData, $userId);
-
-        if ($result) {
-            Router::$response->status(200)->send([
-                "success" => true,
-                "message" => "Product updated successfully"
-            ]);
-        } else {
-            Router::$response->status(500)->send(["message" => "Error updating product"]);
+    foreach ($allowedFields as $field) {
+        if (isset($body->$field)) {
+            $productData[$field] = $body->$field;
         }
     }
+
+    // Verificar que al menos un campo fue proporcionado
+    if (empty($productData)) {
+        Router::$response->status(400)->send(["message" => "No fields to update"]);
+        return;
+    }
+
+    // Verificar que el producto pertenezca al usuario
+    $product = $this->productModel->getProduct($id, $userId);
+    if (!$product) {
+        Router::$response->status(404)->send(["message" => "Product not found or access denied"]);
+        return;
+    }
+
+    $result = $this->productModel->updateProduct($id, $productData, $userId);
+
+    if ($result) {
+        Router::$response->status(200)->send([
+            "success" => true,
+            "message" => "Product updated successfully",
+            "product" => $result
+        ]);
+    } else {
+        Router::$response->status(500)->send(["message" => "Error updating product"]);
+    }
+}
 
     // ✅ Actualizar parcialmente un producto
     public function partialUpdateProduct($id)
@@ -428,8 +433,9 @@ class ProductController
     }
 
     // ✅ Subir/actualizar imagen principal del producto
-    public function updateMainImage($id)
-    {
+   public function updateMainImage($id)
+{
+    try {
         $user = Router::$request->user;
         $userId = $user->id ?? null;
 
@@ -438,45 +444,64 @@ class ProductController
             return;
         }
 
+        // Debug: Log de los archivos recibidos
+        error_log("📁 Files received: " . print_r($_FILES, true));
+
         if (empty($_FILES) || !isset($_FILES['image'])) {
+            error_log("❌ No image file received");
             Router::$response->status(400)->send(["message" => "No image uploaded"]);
+            return;
+        }
+
+        $uploadedFile = $_FILES['image'];
+        
+        // Validar el archivo
+        if ($uploadedFile['error'] !== UPLOAD_ERR_OK) {
+            error_log("❌ File upload error: " . $uploadedFile['error']);
+            Router::$response->status(400)->send(["message" => "File upload error: " . $uploadedFile['error']]);
             return;
         }
 
         // Verificar que el producto pertenezca al usuario
         $product = $this->productModel->getProduct($id, $userId);
         if (!$product) {
+            error_log("❌ Product not found or access denied: " . $id);
             Router::$response->status(404)->send(["message" => "Product not found or access denied"]);
             return;
         }
 
-        $uploadedFile = $_FILES['image'];
+        error_log("✅ Starting upload for product: " . $id);
 
-        try {
-            $uploadResult = $this->fileUploadService->upload($uploadedFile, 'products', $userId);
+        $uploadResult = $this->fileUploadService->upload($uploadedFile, 'products', $userId);
 
-            if (!$uploadResult['success']) {
-                Router::$response->status(500)->send(["message" => $uploadResult['message']]);
-                return;
-            }
-
-            // Actualizar la imagen del producto en la base de datos
-            $result = $this->productModel->updateProductImage($id, $uploadResult['file_url'], $userId);
-
-            if ($result) {
-                Router::$response->status(200)->send([
-                    "success" => true,
-                    "image_url" => $uploadResult['file_url'],
-                    "message" => "Product image updated successfully"
-                ]);
-            } else {
-                Router::$response->status(500)->send(["message" => "Error updating product image"]);
-            }
-        } catch (\Exception $e) {
-            error_log("❌ Error in updateMainImage: " . $e->getMessage());
-            Router::$response->status(500)->send(["message" => "Internal server error"]);
+        if (!$uploadResult['success']) {
+            error_log("❌ Upload service failed: " . $uploadResult['message']);
+            Router::$response->status(500)->send(["message" => $uploadResult['message']]);
+            return;
         }
+
+        error_log("✅ File uploaded, updating database with URL: " . $uploadResult['file_url']);
+
+        // Actualizar la imagen del producto en la base de datos
+        $result = $this->productModel->updateProductImage($id, $uploadResult['file_url'], $userId);
+
+        if ($result) {
+            error_log("✅ Product image updated successfully");
+            Router::$response->status(200)->send([
+                "success" => true,
+                "image_url" => $uploadResult['file_url'],
+                "message" => "Product image updated successfully"
+            ]);
+        } else {
+            error_log("❌ Database update failed");
+            Router::$response->status(500)->send(["message" => "Error updating product image in database"]);
+        }
+    } catch (\Exception $e) {
+        error_log("❌ Exception in updateMainImage: " . $e->getMessage());
+        error_log("Stack trace: " . $e->getTraceAsString());
+        Router::$response->status(500)->send(["message" => "Internal server error: " . $e->getMessage()]);
     }
+}
 
     // ✅ Gestión de imágenes múltiples del producto
     public function addProductImage($id)
