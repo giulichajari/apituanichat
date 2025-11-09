@@ -481,7 +481,7 @@ class ProductController
         } catch (\Exception $e) {
             $errorMsg = "❌ Exception: " . $e->getMessage() . "\n";
             file_put_contents('/var/www/apituanichat/php-error.log', $errorMsg, FILE_APPEND);
-            Router::$response->status(500)->send(["message" => "Internal server error"]);
+            Router::$response->status(500)->send(["message" => $errorMsg]);
         }
     }
 
