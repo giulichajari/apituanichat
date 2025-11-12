@@ -190,7 +190,86 @@ class FileUploadService
             ];
         }
     }
+    public function uploadProductFile($file, $userId, $productId = null)
+    {
+        try {
+            // Validar el archivo
+            $validation = $this->validateFile($file);
+            if (!$validation['success']) {
+                return $validation;
+            }
 
+            // Crear directorio para productos
+            $productsPath = $this->uploadPath . 'products/';
+            if (!is_dir($productsPath)) {
+                if (!mkdir($productsPath, 0755, true)) {
+                    return [
+                        'success' => false,
+                        'message' => 'No se pudo crear el directorio para productos'
+                    ];
+                }
+            }
+
+            // Directorio específico del producto si existe ID
+            if ($productId) {
+                $productPath = $productsPath . $productId . '/';
+                if (!is_dir($productPath)) {
+                    if (!mkdir($productPath, 0755, true)) {
+                        return [
+                            'success' => false,
+                            'message' => 'No se pudo crear el directorio para el producto'
+                        ];
+                    }
+                }
+            } else {
+                $productPath = $productsPath;
+            }
+
+            // Verificar permisos
+            if (!is_writable($productPath)) {
+                return [
+                    'success' => false,
+                    'message' => 'El directorio no tiene permisos de escritura'
+                ];
+            }
+
+            // Generar nombre único
+            $extension = $this->allowedTypes[$file['type']];
+            $fileName = uniqid() . '_' . $userId . '.' . $extension;
+            $filePath = $productPath . $fileName;
+
+            // Mover archivo
+            if (!move_uploaded_file($file['tmp_name'], $filePath)) {
+                return [
+                    'success' => false,
+                    'message' => 'Error al guardar el archivo en el servidor'
+                ];
+            }
+
+            // Generar URL accesible
+            if ($productId) {
+                $fileUrl = '/uploads/products/' . $productId . '/' . $fileName;
+            } else {
+                $fileUrl = '/uploads/products/' . $fileName;
+            }
+
+            return [
+                'success' => true,
+                'file_name' => $fileName,
+                'file_path' => $filePath,
+                'file_url' => $fileUrl,
+                'original_name' => $file['name'],
+                'size' => $this->formatFileSize($file['size']),
+                'mime_type' => $file['type']
+            ];
+        } catch (\Exception $e) {
+            error_log("Error en uploadProductFile: " . $e->getMessage());
+            return [
+                'success' => false,
+                'message' => 'Error durante la subida: ' . $e->getMessage()
+            ];
+        }
+    }
     // Método auxiliar para formatear tamaño de archivo (si no lo tienes)
     private function formatFileSize($bytes)
     {

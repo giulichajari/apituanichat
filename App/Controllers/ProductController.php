@@ -70,7 +70,7 @@ class ProductController
             }
 
             // Subir el archivo
-            $uploadResult = $this->fileUploadService->upload($uploadedFile, 'products', $userId);
+            $uploadResult = $this->fileUploadService->uploadProductFile($uploadedFile, 'products', $userId);
 
             if (!$uploadResult['success']) {
                 Router::$response->status(500)->send(["message" => $uploadResult['message']]);
@@ -85,7 +85,7 @@ class ProductController
             ]);
         } catch (\Exception $e) {
             error_log("❌ Error in uploadFile: " . $e->getMessage());
-            Router::$response->status(500)->send(["message" => "Internal server error"]);
+            Router::$response->status(500)->send(["message" =>$e. "Internal server error"]);
         }
     }
 

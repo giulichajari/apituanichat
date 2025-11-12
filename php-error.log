@@ -155,3 +155,6 @@ Stack trace:
 #4 C:\wamp64\www\APITuanichat\index.php(46): App\Routers\ProfileRouter->__construct(Object(EasyProjects\SimpleRouter\Router))
 #5 {main}
   thrown in C:\wamp64\www\APITuanichat\App\Models\ProfileModel.php on line 97
+[12-Nov-2025 20:01:48 UTC] DB CONNECTION ERROR: SQLSTATE[HY000] [1045] Access denied for user 'tuanichat'@'localhost' (using password: YES)
+[12-Nov-2025 20:02:00 UTC] DB CONNECTION ERROR: SQLSTATE[HY000] [1045] Access denied for user 'tuanichat'@'localhost' (using password: YES)
+[12-Nov-2025 20:02:03 UTC] DB CONNECTION ERROR: SQLSTATE[HY000] [1045] Access denied for user 'tuanichat'@'localhost' (using password: YES)
