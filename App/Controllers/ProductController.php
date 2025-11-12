@@ -444,6 +444,14 @@ class ProductController
     public function updateMainImage($id)
     {
         try {
+            if (!$id) {
+                $id = Router::$request->params['id'] ?? null;
+            }
+
+            if (!$id) {
+                Router::$response->status(400)->send(["message" => "Product ID is required"]);
+                return;
+            }
             // LOG TEMPORAL - Esto seguro funcionará
             $logMessage = "=== UPLOAD DEBUG " . date('Y-m-d H:i:s') . " ===\n";
             $logMessage .= "Method: " . ($_SERVER['REQUEST_METHOD'] ?? 'Unknown') . "\n";
@@ -453,26 +461,26 @@ class ProductController
             $logMessage .= "User ID: " . (Router::$request->user->id ?? 'No user') . "\n";
 
             // Escribir en un archivo temporal
-            file_put_contents('/var/www/apituanichat/php-error.log', $logMessage, FILE_APPEND);
+            file_put_contents('../../php-error.log', $logMessage, FILE_APPEND);
 
             $user = Router::$request->user;
             $userId = $user->id ?? null;
 
             if (!$userId) {
-                file_put_contents('/var/www/apituanichat/php-error.log', "❌ Unauthorized\n", FILE_APPEND);
+                file_put_contents('../../php-error.log', "❌ Unauthorized\n", FILE_APPEND);
                 Router::$response->status(401)->send(["message" => "Unauthorized"]);
                 return;
             }
 
             if (empty($_FILES) || !isset($_FILES['image'])) {
                 $debugInfo = "FILES keys: " . implode(', ', array_keys($_FILES)) . "\n";
-                file_put_contents('/var/www/apituanichat/php-error.log', "❌ No image: " . $debugInfo, FILE_APPEND);
+                file_put_contents('../../php-error.log', "❌ No image: " . $debugInfo, FILE_APPEND);
                 Router::$response->status(400)->send(["message" => "No image uploaded"]);
                 return;
             }
 
             // Resto de tu código...
-            file_put_contents('/var/www/apituanichat/php-error.log', "✅ Starting file processing\n", FILE_APPEND);
+            file_put_contents('../../php-error.log', "✅ Starting file processing\n", FILE_APPEND);
 
             $uploadedFile = $_FILES['image'];
 
@@ -480,7 +488,7 @@ class ProductController
 
         } catch (\Exception $e) {
             $errorMsg = "❌ Exception: " . $e->getMessage() . "\n";
-            file_put_contents('/var/www/apituanichat/php-error.log', $errorMsg, FILE_APPEND);
+            file_put_contents('../../php-error.log', $errorMsg, FILE_APPEND);
             Router::$response->status(500)->send(["message" => $errorMsg]);
         }
     }
