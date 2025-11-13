@@ -54,12 +54,18 @@ class ProductsRouter
             fn() => $productController->createProduct()
         );
 
-        // Actualizar producto completo
-        $router->put(
-            '/products/{id}',
-            fn() => $tokenMiddleware->strict(),
-            fn($id) => $productController->updateProduct($id)
-        );
+     // En tu archivo de rutas, agrega esto temporalmente
+$router->put(
+    '/products/{id}',
+    function($id) {
+        $logFile = __DIR__ . '/../../php-error.log';
+        error_log("🎯 ROUTE HIT - PUT /products/{$id}\n", 3, $logFile);
+        error_log("🕐 " . date('Y-m-d H:i:s') . "\n", 3, $logFile);
+        error_log("📝 Headers: " . print_r(getallheaders(), true) . "\n", 3, $logFile);
+    },
+    fn() => $tokenMiddleware->strict(),
+    fn($id) => $productController->updateProduct($id)
+);
 
         // Actualizar parcialmente un producto
         $router->patch(

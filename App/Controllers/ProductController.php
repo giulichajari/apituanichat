@@ -246,88 +246,96 @@ class ProductController
         }
     }
 
-   public function updateProduct($id)
-{
-    $logFile = __DIR__ . '/../../php-error.log';
-    
-    try {
-        error_log("🎯 === UPDATE PRODUCT CONTROLLER ===\n", 3, $logFile);
-        error_log("🆔 Product ID: " . $id . "\n", 3, $logFile);
+    public function updateProduct($id)
+    {
+        $logFile = __DIR__ . '/../../php-error.log';
 
-        $user = Router::$request->user;
-        $userId = $user->id ?? null;
-        
-        error_log("👤 User ID from token: " . $userId . "\n", 3, $logFile);
+        try {
+            error_log("🎯 === UPDATE PRODUCT CONTROLLER ===\n", 3, $logFile);
+            error_log("🆔 Product ID: " . $id . "\n", 3, $logFile);
 
-        if (!$userId) {
-            error_log("❌ Usuario no autenticado\n", 3, $logFile);
-            Router::$response->status(401)->send(["message" => "Unauthorized"]);
-            return;
-        }
+            $user = Router::$request->user;
+            $userId = $user->id ?? null;
 
-        $body = Router::$request->body;
-        error_log("📨 Request Body: " . print_r($body, true) . "\n", 3, $logFile);
-        error_log("📨 Request Body tipo: " . gettype($body) . "\n", 3, $logFile);
+            error_log("👤 User ID from token: " . $userId . "\n", 3, $logFile);
 
-        // Solo actualizar los campos que vienen en el request
-        $productData = [];
-        $allowedFields = [
-            'name', 'description', 'price', 'category_id', 'country_id',
-            'stock_quantity', 'weight', 'dimensions', 'sku', 'image_url', 'is_active'
-        ];
-
-        foreach ($allowedFields as $field) {
-            if (isset($body->$field)) {
-                $productData[$field] = $body->$field;
-                error_log("📝 Campo '$field' encontrado en request: " . $body->$field . "\n", 3, $logFile);
+            if (!$userId) {
+                error_log("❌ Usuario no autenticado\n", 3, $logFile);
+                Router::$response->status(401)->send(["message" => "Unauthorized"]);
+                return;
             }
+
+            $body = Router::$request->body;
+            error_log("📨 Request Body: " . print_r($body, true) . "\n", 3, $logFile);
+            error_log("📨 Request Body tipo: " . gettype($body) . "\n", 3, $logFile);
+
+            // Solo actualizar los campos que vienen en el request
+            $productData = [];
+            $allowedFields = [
+                'name',
+                'description',
+                'price',
+                'category_id',
+                'country_id',
+                'stock_quantity',
+                'weight',
+                'dimensions',
+                'sku',
+                'image_url',
+                'is_active'
+            ];
+
+            foreach ($allowedFields as $field) {
+                if (isset($body->$field)) {
+                    $productData[$field] = $body->$field;
+                    error_log("📝 Campo '$field' encontrado en request: " . $body->$field . "\n", 3, $logFile);
+                }
+            }
+
+            error_log("📦 Datos procesados para actualizar: " . print_r($productData, true) . "\n", 3, $logFile);
+
+            // Verificar que al menos un campo fue proporcionado
+            if (empty($productData)) {
+                error_log("❌ No hay campos para actualizar\n", 3, $logFile);
+                Router::$response->status(400)->send(["message" => "No fields to update"]);
+                return;
+            }
+
+            // Verificar que el producto pertenezca al usuario
+            error_log("🔍 Verificando propiedad del producto...\n", 3, $logFile);
+            $product = $this->productModel->getProduct($id, $userId);
+            if (!$product) {
+                error_log("❌ Producto no encontrado o no pertenece al usuario\n", 3, $logFile);
+                Router::$response->status(404)->send(["message" => "Product not found or access denied"]);
+                return;
+            }
+            error_log("✅ Producto encontrado: " . $product['name'] . "\n", 3, $logFile);
+
+            error_log("🔄 Llamando a updateProduct en el modelo...\n", 3, $logFile);
+            $result = $this->productModel->updateProduct($id, $productData, $userId);
+
+            if ($result) {
+                error_log("✅ Producto actualizado exitosamente en el modelo\n", 3, $logFile);
+
+                // Obtener el producto actualizado
+                $updatedProduct = $this->productModel->getProduct($id, $userId);
+
+                Router::$response->status(200)->send([
+                    "success" => true,
+                    "message" => "Product updated successfully",
+                    "product" => $updatedProduct
+                ]);
+            } else {
+                error_log("❌ updateProduct retornó false\n", 3, $logFile);
+                Router::$response->status(500)->send(["message" => "Error updating product"]);
+            }
+        } catch (\Exception $e) {
+            error_log("💥 EXCEPCIÓN en updateProduct controller:\n", 3, $logFile);
+            error_log("📌 Mensaje: " . $e->getMessage() . "\n", 3, $logFile);
+            error_log("📌 Trace: " . $e->getTraceAsString() . "\n", 3, $logFile);
+            Router::$response->status(500)->send(["message" => "Server error: " . $e->getMessage()]);
         }
-
-        error_log("📦 Datos procesados para actualizar: " . print_r($productData, true) . "\n", 3, $logFile);
-
-        // Verificar que al menos un campo fue proporcionado
-        if (empty($productData)) {
-            error_log("❌ No hay campos para actualizar\n", 3, $logFile);
-            Router::$response->status(400)->send(["message" => "No fields to update"]);
-            return;
-        }
-
-        // Verificar que el producto pertenezca al usuario
-        error_log("🔍 Verificando propiedad del producto...\n", 3, $logFile);
-        $product = $this->productModel->getProduct($id, $userId);
-        if (!$product) {
-            error_log("❌ Producto no encontrado o no pertenece al usuario\n", 3, $logFile);
-            Router::$response->status(404)->send(["message" => "Product not found or access denied"]);
-            return;
-        }
-        error_log("✅ Producto encontrado: " . $product['name'] . "\n", 3, $logFile);
-
-        error_log("🔄 Llamando a updateProduct en el modelo...\n", 3, $logFile);
-        $result = $this->productModel->updateProduct($id, $productData, $userId);
-
-        if ($result) {
-            error_log("✅ Producto actualizado exitosamente en el modelo\n", 3, $logFile);
-            
-            // Obtener el producto actualizado
-            $updatedProduct = $this->productModel->getProduct($id, $userId);
-            
-            Router::$response->status(200)->send([
-                "success" => true,
-                "message" => "Product updated successfully",
-                "product" => $updatedProduct
-            ]);
-        } else {
-            error_log("❌ updateProduct retornó false\n", 3, $logFile);
-            Router::$response->status(500)->send(["message" => "Error updating product"]);
-        }
-
-    } catch (\Exception $e) {
-        error_log("💥 EXCEPCIÓN en updateProduct controller:\n", 3, $logFile);
-        error_log("📌 Mensaje: " . $e->getMessage() . "\n", 3, $logFile);
-        error_log("📌 Trace: " . $e->getTraceAsString() . "\n", 3, $logFile);
-        Router::$response->status(500)->send(["message" => "Server error: " . $e->getMessage()]);
     }
-}
 
     // ✅ Actualizar parcialmente un producto
     public function partialUpdateProduct($id)
