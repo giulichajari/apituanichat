@@ -15,12 +15,6 @@ class ProductsRouter
     ) {
         // IMPORTANTE: Colocar las rutas más específicas PRIMERO
 
-        // Obtener productos por vendedor - DEBE IR ANTES de la ruta con {id}
-        $router->get(
-            '/products/owner',
-            fn() => $tokenMiddleware->strict(),
-            fn() => $productController->getProductsByOwner()
-        );
 
         // Subir archivos para productos
         $router->post(
@@ -54,18 +48,12 @@ class ProductsRouter
             fn() => $productController->createProduct()
         );
 
-     // En tu archivo de rutas, agrega esto temporalmente
-$router->put(
-    '/products/{id}',
-    function($id) {
-        $logFile = __DIR__ . '/../../php-error.log';
-        error_log("🎯 ROUTE HIT - PUT /products/{$id}\n", 3, $logFile);
-        error_log("🕐 " . date('Y-m-d H:i:s') . "\n", 3, $logFile);
-        error_log("📝 Headers: " . print_r(getallheaders(), true) . "\n", 3, $logFile);
-    },
-    fn() => $tokenMiddleware->strict(),
-    fn($id) => $productController->updateProduct($id)
-);
+        // Actualizar producto completo
+        $router->put(
+            '/products/{id}',
+            fn() => $tokenMiddleware->strict(),
+            fn($id) => $productController->updateProduct($id)
+        );
 
         // Actualizar parcialmente un producto
         $router->patch(
@@ -121,6 +109,12 @@ $router->put(
             '/products/advanced/search',
             fn() => $tokenMiddleware->optional(),
             fn() => $productController->advancedSearchProducts()
+        );
+        // Obtener productos por vendedor - DEBE IR ANTES de la ruta con {id}
+        $router->get(
+            '/products/owner',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $productController->getProductsByOwner()
         );
 
         // Obtener productos por ubicación (ciudad)
