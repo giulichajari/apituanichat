@@ -227,37 +227,81 @@ class ProductModel
     /**
      * Actualizar producto
      */
-    public function updateProduct(int $productId, array $data, int $userId): bool
-    {
-        try {
-            $fields = [];
-            $params = [':id' => $productId, ':user_id' => $userId];
+   public function updateProduct(int $productId, array $data, int $userId): bool
+{
+    try {
+        error_log("🔄 === INICIANDO ACTUALIZACIÓN DE PRODUCTO ===");
+        error_log("📝 Product ID: " . $productId);
+        error_log("👤 User ID: " . $userId);
+        error_log("📦 Datos recibidos: " . print_r($data, true));
 
-            $allowedFields = [
-                'name', 'description', 'price', 'category_id', 'country_id',
-                'stock_quantity', 'weight', 'dimensions', 'sku', 'image_url', 'is_active'
-            ];
+        $fields = [];
+        $params = [':id' => $productId, ':user_id' => $userId];
 
-            foreach ($allowedFields as $field) {
-                if (array_key_exists($field, $data)) {
-                    $fields[] = "$field = :$field";
-                    $params[":$field"] = $data[$field];
-                }
+        $allowedFields = [
+            'name', 'description', 'price', 'category_id', 'country_id',
+            'stock_quantity', 'weight', 'dimensions', 'sku', 'image_url', 'is_active'
+        ];
+
+        foreach ($allowedFields as $field) {
+            if (array_key_exists($field, $data)) {
+                $fields[] = "$field = :$field";
+                $params[":$field"] = $data[$field];
+                error_log("✅ Campo a actualizar: $field = " . $data[$field]);
             }
+        }
 
-            if (empty($fields)) {
-                return false;
-            }
-
-            $sql = "UPDATE products SET " . implode(', ', $fields) . " 
-                    WHERE id = :id AND seller_id = :user_id";
-            $stmt = $this->db->prepare($sql);
-            return $stmt->execute($params);
-        } catch (\PDOException $e) {
-            error_log("❌ Error al actualizar producto: " . $e->getMessage());
+        if (empty($fields)) {
+            error_log("❌ No hay campos válidos para actualizar");
             return false;
         }
+
+        error_log("📋 Campos a actualizar: " . implode(', ', $fields));
+        error_log("🔑 Parámetros: " . print_r($params, true));
+
+        $sql = "UPDATE products SET " . implode(', ', $fields) . " 
+                WHERE id = :id AND seller_id = :user_id";
+        
+        error_log("🗃️ SQL generado: " . $sql);
+
+        $stmt = $this->db->prepare($sql);
+        
+        if (!$stmt) {
+            error_log("❌ Error preparando la consulta: " . print_r($this->db->errorInfo(), true));
+            return false;
+        }
+
+        $result = $stmt->execute($params);
+        
+        if ($result) {
+            error_log("✅ Producto actualizado exitosamente");
+            error_log("📊 Filas afectadas: " . $stmt->rowCount());
+        } else {
+            error_log("❌ Error ejecutando la consulta: " . print_r($stmt->errorInfo(), true));
+            error_log("🔍 Información completa del error: " . print_r([
+                'errorCode' => $stmt->errorCode(),
+                'errorInfo' => $stmt->errorInfo(),
+                'params' => $params
+            ], true));
+        }
+
+        return $result;
+
+    } catch (\PDOException $e) {
+        error_log("💥 EXCEPCIÓN PDO en updateProduct:");
+        error_log("📌 Mensaje: " . $e->getMessage());
+        error_log("📌 Código: " . $e->getCode());
+        error_log("📌 Archivo: " . $e->getFile());
+        error_log("📌 Línea: " . $e->getLine());
+        error_log("📌 Trace: " . $e->getTraceAsString());
+        return false;
+    } catch (\Exception $e) {
+        error_log("💥 EXCEPCIÓN GENERAL en updateProduct:");
+        error_log("📌 Mensaje: " . $e->getMessage());
+        error_log("📌 Trace: " . $e->getTraceAsString());
+        return false;
     }
+}
 
     /**
      * Eliminar producto (borrado lógico)
