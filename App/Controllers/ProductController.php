@@ -85,7 +85,7 @@ class ProductController
             ]);
         } catch (\Exception $e) {
             error_log("❌ Error in uploadFile: " . $e->getMessage());
-            Router::$response->status(500)->send(["message" =>$e. "Internal server error"]);
+            Router::$response->status(500)->send(["message" => $e . "Internal server error"]);
         }
     }
 
@@ -145,7 +145,59 @@ class ProductController
             "message" => "Products retrieved successfully"
         ]);
     }
+    public function uploadProductImage()
+    {
+        try {
+            $user = Router::$request->user;
+            $userId = $user->id ?? null;
 
+            if (!$userId) {
+                Router::$response->status(401)->send(["message" => "Unauthorized"]);
+                return;
+            }
+
+            // LOG para debugging
+            $logMessage = "=== PRODUCT IMAGE UPLOAD DEBUG " . date('Y-m-d H:i:s') . " ===\n";
+            $logMessage .= "User ID: " . $userId . "\n";
+            $logMessage .= "Files received: " . print_r($_FILES, true) . "\n";
+            file_put_contents('../../php-error.log', $logMessage, FILE_APPEND);
+
+            if (empty($_FILES) || !isset($_FILES['image'])) {
+                Router::$response->status(400)->send(["message" => "No image uploaded"]);
+                return;
+            }
+
+            $uploadService = new \App\Services\FileUploadService();
+            $uploadedFile = $_FILES['image'];
+
+            // Subir imagen sin productId (se guardará en directorio general de productos)
+            $result = $uploadService->uploadProductFile($uploadedFile, $userId);
+
+            if (!$result['success']) {
+                file_put_contents('../../php-error.log', "❌ Upload failed: " . $result['message'] . "\n", FILE_APPEND);
+                Router::$response->status(400)->send(["message" => $result['message']]);
+                return;
+            }
+
+            file_put_contents('../../php-error.log', "✅ Image uploaded successfully: " . $result['file_url'] . "\n", FILE_APPEND);
+
+            Router::$response->send([
+                "success" => true,
+                "message" => "Image uploaded successfully",
+                "image_url" => $result['file_url'],
+                "file_info" => [
+                    "original_name" => $result['original_name'],
+                    "file_name" => $result['file_name'],
+                    "size" => $result['size'],
+                    "mime_type" => $result['mime_type']
+                ]
+            ]);
+        } catch (\Exception $e) {
+            $errorMsg = "❌ Exception in uploadProductImage: " . $e->getMessage() . "\n";
+            file_put_contents('../../php-error.log', $errorMsg, FILE_APPEND);
+            Router::$response->status(500)->send(["message" => "Server error: " . $e->getMessage()]);
+        }
+    }
     // ✅ Crear nuevo producto
     public function createProduct()
     {
@@ -452,7 +504,8 @@ class ProductController
                 Router::$response->status(400)->send(["message" => "Product ID is required"]);
                 return;
             }
-            // LOG TEMPORAL - Esto seguro funcionará
+
+            // LOG TEMPORAL
             $logMessage = "=== UPLOAD DEBUG " . date('Y-m-d H:i:s') . " ===\n";
             $logMessage .= "Method: " . ($_SERVER['REQUEST_METHOD'] ?? 'Unknown') . "\n";
             $logMessage .= "Files received: " . print_r($_FILES, true) . "\n";
@@ -460,7 +513,6 @@ class ProductController
             $logMessage .= "Product ID: " . $id . "\n";
             $logMessage .= "User ID: " . (Router::$request->user->id ?? 'No user') . "\n";
 
-            // Escribir en un archivo temporal
             file_put_contents('../../php-error.log', $logMessage, FILE_APPEND);
 
             $user = Router::$request->user;
@@ -479,17 +531,43 @@ class ProductController
                 return;
             }
 
-            // Resto de tu código...
-            file_put_contents('../../php-error.log', "✅ Starting file processing\n", FILE_APPEND);
+            file_put_contents('../../php-error.log', "✅ Starting file processing with FileUploadService\n", FILE_APPEND);
 
+            // USAR EL SERVICIO DE SUBIDA DE ARCHIVOS
+            $uploadService = new \App\Services\FileUploadService();
             $uploadedFile = $_FILES['image'];
 
-            // Continuar con el proceso...
+            // Subir la imagen usando el servicio de productos
+            $result = $uploadService->uploadProductFile($uploadedFile, $userId, $id);
 
+            if (!$result['success']) {
+                file_put_contents('../../php-error.log', "❌ Upload failed: " . $result['message'] . "\n", FILE_APPEND);
+                Router::$response->status(400)->send(["message" => $result['message']]);
+                return;
+            }
+
+            // AQUÍ ACTUALIZAS LA BASE DE DATOS CON LA NUEVA IMAGEN
+            // Ejemplo:
+            // $productModel = new ProductModel();
+            // $updateResult = $productModel->updateProductImage($id, $result['file_url']);
+
+            file_put_contents('../../php-error.log', "✅ File uploaded successfully: " . $result['file_url'] . "\n", FILE_APPEND);
+
+            // Respuesta exitosa
+            Router::$response->send([
+                "success" => true,
+                "message" => "Image updated successfully",
+                "image_url" => $result['file_url'],
+                "file_info" => [
+                    "original_name" => $result['original_name'],
+                    "file_name" => $result['file_name'],
+                    "size" => $result['size']
+                ]
+            ]);
         } catch (\Exception $e) {
             $errorMsg = "❌ Exception: " . $e->getMessage() . "\n";
             file_put_contents('../../php-error.log', $errorMsg, FILE_APPEND);
-            Router::$response->status(500)->send(["message" => $errorMsg]);
+            Router::$response->status(500)->send(["message" => "Server error: " . $e->getMessage()]);
         }
     }
 

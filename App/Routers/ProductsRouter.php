@@ -28,7 +28,11 @@ class ProductsRouter
             fn() => $tokenMiddleware->strict(),
             fn() => $productController->uploadFile()
         );
-
+        $router->post(
+            '/upload/product-image',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $productController->uploadProductImage()
+        );
         // Obtener producto por ID
         $router->get(
             '/products/{id:\d+}', // SOLO números para IDs
