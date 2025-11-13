@@ -40,34 +40,43 @@ class ProductModel
     /**
      * Obtener producto por ID
      */
-    public function getProduct(int $productId, ?int $userId = null): ?array
-    {
-        $sql = "
-            SELECT 
-                p.*,
-                c.name as category_name,
-                co.name as country_name,
-                co.code as country_code,
-                co.currency,
-                u.name as seller_name
-            FROM products p
-            JOIN categories c ON p.category_id = c.id
-            JOIN countries co ON p.country_id = co.id
-            JOIN users u ON p.seller_id = u.id
-            WHERE p.id = ? AND p.is_active = 1
-        ";
+  public function getProduct($productId, $userId = null)
+{
+    $logFile = __DIR__ . '/../../php-error.log';
+    
+    try {
+        error_log("🔍 === GET PRODUCT ===\n", 3, $logFile);
+        error_log("🆔 Product ID: " . $productId . "\n", 3, $logFile);
+        error_log("👤 User ID: " . $userId . "\n", 3, $logFile);
 
-        // Si no es admin, solo mostrar productos aprobados
-        if (!$this->isAdmin($userId)) {
-            $sql .= " AND p.is_approved = 1";
+        $sql = "SELECT * FROM products WHERE id = :id";
+        $params = [':id' => $productId];
+        
+        if ($userId) {
+            $sql .= " AND seller_id = :user_id";
+            $params[':user_id'] = $userId;
         }
 
+        error_log("🗃️ SQL: " . $sql . "\n", 3, $logFile);
+        error_log("🔑 Parámetros: " . print_r($params, true) . "\n", 3, $logFile);
+
         $stmt = $this->db->prepare($sql);
-        $stmt->execute([$productId]);
-        
-        $product = $stmt->fetch(PDO::FETCH_ASSOC);
+        $stmt->execute($params);
+        $product = $stmt->fetch(\PDO::FETCH_ASSOC);
+
+        if ($product) {
+            error_log("✅ Producto encontrado: " . $product['name'] . "\n", 3, $logFile);
+        } else {
+            error_log("❌ Producto NO encontrado\n", 3, $logFile);
+        }
+
         return $product ?: null;
+
+    } catch (\PDOException $e) {
+        error_log("❌ Error en getProduct: " . $e->getMessage() . "\n", 3, $logFile);
+        return null;
     }
+}
 
     /**
      * Obtener productos con filtros
