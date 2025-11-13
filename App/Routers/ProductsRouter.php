@@ -13,131 +13,24 @@ class ProductsRouter
         ?TokenMiddleware $tokenMiddleware = new TokenMiddleware(),
         ?ProductController $productController = new ProductController()
     ) {
-        // IMPORTANTE: Colocar las rutas más específicas PRIMERO
+        // IMPORTANTE: Rutas ordenadas de más específicas a más generales
 
+        // ==================== RUTAS ESPECÍFICAS CON MÚLTIPOS PARÁMETROS ====================
 
-        // Subir archivos para productos
-        $router->post(
-            '/products/upload',
-            fn() => $tokenMiddleware->strict(),
-            fn() => $productController->uploadFile()
-        );
-        $router->post(
-            '/upload/product-image',
-            fn() => $tokenMiddleware->strict(),
-            fn() => $productController->uploadProductImage()
-        );
-        // Obtener producto por ID
-        $router->get(
-            '/products/{id:\d+}', // SOLO números para IDs
-            fn() => $tokenMiddleware->optional(),
-            fn($id) => $productController->getProduct($id)
-        );
-
-        // Obtener todos los productos con filtros
-        $router->get(
-            '/products',
-            fn() => $tokenMiddleware->optional(),
-            fn() => $productController->listProducts()
-        );
-
-        // Crear nuevo producto
-        $router->post(
-            '/products',
-            fn() => $tokenMiddleware->strict(),
-            fn() => $productController->createProduct()
-        );
-
-        // Actualizar producto completo
+        // Gestión de reviews específicas
         $router->put(
-            '/products/{id}',
+            '/products/{id}/reviews/{reviewId}',
             fn() => $tokenMiddleware->strict(),
-            fn($id) => $productController->updateProduct($id)
+            fn($id, $reviewId) => $productController->updateProductReview($id, $reviewId)
         );
 
-        // Actualizar parcialmente un producto
-        $router->patch(
-            '/products/{id}',
-            fn() => $tokenMiddleware->strict(),
-            fn($id) => $productController->partialUpdateProduct($id)
-        );
-
-        // Eliminar producto
         $router->delete(
-            '/products/{id}',
+            '/products/{id}/reviews/{reviewId}',
             fn() => $tokenMiddleware->strict(),
-            fn($id) => $productController->deleteProduct($id)
+            fn($id, $reviewId) => $productController->deleteProductReview($id, $reviewId)
         );
 
-        // Obtener productos por categoría
-        $router->get(
-            '/products/category/{categoryId:\d+}',
-            fn() => $tokenMiddleware->optional(),
-            fn($categoryId) => $productController->getProductsByCategory($categoryId)
-        );
-
-        // Obtener productos por categoría (por nombre)
-        $router->get(
-            '/products/category/name/{categoryName}',
-            fn() => $tokenMiddleware->optional(),
-            fn($categoryName) => $productController->getProductsByCategoryName($categoryName)
-        );
-
-        // Obtener productos por país
-        $router->get(
-            '/products/country/{countryId:\d+}',
-            fn() => $tokenMiddleware->optional(),
-            fn($countryId) => $productController->getProductsByCountry($countryId)
-        );
-
-        // Obtener productos por país (por nombre)
-        $router->get(
-            '/products/country/name/{countryName}',
-            fn() => $tokenMiddleware->optional(),
-            fn($countryName) => $productController->getProductsByCountryName($countryName)
-        );
-
-        // Buscar productos por nombre o descripción
-        $router->get(
-            '/products/search/{query}',
-            fn() => $tokenMiddleware->optional(),
-            fn($query) => $productController->searchProducts($query)
-        );
-
-        // Búsqueda avanzada con múltiples parámetros
-        $router->get(
-            '/products/advanced/search',
-            fn() => $tokenMiddleware->optional(),
-            fn() => $productController->advancedSearchProducts()
-        );
-        // Obtener productos por vendedor - DEBE IR ANTES de la ruta con {id}
-        $router->get(
-            '/products/owner',
-            fn() => $tokenMiddleware->strict(),
-            fn() => $productController->getProductsByOwner()
-        );
-
-        // Obtener productos por ubicación (ciudad)
-        $router->get(
-            '/products/location/{ciudad}',
-            fn() => $tokenMiddleware->optional(),
-            fn($ciudad) => $productController->getProductsByLocation($ciudad)
-        );
-
-        // Subir/actualizar imagen principal del producto
-        $router->post(
-            '/products/{id}/main-image',
-            fn() => $tokenMiddleware->strict(),
-            fn($id) => $productController->updateMainImage($id)
-        );
-
-        // Gestión de imágenes múltiples del producto
-        $router->post(
-            '/products/{id}/images',
-            fn() => $tokenMiddleware->strict(),
-            fn($id) => $productController->addProductImage($id)
-        );
-
+        // Gestión de imágenes específicas
         $router->delete(
             '/products/{id}/images/{imageId}',
             fn() => $tokenMiddleware->strict(),
@@ -150,109 +43,228 @@ class ProductsRouter
             fn($id, $imageId) => $productController->setPrimaryImage($id, $imageId)
         );
 
-        // Obtener productos favoritos del usuario
-        $router->get(
-            '/products/favorites',
-            fn() => $tokenMiddleware->strict(),
-            fn() => $productController->getFavoriteProducts()
-        );
+        // ==================== RUTAS CON SUBRUTAS ESPECÍFICAS ====================
 
-        // Agregar/eliminar producto de favoritos
+        // Subir archivos para productos - rutas específicas primero
         $router->post(
-            '/products/{id}/favorite',
+            '/upload/product-image',
             fn() => $tokenMiddleware->strict(),
-            fn($id) => $productController->toggleFavorite($id)
+            fn() => $productController->uploadProductImage()
         );
 
-        // Obtener categorías de productos
-        $router->get(
-            '/products/categories/all',
-            fn() => $tokenMiddleware->optional(),
-            fn() => $productController->getAllCategories()
-        );
-
-        // Obtener países disponibles
-        $router->get(
-            '/products/countries/all',
-            fn() => $tokenMiddleware->optional(),
-            fn() => $productController->getAllCountries()
-        );
-
-        // Gestión de stock
-        $router->patch(
-            '/products/{id}/stock',
+        $router->post(
+            '/products/upload',
             fn() => $tokenMiddleware->strict(),
-            fn($id) => $productController->updateStock($id)
+            fn() => $productController->uploadFile()
         );
 
-        // Obtener productos más vendidos
-        $router->get(
-            '/products/trending/best-sellers',
-            fn() => $tokenMiddleware->optional(),
-            fn() => $productController->getBestSellers()
+        // Gestión de imágenes del producto
+        $router->post(
+            '/products/{id}/images',
+            fn() => $tokenMiddleware->strict(),
+            fn($id) => $productController->addProductImage($id)
         );
 
-        // Obtener productos nuevos
-        $router->get(
-            '/products/trending/new-arrivals',
-            fn() => $tokenMiddleware->optional(),
-            fn() => $productController->getNewArrivals()
+        $router->post(
+            '/products/{id}/main-image',
+            fn() => $tokenMiddleware->strict(),
+            fn($id) => $productController->updateMainImage($id)
         );
 
-        // Obtener productos en oferta
-        $router->get(
-            '/products/trending/on-sale',
-            fn() => $tokenMiddleware->optional(),
-            fn() => $productController->getProductsOnSale()
-        );
-
-        // Obtener reviews de un producto
+        // Reviews de productos
         $router->get(
             '/products/{id}/reviews',
             fn() => $tokenMiddleware->optional(),
             fn($id) => $productController->getProductReviews($id)
         );
 
-        // Agregar review a un producto
         $router->post(
             '/products/{id}/reviews',
             fn() => $tokenMiddleware->strict(),
             fn($id) => $productController->addProductReview($id)
         );
 
-        // Actualizar review de un producto
-        $router->put(
-            '/products/{id}/reviews/{reviewId}',
+        // Favoritos
+        $router->post(
+            '/products/{id}/favorite',
             fn() => $tokenMiddleware->strict(),
-            fn($id, $reviewId) => $productController->updateProductReview($id, $reviewId)
+            fn($id) => $productController->toggleFavorite($id)
         );
 
-        // Eliminar review de un producto
-        $router->delete(
-            '/products/{id}/reviews/{reviewId}',
+        // Stock
+        $router->patch(
+            '/products/{id}/stock',
             fn() => $tokenMiddleware->strict(),
-            fn($id, $reviewId) => $productController->deleteProductReview($id, $reviewId)
+            fn($id) => $productController->updateStock($id)
         );
 
-        // Estadísticas para vendedores
+        // Aprobación (admin)
+        $router->patch(
+            '/products/{id}/approval',
+            fn() => $tokenMiddleware->strict(),
+            fn($id) => $productController->updateApprovalStatus($id)
+        );
+
+        // ==================== RUTAS CON PARÁMETROS NUMÉRICOS ====================
+
+        // Producto por ID numérico
         $router->get(
-            '/products/owner/stats',
-            fn() => $tokenMiddleware->strict(),
-            fn() => $productController->getOwnerStats()
+            '/products/{id:\d+}',
+            fn() => $tokenMiddleware->optional(),
+            fn($id) => $productController->getProduct($id)
         );
 
-        // Obtener productos pendientes de aprobación (solo admin)
+        // Productos por categoría ID
+        $router->get(
+            '/products/category/{categoryId:\d+}',
+            fn() => $tokenMiddleware->optional(),
+            fn($categoryId) => $productController->getProductsByCategory($categoryId)
+        );
+
+        // Productos por país ID
+        $router->get(
+            '/products/country/{countryId:\d+}',
+            fn() => $tokenMiddleware->optional(),
+            fn($countryId) => $productController->getProductsByCountry($countryId)
+        );
+
+        // ==================== RUTAS CON PARÁMETROS DE TEXTO ====================
+
+        // Productos por nombre de categoría
+        $router->get(
+            '/products/category/name/{categoryName}',
+            fn() => $tokenMiddleware->optional(),
+            fn($categoryName) => $productController->getProductsByCategoryName($categoryName)
+        );
+
+        // Productos por nombre de país
+        $router->get(
+            '/products/country/name/{countryName}',
+            fn() => $tokenMiddleware->optional(),
+            fn($countryName) => $productController->getProductsByCountryName($countryName)
+        );
+
+        // Productos por ubicación
+        $router->get(
+            '/products/location/{ciudad}',
+            fn() => $tokenMiddleware->optional(),
+            fn($ciudad) => $productController->getProductsByLocation($ciudad)
+        );
+
+        // Búsqueda de productos
+        $router->get(
+            '/products/search/{query}',
+            fn() => $tokenMiddleware->optional(),
+            fn($query) => $productController->searchProducts($query)
+        );
+
+        // ==================== RUTAS DE COLECCIONES ESPECÍFICAS ====================
+
+        // Productos del propietario (vendedor)
+        $router->get(
+            '/products/owner',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $productController->getProductsByOwner()
+        );
+
+        // Productos favoritos
+        $router->get(
+            '/products/favorites',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $productController->getFavoriteProducts()
+        );
+
+        // Productos pendientes de aprobación
         $router->get(
             '/products/pending-approval',
             fn() => $tokenMiddleware->strict(),
             fn() => $productController->getPendingApproval()
         );
 
-        // Aprobar/rechazar producto (solo admin)
-        $router->patch(
-            '/products/{id}/approval',
+        // Estadísticas del propietario
+        $router->get(
+            '/products/owner/stats',
             fn() => $tokenMiddleware->strict(),
-            fn($id) => $productController->updateApprovalStatus($id)
+            fn() => $productController->getOwnerStats()
+        );
+
+        // Categorías
+        $router->get(
+            '/products/categories/all',
+            fn() => $tokenMiddleware->optional(),
+            fn() => $productController->getAllCategories()
+        );
+
+        // Países
+        $router->get(
+            '/products/countries/all',
+            fn() => $tokenMiddleware->optional(),
+            fn() => $productController->getAllCountries()
+        );
+
+        // Productos trending
+        $router->get(
+            '/products/trending/best-sellers',
+            fn() => $tokenMiddleware->optional(),
+            fn() => $productController->getBestSellers()
+        );
+
+        $router->get(
+            '/products/trending/new-arrivals',
+            fn() => $tokenMiddleware->optional(),
+            fn() => $productController->getNewArrivals()
+        );
+
+        $router->get(
+            '/products/trending/on-sale',
+            fn() => $tokenMiddleware->optional(),
+            fn() => $productController->getProductsOnSale()
+        );
+
+        // ==================== RUTAS DE OPERACIONES CRUD BÁSICAS ====================
+
+        // Actualización parcial
+        $router->patch(
+            '/products/{id}',
+            fn() => $tokenMiddleware->strict(),
+            fn($id) => $productController->partialUpdateProduct($id)
+        );
+
+        // Actualización completa
+        $router->put(
+            '/products/{id}',
+            fn() => $tokenMiddleware->strict(),
+            fn($id) => $productController->updateProduct($id)
+        );
+
+        // Eliminar producto
+        $router->delete(
+            '/products/{id}',
+            fn() => $tokenMiddleware->strict(),
+            fn($id) => $productController->deleteProduct($id)
+        );
+
+        // ==================== RUTAS GENERALES (ÚLTIMAS) ====================
+
+        // Búsqueda avanzada (múltiples parámetros query)
+        $router->get(
+            '/products/advanced/search',
+            fn() => $tokenMiddleware->optional(),
+            fn() => $productController->advancedSearchProducts()
+        );
+
+        // Crear nuevo producto
+        $router->post(
+            '/products',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $productController->createProduct()
+        );
+
+        // Listar todos los productos (ruta más general - ÚLTIMA)
+        $router->get(
+            '/products',
+            fn() => $tokenMiddleware->optional(),
+            fn() => $productController->listProducts()
         );
     }
 }
