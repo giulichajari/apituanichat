@@ -231,15 +231,15 @@ class ProductsRouter
         );
 
         // Actualización completa
-        $router->put(
-            '/products/{id}',
+       $router->put(
+            '/products/{id:\d+}',
             fn() => $tokenMiddleware->strict(),
             fn($id) => $productController->updateProduct($id)
         );
 
         // Eliminar producto
         $router->delete(
-            '/products/{id}',
+            '/products/{id:\d+}',
             fn() => $tokenMiddleware->strict(),
             fn($id) => $productController->deleteProduct($id)
         );

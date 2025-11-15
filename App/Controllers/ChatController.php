@@ -168,8 +168,23 @@ class ChatController
             return;
         }
 
-        // Traer mensajes desde el modelo
         $messages = $this->chatModel->getMessages($chatId, $userId);
+
+        // ✅ DEBUG: Verificar qué campos están llegando
+        error_log("📨 Mensajes enviados al frontend: " . count($messages));
+        foreach ($messages as $index => $msg) {
+            if (
+                strpos($msg['contenido'], '.jpg') !== false ||
+                strpos($msg['contenido'], '.png') !== false ||
+                strpos($msg['contenido'], '.webp') !== false
+            ) {
+                error_log("🔍 Mensaje {$index} (ID: {$msg['id']}):");
+                error_log("   - contenido: {$msg['contenido']}");
+                error_log("   - file_name: " . ($msg['file_name'] ?? 'NULL'));
+                error_log("   - file_url: " . ($msg['file_url'] ?? 'NULL'));
+                error_log("   - file_original_name: " . ($msg['file_original_name'] ?? 'NULL'));
+            }
+        }
 
         Router::$response->status(200)->send([
             "data" => $messages,

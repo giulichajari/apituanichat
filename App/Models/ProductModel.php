@@ -40,44 +40,43 @@ class ProductModel
     /**
      * Obtener producto por ID
      */
-  public function getProduct($productId, $userId = null)
+  public function getProduct($id)
 {
-    $logFile = __DIR__ . '/../../php-error.log';
-    
     try {
-        error_log("🔍 === GET PRODUCT ===\n", 3, $logFile);
-        error_log("🆔 Product ID: " . $productId . "\n", 3, $logFile);
-        error_log("👤 User ID: " . $userId . "\n", 3, $logFile);
-
-        $sql = "SELECT * FROM products WHERE id = :id";
-        $params = [':id' => $productId];
+        $productId = (int)$id;
         
-        if ($userId) {
-            $sql .= " AND seller_id = :user_id";
-            $params[':user_id'] = $userId;
-        }
-
-        error_log("🗃️ SQL: " . $sql . "\n", 3, $logFile);
-        error_log("🔑 Parámetros: " . print_r($params, true) . "\n", 3, $logFile);
-
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute($params);
-        $product = $stmt->fetch(\PDO::FETCH_ASSOC);
-
-        if ($product) {
-            error_log("✅ Producto encontrado: " . $product['name'] . "\n", 3, $logFile);
-        } else {
-            error_log("❌ Producto NO encontrado\n", 3, $logFile);
-        }
-
+        $stmt = $this->db->prepare("
+            SELECT p.*, 
+                   c.name as category_name,
+                   co.name as country_name
+            FROM products p
+            LEFT JOIN categories c ON p.category_id = c.id
+            LEFT JOIN countries co ON p.country_id = co.id  
+            LEFT JOIN users u ON p.seller_id = u.id
+            WHERE p.id = ?
+        ");
+        
+        $stmt->execute([$productId]);
+        $product = $stmt->fetch(PDO::FETCH_ASSOC);
+        
         return $product ?: null;
-
-    } catch (\PDOException $e) {
-        error_log("❌ Error en getProduct: " . $e->getMessage() . "\n", 3, $logFile);
+        
+    } catch (\Exception $e) {
+        error_log("Error en getProduct model: " . $e->getMessage());
         return null;
     }
 }
-
+public function getProductBySku($sku)
+{
+    try {
+        $stmt = $this->db->prepare("SELECT * FROM products WHERE sku = ?");
+        $stmt->execute([$sku]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    } catch (\Exception $e) {
+        error_log("Error en getProductBySku: " . $e->getMessage());
+        return null;
+    }
+}
     /**
      * Obtener productos con filtros
      */
