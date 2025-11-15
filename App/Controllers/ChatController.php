@@ -169,7 +169,9 @@ class ChatController
         }
 
         $messages = $this->chatModel->getMessages($chatId, $userId);
-
+        $logFile = __DIR__ . '../../php-errors.log';
+        ini_set('log_errors', 1);
+        ini_set('error_log', $logFile);
         // ✅ DEBUG: Verificar qué campos están llegando
         error_log("📨 Mensajes enviados al frontend: " . count($messages));
         foreach ($messages as $index => $msg) {
