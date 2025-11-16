@@ -549,8 +549,16 @@ class RestaurantController
             ]);
             return;
         }
+        error_log("ID recibido: " . print_r($id, true));
+        error_log("Tipo de ID: " . gettype($id));
 
-        $existingRestaurant = $this->restaurantModel->getRestaurantById($id);
+        // Si $id es un objeto Request, obtener el ID de otra forma
+        if ($id instanceof \EasyProjects\SimpleRouter\Request) {
+            $restaurantId = Router::$request->params->id ?? null;
+        } else {
+            $restaurantId = (int) $id;
+        }
+        $existingRestaurant = $this->restaurantModel->getRestaurantById($restaurantId);
         if (!$existingRestaurant) {
             Router::$response->status(404)->json([
                 "message" => "Restaurante no encontrado"
