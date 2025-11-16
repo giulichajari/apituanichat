@@ -541,20 +541,19 @@ class RestaurantController
         }
     }
 
- public function updateCoverImage($id)
+public function updateCoverImage($id)
 {
     // Debug inicial
     error_log("🔍 ID recibido en updateCoverImage: " . print_r($id, true));
-    error_log("📝 Tipo de ID: " . gettype($id));
 
-    // Si $id es un objeto Request, obtener el ID de los parámetros
+    // Obtener el ID correctamente
     if ($id instanceof \EasyProjects\SimpleRouter\Request) {
         $restaurantId = Router::$request->params->id ?? null;
-        error_log("🔄 ID obtenido de params: " . $restaurantId);
     } else {
         $restaurantId = (int) $id;
-        error_log("✅ ID convertido a int: " . $restaurantId);
     }
+
+    error_log("✅ Restaurant ID a usar: " . $restaurantId);
 
     if (!$restaurantId) {
         Router::$response->status(400)->json([
@@ -589,25 +588,58 @@ class RestaurantController
     }
 
     $file = $_FILES['cover_image'];
-    $targetDir = realpath(__DIR__ . '/../../uploads/restaurants/cover') . DIRECTORY_SEPARATOR;
+    
+    // Definir la ruta del directorio
+    $baseDir = realpath(__DIR__ . '/../../uploads') . DIRECTORY_SEPARATOR;
+    $targetDir = $baseDir . 'restaurants/cover/';
 
-    // Verificar y crear directorio
+    error_log("📁 Ruta base: " . $baseDir);
+    error_log("📁 Ruta destino: " . $targetDir);
+
+    // 👇 CREACIÓN ROBUSTA DE DIRECTORIOS
     if (!is_dir($targetDir)) {
+        error_log("📁 El directorio no existe, creándolo: " . $targetDir);
+        
+        // Intentar crear el directorio recursivamente
         if (!mkdir($targetDir, 0755, true)) {
+            $error = error_get_last();
+            error_log("❌ Error creando directorio: " . print_r($error, true));
             Router::$response->status(500)->json([
-                "message" => "No se pudo crear el directorio de destino"
+                "message" => "No se pudo crear el directorio de destino. Error: " . ($error['message'] ?? 'desconocido')
+            ]);
+            return;
+        }
+        error_log("✅ Directorio creado exitosamente");
+        
+        // Intentar dar permisos explícitos
+        if (!chmod($targetDir, 0755)) {
+            error_log("⚠️ No se pudieron cambiar los permisos, pero el directorio se creó");
+        }
+    }
+
+    // Verificar que ahora sí existe y es escribible
+    if (!is_dir($targetDir)) {
+        Router::$response->status(500)->json([
+            "message" => "El directorio de destino no existe y no se pudo crear"
+        ]);
+        return;
+    }
+
+    if (!is_writable($targetDir)) {
+        error_log("❌ Directorio no escribible. Permisos actuales: " . substr(sprintf('%o', fileperms($targetDir)), -4));
+        
+        // Intentar arreglar permisos
+        if (chmod($targetDir, 0755)) {
+            error_log("✅ Permisos corregidos a 755");
+        } else {
+            Router::$response->status(500)->json([
+                "message" => "El directorio no tiene permisos de escritura"
             ]);
             return;
         }
     }
 
-    // Verificar permisos de escritura
-    if (!is_writable($targetDir)) {
-        Router::$response->status(500)->json([
-            "message" => "El directorio no tiene permisos de escritura"
-        ]);
-        return;
-    }
+    error_log("✅ Directorio listo: " . $targetDir . " (escribible: " . (is_writable($targetDir) ? "SÍ" : "NO") . ")");
 
     // Validaciones de seguridad
     $allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -631,14 +663,15 @@ class RestaurantController
     $filename = uniqid() . "_" . basename($file['name']);
     $targetFile = $targetDir . $filename;
 
-    error_log("📁 Intentando guardar archivo en: " . $targetFile);
+    error_log("💾 Intentando guardar archivo: " . $targetFile);
 
     if (move_uploaded_file($file['tmp_name'], $targetFile)) {
         // Solo el nombre del archivo
         $imagePath = $filename;
 
-        // 👈 CORRECCIÓN IMPORTANTE: Usar $restaurantId, no $id
+        // Usar $restaurantId, no $id
         if ($this->restaurantModel->updateCoverImage($restaurantId, $imagePath)) {
+            error_log("✅ Imagen guardada exitosamente: " . $imagePath);
             Router::$response->status(200)->json([
                 "message" => "Imagen de portada actualizada correctamente",
                 "foto_portada" => $imagePath
@@ -646,12 +679,14 @@ class RestaurantController
         } else {
             // Eliminar archivo si falla la BD
             unlink($targetFile);
+            error_log("❌ Error en la base de datos");
             Router::$response->status(500)->json([
                 "message" => "Error al guardar la ruta de la imagen en la base de datos"
             ]);
         }
     } else {
-        error_log("❌ Error al mover archivo. Permisos?: " . $targetFile);
+        $error = error_get_last();
+        error_log("❌ Error al mover archivo: " . print_r($error, true));
         Router::$response->status(500)->json([
             "message" => "Error al subir la imagen. Verifique los permisos del servidor."
         ]);
