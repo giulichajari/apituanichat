@@ -573,18 +573,40 @@ class RestaurantController
             mkdir($targetDir, 0777, true);
         }
 
+        // Validaciones de seguridad
+        $allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        $fileType = mime_content_type($file['tmp_name']);
+
+        if (!in_array($fileType, $allowedTypes)) {
+            Router::$response->status(400)->json([
+                "message" => "Tipo de archivo no permitido. Solo se permiten JPEG, PNG, GIF y WebP"
+            ]);
+            return;
+        }
+
+        // Validar tamaño (max 10MB para imágenes de portada)
+        if ($file['size'] > 10 * 1024 * 1024) {
+            Router::$response->status(400)->json([
+                "message" => "El archivo es demasiado grande. Máximo 10MB permitidos"
+            ]);
+            return;
+        }
+
         $filename = uniqid() . "_" . basename($file['name']);
         $targetFile = $targetDir . $filename;
 
         if (move_uploaded_file($file['tmp_name'], $targetFile)) {
-            $imagePath = "/uploads/restaurants/cover/" . $filename;
+            // 👈 CAMBIO IMPORTANTE: Solo el nombre del archivo
+            $imagePath = $filename;
 
             if ($this->restaurantModel->updateCoverImage($id, $imagePath)) {
                 Router::$response->status(200)->json([
                     "message" => "Imagen de portada actualizada correctamente",
-                    "foto_portada" => $imagePath
+                    "foto_portada" => $imagePath // 👈 Solo el nombre del archivo
                 ]);
             } else {
+                // Eliminar archivo si falla la BD
+                unlink($targetFile);
                 Router::$response->status(500)->json([
                     "message" => "Error al guardar la ruta de la imagen en la base de datos"
                 ]);

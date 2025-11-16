@@ -136,10 +136,6 @@ class DriverController
                 'destinationAddress' => $destinationAddress,
                 'estimated_fare' => $estimatedFare
             ]);
-
-
-          
-
         } catch (\PDOException $e) {
             error_log("❌ Error al guardar chat/mensaje: " . $e->getMessage());
             $chatId = null;
@@ -256,6 +252,16 @@ class DriverController
 
     public function updateProfileImage()
     {
+        // Obtener el user_id del token JWT en lugar de params
+        $userId = Router::$request->user->id;
+
+        if (!$userId) {
+            Router::$response->status(401)->json([
+                "message" => "Usuario no autenticado"
+            ]);
+            return;
+        }
+
         if (!isset($_FILES['profile_image'])) {
             Router::$response->status(400)->json([
                 "message" => "No profile image uploaded"
@@ -266,25 +272,45 @@ class DriverController
         $file = $_FILES['profile_image'];
         $targetDir = realpath(__DIR__ . '/../../uploads/avatars/drivers') . DIRECTORY_SEPARATOR;
 
+        // Crear directorio si no existe
         if (!is_dir($targetDir)) {
             mkdir($targetDir, 0777, true);
         }
 
+        // Generar nombre único para el archivo
         $filename = uniqid() . "_" . basename($file['name']);
         $targetFile = $targetDir . $filename;
-        $id = Router::$request->user->id ?? null;
 
+        // Validar tipo de archivo
+        $allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        $fileType = mime_content_type($file['tmp_name']);
 
+        if (!in_array($fileType, $allowedTypes)) {
+            Router::$response->status(400)->json([
+                "message" => "Tipo de archivo no permitido. Solo se permiten JPEG, PNG, GIF y WebP"
+            ]);
+            return;
+        }
+
+        // Validar tamaño del archivo (max 5MB)
+        if ($file['size'] > 5 * 1024 * 1024) {
+            Router::$response->status(400)->json([
+                "message" => "El archivo es demasiado grande. Máximo 5MB permitidos"
+            ]);
+            return;
+        }
 
         if (move_uploaded_file($file['tmp_name'], $targetFile)) {
-            $imagePath = "/uploads/avatars/drivers/" . $filename;
+            $imagePath = $filename; // 👈 CAMBIO IMPORTANTE: Solo el nombre del archivo
 
-            if ($this->driverModel->updateProfileImage($id, $imagePath)) {
+            if ($this->driverModel->updateProfileImage($userId, $imagePath)) {
                 Router::$response->status(200)->json([
                     "message" => "Profile image updated successfully",
-                    "profile_image" => $imagePath
+                    "profile_image" => $imagePath // 👈 Solo el nombre del archivo
                 ]);
             } else {
+                // Si falla la BD, eliminar el archivo subido
+                unlink($targetFile);
                 Router::$response->status(500)->json([
                     "message" => "Error saving image path to database"
                 ]);

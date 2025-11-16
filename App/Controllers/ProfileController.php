@@ -116,7 +116,7 @@ class ProfileController
                     "message" => "Avatar updated successfully",
                     "avatar" => $avatarPath
                 ]);
-                $this->profileModel->updateAvatar($userId, $targetFile);
+                $this->profileModel->updateAvatar($userId, $filename);
             } else {
                 Router::$response->status(500)->json([
                     "message" => "Error saving avatar path in database"

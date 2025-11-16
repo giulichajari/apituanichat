@@ -97,7 +97,7 @@ class ProfileModel
     public function updateAvatar(int $userId, string $avatarPath): bool
     {
         try {
-            $stmt = $this->db->prepare("UPDATE users SET avatar = :avatar WHERE id = :id");
+            $stmt = $this->db->prepare("UPDATE profiles SET avatar = :avatar WHERE id = :id");
             return $stmt->execute([
                 ':avatar' => $avatarPath,
                 ':id' => $userId
