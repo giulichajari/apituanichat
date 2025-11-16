@@ -541,90 +541,122 @@ class RestaurantController
         }
     }
 
-    public function updateCoverImage($id)
-    {
-        if (!isset($_FILES['cover_image'])) {
-            Router::$response->status(400)->json([
-                "message" => "No se subió ninguna imagen de portada"
-            ]);
-            return;
-        }
-        error_log("ID recibido: " . print_r($id, true));
-        error_log("Tipo de ID: " . gettype($id));
+ public function updateCoverImage($id)
+{
+    // Debug inicial
+    error_log("🔍 ID recibido en updateCoverImage: " . print_r($id, true));
+    error_log("📝 Tipo de ID: " . gettype($id));
 
-        // Si $id es un objeto Request, obtener el ID de otra forma
-        if ($id instanceof \EasyProjects\SimpleRouter\Request) {
-            $restaurantId = Router::$request->params->id ?? null;
-        } else {
-            $restaurantId = (int) $id;
-        }
-        $existingRestaurant = $this->restaurantModel->getRestaurantById($restaurantId);
-        if (!$existingRestaurant) {
-            Router::$response->status(404)->json([
-                "message" => "Restaurante no encontrado"
-            ]);
-            return;
-        }
+    // Si $id es un objeto Request, obtener el ID de los parámetros
+    if ($id instanceof \EasyProjects\SimpleRouter\Request) {
+        $restaurantId = Router::$request->params->id ?? null;
+        error_log("🔄 ID obtenido de params: " . $restaurantId);
+    } else {
+        $restaurantId = (int) $id;
+        error_log("✅ ID convertido a int: " . $restaurantId);
+    }
 
-        $userId = Router::$request->user->id ?? null;
-        if ($existingRestaurant['user_id'] != $userId) {
-            Router::$response->status(403)->json([
-                "message" => "No tienes permisos para editar este restaurante"
-            ]);
-            return;
-        }
+    if (!$restaurantId) {
+        Router::$response->status(400)->json([
+            "message" => "ID de restaurante no proporcionado"
+        ]);
+        return;
+    }
 
-        $file = $_FILES['cover_image'];
-        $targetDir = realpath(__DIR__ . '/../../uploads/restaurants/cover') . DIRECTORY_SEPARATOR;
+    if (!isset($_FILES['cover_image'])) {
+        Router::$response->status(400)->json([
+            "message" => "No se subió ninguna imagen de portada"
+        ]);
+        return;
+    }
 
-        if (!is_dir($targetDir)) {
-            mkdir($targetDir, 0777, true);
-        }
+    // Verificar que el restaurante existe
+    $existingRestaurant = $this->restaurantModel->getRestaurantById($restaurantId);
+    if (!$existingRestaurant) {
+        Router::$response->status(404)->json([
+            "message" => "Restaurante no encontrado"
+        ]);
+        return;
+    }
 
-        // Validaciones de seguridad
-        $allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-        $fileType = mime_content_type($file['tmp_name']);
+    // Verificar permisos
+    $userId = Router::$request->user->id ?? null;
+    if ($existingRestaurant['user_id'] != $userId) {
+        Router::$response->status(403)->json([
+            "message" => "No tienes permisos para editar este restaurante"
+        ]);
+        return;
+    }
 
-        if (!in_array($fileType, $allowedTypes)) {
-            Router::$response->status(400)->json([
-                "message" => "Tipo de archivo no permitido. Solo se permiten JPEG, PNG, GIF y WebP"
-            ]);
-            return;
-        }
+    $file = $_FILES['cover_image'];
+    $targetDir = realpath(__DIR__ . '/../../uploads/restaurants/cover') . DIRECTORY_SEPARATOR;
 
-        // Validar tamaño (max 10MB para imágenes de portada)
-        if ($file['size'] > 10 * 1024 * 1024) {
-            Router::$response->status(400)->json([
-                "message" => "El archivo es demasiado grande. Máximo 10MB permitidos"
-            ]);
-            return;
-        }
-
-        $filename = uniqid() . "_" . basename($file['name']);
-        $targetFile = $targetDir . $filename;
-
-        if (move_uploaded_file($file['tmp_name'], $targetFile)) {
-            // 👈 CAMBIO IMPORTANTE: Solo el nombre del archivo
-            $imagePath = $filename;
-
-            if ($this->restaurantModel->updateCoverImage($id, $imagePath)) {
-                Router::$response->status(200)->json([
-                    "message" => "Imagen de portada actualizada correctamente",
-                    "foto_portada" => $imagePath // 👈 Solo el nombre del archivo
-                ]);
-            } else {
-                // Eliminar archivo si falla la BD
-                unlink($targetFile);
-                Router::$response->status(500)->json([
-                    "message" => "Error al guardar la ruta de la imagen en la base de datos"
-                ]);
-            }
-        } else {
+    // Verificar y crear directorio
+    if (!is_dir($targetDir)) {
+        if (!mkdir($targetDir, 0755, true)) {
             Router::$response->status(500)->json([
-                "message" => "Error al subir la imagen"
+                "message" => "No se pudo crear el directorio de destino"
             ]);
+            return;
         }
     }
+
+    // Verificar permisos de escritura
+    if (!is_writable($targetDir)) {
+        Router::$response->status(500)->json([
+            "message" => "El directorio no tiene permisos de escritura"
+        ]);
+        return;
+    }
+
+    // Validaciones de seguridad
+    $allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    $fileType = mime_content_type($file['tmp_name']);
+
+    if (!in_array($fileType, $allowedTypes)) {
+        Router::$response->status(400)->json([
+            "message" => "Tipo de archivo no permitido. Solo se permiten JPEG, PNG, GIF y WebP"
+        ]);
+        return;
+    }
+
+    // Validar tamaño (max 10MB para imágenes de portada)
+    if ($file['size'] > 10 * 1024 * 1024) {
+        Router::$response->status(400)->json([
+            "message" => "El archivo es demasiado grande. Máximo 10MB permitidos"
+        ]);
+        return;
+    }
+
+    $filename = uniqid() . "_" . basename($file['name']);
+    $targetFile = $targetDir . $filename;
+
+    error_log("📁 Intentando guardar archivo en: " . $targetFile);
+
+    if (move_uploaded_file($file['tmp_name'], $targetFile)) {
+        // Solo el nombre del archivo
+        $imagePath = $filename;
+
+        // 👈 CORRECCIÓN IMPORTANTE: Usar $restaurantId, no $id
+        if ($this->restaurantModel->updateCoverImage($restaurantId, $imagePath)) {
+            Router::$response->status(200)->json([
+                "message" => "Imagen de portada actualizada correctamente",
+                "foto_portada" => $imagePath
+            ]);
+        } else {
+            // Eliminar archivo si falla la BD
+            unlink($targetFile);
+            Router::$response->status(500)->json([
+                "message" => "Error al guardar la ruta de la imagen en la base de datos"
+            ]);
+        }
+    } else {
+        error_log("❌ Error al mover archivo. Permisos?: " . $targetFile);
+        Router::$response->status(500)->json([
+            "message" => "Error al subir la imagen. Verifique los permisos del servidor."
+        ]);
+    }
+}
 
     public function getFavoriteRestaurants()
     {
