@@ -3,7 +3,7 @@
 namespace App\Controllers;
 
 use App\Models\UsersModel;
-use App\Models\DriverModel; 
+use App\Models\DriverModel;
 use EasyProjects\SimpleRouter\Router;
 
 class UsersController
@@ -15,11 +15,28 @@ class UsersController
 
     public function getUsers()
     {
-        $users = $this->usuariosModel->getUsers(Router::$request->params->page);
+        $page = Router::$request->params->page ?? 1;
+        $users = $this->usuariosModel->getUsers($page);
 
         if ($users) {
+            // Adaptar los datos para el componente frontend
+            $adaptedUsers = array_map(function ($user) {
+                return [
+                    'id' => $user['id'],
+                    'name' => $user['name'],
+                    'email' => $user['email'],
+                    'phone' => $user['phone'],
+                    'role' => $user['rol'] ?? 'user',
+                    'avatar' => $this->generateDefaultAvatar($user['name']),
+                    'type' => $user['rol'] ?? 'user',
+                    'isOnline' => false, // Por defecto
+                    'lastSeen' => $user['created_at'], // Usar created_at como último visto
+                    'lastMessage' => null
+                ];
+            }, $users);
+
             Router::$response->status(200)->send([
-                "data" => $this->usuariosModel->getUsers(Router::$request->params->page),
+                "data" => $adaptedUsers,
                 "message" => "Has been listed the users"
             ]);
         } else if (is_array($users) && count($users) == 0) {
@@ -28,9 +45,15 @@ class UsersController
             ]);
         } else {
             Router::$response->status(500)->send([
-                "message" => "An error has ocurred"
+                "message" => "An error has occurred"
             ]);
         }
+    }
+
+    private function generateDefaultAvatar(string $name): string
+    {
+        $initials = strtoupper(substr($name, 0, 2));
+        return "https://ui-avatars.com/api/?name=" . urlencode($initials) . "&background=random&color=fff";
     }
 
     public function getUser()
