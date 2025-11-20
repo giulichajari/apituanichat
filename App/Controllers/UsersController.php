@@ -125,9 +125,6 @@ class UsersController
             ]);
         }
     }
-    /**
-     * Registro de usuario
-     */
     public function register()
     {
         $name = Router::$request->body->name ?? null;
@@ -170,17 +167,102 @@ class UsersController
             ]);
         }
 
-        // 🧩 Si el rol es driver, crear también un registro vacío en la tabla drivers
-        if ($rol === 'Driver') {
-            $driverModel = new DriverModel();
-            $driverModel->createEmptyProfile($userId); // <-- id retornado de addUser
+        try {
+            // 🧩 Crear chats con todos los usuarios existentes
+            $this->createChatsWithExistingUsers($userId);
+
+            // 🧩 Si el rol es driver, crear registro vacío en la tabla drivers
+            if ($rol === 'Driver') {
+                $driverModel = new DriverModel();
+                $driverModel->createEmptyProfile($userId);
+            } else {
+                // 🧩 Para usuarios normales, crear perfil vacío en la tabla profiles
+                $this->createEmptyUserProfile($userId, $email);
+            }
+
+            return Router::$response->status(201)->send([
+                "message" => "User registered successfully",
+                "user_id" => $userId
+            ]);
+        } catch (Exception $e) {
+            // Si hay error en la creación de chats o perfil, eliminar el usuario creado
+            $this->usuariosModel->deleteUser($userId);
+
+            return Router::$response->status(500)->send([
+                "message" => "Error creating user profile or chats"
+            ]);
         }
+    }
 
+    /**
+     * Crear chats entre el nuevo usuario y todos los usuarios existentes
+     */
+    private function createChatsWithExistingUsers(int $newUserId): void
+    {
+        try {
+            // Obtener todos los usuarios existentes (excluyendo el nuevo)
+            $existingUsers = $this->usuariosModel->getAllUsersExcept($newUserId);
 
-        return Router::$response->status(201)->send([
-            "message" => "User registered successfully",
-            "user_id" => $userId
-        ]);
+            if (empty($existingUsers)) {
+                return; // No hay usuarios existentes con quienes chatear
+            }
+
+            // Crear un chat individual con cada usuario existente
+            foreach ($existingUsers as $existingUser) {
+                $this->createIndividualChat($newUserId, $existingUser['id']);
+            }
+        } catch (Exception $e) {
+            error_log("Error creating chats for user {$newUserId}: " . $e->getMessage());
+            throw $e;
+        }
+    }
+
+    /**
+     * Crear un chat individual entre dos usuarios
+     */
+    private function createIndividualChat(int $userId1, int $userId2): void
+    {
+        try {
+            // Crear el chat
+            $chatId = $this->usuariosModel->createChat([
+                'name' => "Chat: {$userId1}-{$userId2}",
+                'type' => 'individual',
+                'created_by' => $userId1
+            ]);
+
+            if ($chatId) {
+                // Agregar ambos usuarios al chat
+                $this->usuariosModel->addUserToChat($chatId, $userId1);
+                $this->usuariosModel->addUserToChat($chatId, $userId2);
+            }
+        } catch (Exception $e) {
+            error_log("Error creating chat between {$userId1} and {$userId2}: " . $e->getMessage());
+            throw $e;
+        }
+    }
+
+    /**
+     * Crear perfil vacío para usuario normal
+     */
+    private function createEmptyUserProfile(int $userId, string $email): void
+    {
+        try {
+            $this->usuariosModel->createUserProfile([
+                'user_id' => $userId,
+                'email' => $email,
+                'bio' => null,
+                'website' => null,
+                'instagram' => null,
+                'facebook' => null,
+                'twitter' => null,
+                'linkedin' => null,
+                'tiktok' => null,
+                'avatar' => null
+            ]);
+        } catch (Exception $e) {
+            error_log("Error creating profile for user {$userId}: " . $e->getMessage());
+            throw $e;
+        }
     }
 
 

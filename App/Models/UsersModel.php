@@ -29,7 +29,114 @@ class UsersModel
             return false;
         }
     }
+// En UsuariosModel.php
 
+    /**
+     * Obtener todos los usuarios excepto uno específico
+     */
+    public function getAllUsersExcept(int $excludeUserId): array
+    {
+        try {
+            $stmt = $this->db->prepare("
+            SELECT id, name, email 
+            FROM users 
+            WHERE id != :exclude_id 
+            AND deleted_at IS NULL
+        ");
+            $stmt->execute([':exclude_id' => $excludeUserId]);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            error_log('Error getting users except: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Crear un nuevo chat
+     */
+    public function createChat(array $chatData): int|false
+    {
+        try {
+            $stmt = $this->db->prepare("
+            INSERT INTO chats (name, type, created_by, created_at) 
+            VALUES (:name, :type, :created_by, NOW())
+        ");
+            $stmt->execute([
+                ':name' => $chatData['name'],
+                ':type' => $chatData['type'],
+                ':created_by' => $chatData['created_by']
+            ]);
+            return (int)$this->db->lastInsertId();
+        } catch (PDOException $e) {
+            error_log('Error creating chat: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Agregar usuario a un chat
+     */
+    public function addUserToChat(int $chatId, int $userId): bool
+    {
+        try {
+            $stmt = $this->db->prepare("
+            INSERT INTO chat_usuarios (chat_id, user_id, joined_at) 
+            VALUES (:chat_id, :user_id, NOW())
+        ");
+            return $stmt->execute([
+                ':chat_id' => $chatId,
+                ':user_id' => $userId
+            ]);
+        } catch (PDOException $e) {
+            error_log('Error adding user to chat: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Crear perfil de usuario
+     */
+    public function createUserProfile(array $profileData): bool
+    {
+        try {
+            $stmt = $this->db->prepare("
+            INSERT INTO profiles 
+            (user_id, bio, email, website, instagram, facebook, twitter, linkedin, tiktok, avatar, created_at) 
+            VALUES 
+            (:user_id, :bio, :email, :website, :instagram, :facebook, :twitter, :linkedin, :tiktok, :avatar, NOW())
+        ");
+
+            return $stmt->execute([
+                ':user_id' => $profileData['user_id'],
+                ':bio' => $profileData['bio'],
+                ':email' => $profileData['email'],
+                ':website' => $profileData['website'],
+                ':instagram' => $profileData['instagram'],
+                ':facebook' => $profileData['facebook'],
+                ':twitter' => $profileData['twitter'],
+                ':linkedin' => $profileData['linkedin'],
+                ':tiktok' => $profileData['tiktok'],
+                ':avatar' => $profileData['avatar']
+            ]);
+        } catch (PDOException $e) {
+            error_log('Error creating user profile: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Eliminar usuario (en caso de error durante el registro)
+     */
+    public function deleteUser(int $userId): bool
+    {
+        try {
+            $stmt = $this->db->prepare("DELETE FROM users WHERE id = :id");
+            return $stmt->execute([':id' => $userId]);
+        } catch (PDOException $e) {
+            error_log('Error deleting user: ' . $e->getMessage());
+            return false;
+        }
+    }
     // Obtener un usuario por ID
     public function getUser(int $id): array|bool
     {
