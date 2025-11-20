@@ -124,19 +124,7 @@ class UsersModel
         }
     }
 
-    /**
-     * Eliminar usuario (en caso de error durante el registro)
-     */
-    public function deleteUser(int $userId): bool
-    {
-        try {
-            $stmt = $this->db->prepare("DELETE FROM users WHERE id = :id");
-            return $stmt->execute([':id' => $userId]);
-        } catch (PDOException $e) {
-            error_log('Error deleting user: ' . $e->getMessage());
-            return false;
-        }
-    }
+   
     // Obtener un usuario por ID
     public function getUser(int $id): array|bool
     {
