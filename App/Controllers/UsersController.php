@@ -29,7 +29,7 @@ class UsersController
                     'role' => $user['rol'] ?? 'user',
                     'avatar' => $this->generateDefaultAvatar($user['name']),
                     'type' => $user['rol'] ?? 'user',
-                    'isOnline' => false, // Por defecto
+                     'isOnline' => $user['online'] == 1, // ✅ CORREGIDO: Usar campo 'online' real
                     'lastSeen' => $user['created_at'], // Usar created_at como último visto
                     'lastMessage' => null
                 ];
