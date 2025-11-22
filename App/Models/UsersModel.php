@@ -20,7 +20,7 @@ class UsersModel
     {
         try {
             $offset = ($page - 1) * $perPage;
-            $stmt = $this->db->prepare("SELECT id, name, email, phone, is_verified, created_at FROM users LIMIT :limit OFFSET :offset");
+            $stmt = $this->db->prepare("SELECT id, name, email, phone, is_verified,online,rol, created_at FROM users LIMIT :limit OFFSET :offset");
             $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
             $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
             $stmt->execute();
