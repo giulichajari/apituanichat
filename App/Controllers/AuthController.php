@@ -41,7 +41,7 @@ class AuthController
 
       $stmt = $db->prepare("
         UPDATE users  
-        SET otp = :otp, otp_created_at = NOW(), last_seen = NOW(),online=1 
+        SET otp = :otp, otp_created_at = NOW(), last_seen = NOW()
         WHERE id = :id
     ");
       $stmt->bindValue(':otp', $otp);
