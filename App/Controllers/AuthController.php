@@ -162,6 +162,8 @@ public static function login()
     try {
       $body = Router::$request->body;
       $userId = $body->user_id ?? null;
+      error_log($userId, 3, "/var/www/apituanichat/php-error.log");
+      error_log($body, 3, "/var/www/apituanichat/php-error.log");
 
       if (!$userId) {
         Router::$response->json(['error' => 'user_id requerido'], 400);

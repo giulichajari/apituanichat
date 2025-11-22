@@ -50,6 +50,7 @@ class UsersRouter
             fn() => $usersController->deleteUser()
         );
         $router->post("/login", fn() => $authController->login());
+        $router->post("/logout", fn() => $authController->logout());
         $router->post("/verify-otp", fn() => $authController->verifyOtp());
         $router->post('/register', function () {
             $controller = new UsersController();
