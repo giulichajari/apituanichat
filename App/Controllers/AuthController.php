@@ -160,10 +160,18 @@ public static function login()
   public static function logout()
   {
     try {
-      $body = Router::$request->body;
-      $userId = $body->user_id ?? null;
-      error_log($userId, 3, "/var/www/apituanichat/php-error.log");
-      error_log($body, 3, "/var/www/apituanichat/php-error.log");
+      $headers = getallheaders();
+        $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? '';
+        
+        if (!preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
+            Router::$response->json(['error' => 'Token no proporcionado'], 401);
+            return;
+        }
+
+        $token = $matches[1];
+        $secretKey = "TU_SECRET_KEY";
+ $decoded = JWT::decode($token, new Key($secretKey, 'HS256'));
+        $userId = $decoded->user_id;
 
       if (!$userId) {
         Router::$response->json(['error' => 'user_id requerido'], 400);
