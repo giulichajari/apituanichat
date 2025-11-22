@@ -64,7 +64,7 @@ class AuthController
 
       $stmt = $db->prepare("
     UPDATE user_tokens 
-    SET token = :token, created_at = :created_at, expires_at = :expires_at, online=1
+    SET token = :token, created_at = :created_at, expires_at = :expires_at,
     WHERE id = :id
 ");
       $stmt->bindValue(':token', $jwt);
