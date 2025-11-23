@@ -177,7 +177,7 @@ public function sendMessage()
         // ✅ Si el chat podría no existir, necesitamos other_user_id
         if (!$otherUserId) {
             // Intentar obtener el otro usuario del chat existente
-            $otherUserId = $this->getOtherUserFromChat($chatId, $userId);
+            $otherUserId = $this->chatModel->getOtherUserFromChat($chatId, $userId);
             
             if (!$otherUserId) {
                 Router::$response->status(400)->send([
@@ -207,26 +207,7 @@ public function sendMessage()
     }
 }
 
-// ✅ Método auxiliar para obtener el otro usuario de un chat existente
-private function getOtherUserFromChat($chatId, $currentUserId)
-{
-    try {
-        if (!$chatId) return null;
-        
-        $stmt = $this->chatModel->db->prepare("
-            SELECT user_id FROM chat_usuarios 
-            WHERE chat_id = ? AND user_id != ?
-            LIMIT 1
-        ");
-        $stmt->execute([$chatId, $currentUserId]);
-        $result = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        return $result ? $result['user_id'] : null;
-    } catch (Exception $e) {
-        error_log("Error obteniendo otro usuario del chat: " . $e->getMessage());
-        return null;
-    }
-}
+
 
     // ✅ Obtener mensajes de un chat
     public function getMessages()
