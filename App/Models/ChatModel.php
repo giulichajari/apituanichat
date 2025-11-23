@@ -88,7 +88,7 @@ class ChatModel
         try {
             if (!$chatId) return null;
 
-            $stmt = $this->chatModel->db->prepare("
+            $stmt = $this->db->prepare("
             SELECT user_id FROM chat_usuarios 
             WHERE chat_id = ? AND user_id != ?
             LIMIT 1
