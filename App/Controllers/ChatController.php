@@ -174,27 +174,45 @@ public function sendMessage()
             return;
         }
 
-        // ✅ Si el chat podría no existir, necesitamos other_user_id
+        // ✅ VALIDACIÓN CRÍTICA: other_user_id no puede ser el mismo que user_id
+        if ($otherUserId && $otherUserId == $userId) {
+            Router::$response->status(400)->send([
+                "success" => false,
+                "message" => "No puedes enviar mensajes a ti mismo"
+            ]);
+            return;
+        }
+
+        // ✅ Si no tenemos other_user_id, intentar obtenerlo
         if (!$otherUserId) {
-            // Intentar obtener el otro usuario del chat existente
-            $otherUserId = $this->chatModel->getOtherUserFromChat($chatId, $userId);
-            
-            if (!$otherUserId) {
+            // Si el chatId existe y es diferente al userId, usarlo como other_user_id
+            if ($chatId && $chatId != $userId) {
+                $otherUserId = $chatId;
+                $chatId = null; // Forzar búsqueda/creación de chat
+            } else {
                 Router::$response->status(400)->send([
                     "success" => false,
-                    "message" => "Se necesita other_user_id para crear un chat nuevo o el chat no existe"
+                    "message" => "Se necesita other_user_id para identificar con quién chatear"
                 ]);
                 return;
             }
         }
 
-        // ✅ Usar la función mejorada que crea chat si no existe
+        // ✅ LOG PARA DEBUG
+        error_log("📨 Enviando mensaje - User: {$userId}, Other: {$otherUserId}, Chat: {$chatId}");
+
+        // ✅ Usar la función mejorada
         $msgId = $this->chatModel->sendMessage($chatId, $userId, $contenido, $tipo, null, $otherUserId);
+
+        // ✅ Obtener el chat_id final que se usó
+        $finalChatId = $this->chatModel->getLastUsedChatId();
 
         Router::$response->status(201)->send([
             "success" => true,
             "message_id" => $msgId,
-            "chat_id" => $chatId,
+            "chat_id" => $finalChatId,
+            "user_id" => $userId,
+            "other_user_id" => $otherUserId,
             "message" => "Message sent successfully"
         ]);
 
