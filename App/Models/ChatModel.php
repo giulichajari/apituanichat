@@ -74,7 +74,7 @@ class ChatModel
     private function userExists($userId): bool
     {
         try {
-            $stmt = $this->db->prepare("SELECT id FROM usuarios WHERE id = ?");
+            $stmt = $this->db->prepare("SELECT id FROM users WHERE id = ?");
             $stmt->execute([$userId]);
             return $stmt->fetch() !== false;
         } catch (Exception $e) {
