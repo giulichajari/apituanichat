@@ -108,7 +108,6 @@ class ChatController
                     "message" => "Error saving file to database"
                 ]);
             }
-
         } catch (Exception $e) {
             error_log("❌ Error in uploadFile: " . $e->getMessage());
             Router::$response->status(500)->send([
@@ -140,7 +139,6 @@ class ChatController
                 "chat_id" => $chatId,
                 "message" => "Chat created successfully"
             ]);
-
         } catch (Exception $e) {
             error_log("Error creating chat: " . $e->getMessage());
             Router::$response->status(500)->send([
@@ -150,7 +148,7 @@ class ChatController
         }
     }
 
-    // ✅ Enviar mensaje - VERSIÓN MEJORADA
+    // En ChatController.php - método sendMessage mejorado
     public function sendMessage()
     {
         try {
@@ -161,7 +159,7 @@ class ChatController
             $chatId = $body->chat_id ?? null;
             $contenido = trim($body->contenido ?? '');
             $tipo = $body->tipo ?? 'texto';
-            $userIds = $body->user_ids ?? [$userId];
+            $otherUserId = $body->other_user_id ?? null; // ✅ Nuevo parámetro
 
             if (!$contenido || !$userId) {
                 Router::$response->status(400)->send([
@@ -171,36 +169,24 @@ class ChatController
                 return;
             }
 
-            // ✅ Usar la función mejorada que verifica/crea chat
-            if ($chatId) {
-                // Chat existente
-                $msgId = $this->chatModel->sendMessage($chatId, $userId, $contenido, $tipo);
-            } else {
-                // Nuevo chat - necesitamos los user_ids
-                if (!isset($body->user_ids) || !is_array($body->user_ids)) {
-                    Router::$response->status(400)->send([
-                        "success" => false,
-                        "message" => "user_ids requerido para crear nuevo chat"
-                    ]);
-                    return;
-                }
-
-                $msgId = $this->chatModel->sendMessageWithChatCheck(
-                    $body->user_ids,
-                    $contenido,
-                    $tipo,
-                    null,
-                    $chatId
-                );
+            // ✅ Si no hay chatId, necesitamos el other_user_id
+            if (!$chatId && !$otherUserId) {
+                Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "Se necesita chat_id o other_user_id para enviar mensaje"
+                ]);
+                return;
             }
+
+            // ✅ Usar la función mejorada que crea chat automáticamente
+            $msgId = $this->chatModel->sendMessage($chatId, $userId, $contenido, $tipo, null, $otherUserId);
 
             Router::$response->status(201)->send([
                 "success" => true,
                 "message_id" => $msgId,
-                "chat_id" => $chatId,
+                "chat_id" => $chatId ?: 'nuevo-chat-creado', // Indica si se creó nuevo chat
                 "message" => "Message sent successfully"
             ]);
-
         } catch (Exception $e) {
             error_log("Error enviando mensaje: " . $e->getMessage());
             Router::$response->status(500)->send([
@@ -255,7 +241,6 @@ class ChatController
                 "chat_id" => $chatId,
                 "message" => "Messages retrieved successfully"
             ]);
-
         } catch (Exception $e) {
             error_log("Error obteniendo mensajes: " . $e->getMessage());
             Router::$response->status(500)->send([
@@ -287,7 +272,6 @@ class ChatController
                 "data" => $chats,
                 "message" => "Chats retrieved successfully"
             ]);
-
         } catch (Exception $e) {
             error_log("Error obteniendo chats: " . $e->getMessage());
             Router::$response->status(500)->send([
@@ -370,7 +354,6 @@ class ChatController
                     "message" => "El mensaje ya estaba marcado como leído o no existe"
                 ]);
             }
-
         } catch (Exception $e) {
             error_log("Error en markMessageAsRead: " . $e->getMessage());
             Router::$response->status(500)->send([
@@ -434,7 +417,6 @@ class ChatController
                     "mensajes_actualizados" => $affectedRows
                 ]
             ]);
-
         } catch (Exception $e) {
             error_log("Error en markChatAsRead: " . $e->getMessage());
             Router::$response->status(500)->send([
@@ -511,7 +493,6 @@ class ChatController
             $this->sendToWebSocket($wsData);
 
             error_log("✅ Evento message_read enviado al WebSocket para mensaje: " . $messageId);
-
         } catch (Exception $e) {
             error_log("❌ Error enviando evento message_read al WebSocket: " . $e->getMessage());
             // No romper el flujo principal si falla el WebSocket
