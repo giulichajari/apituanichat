@@ -12,95 +12,94 @@ class AuthController
 {
 
 
-public static function login()
-{
+  public static function login()
+  {
     try {
-        $body = Router::$request->body;
-        $email = $body->email ?? null;
-        $password = $body->password ?? null;
+      $body = Router::$request->body;
+      $email = $body->email ?? null;
+      $password = $body->password ?? null;
 
-        if (!$email || !$password) {
-            Router::$response->json(['error' => 'Email y contraseña requeridos'], 400);
-            return;
-        }
+      if (!$email || !$password) {
+        Router::$response->json(['error' => 'Email y contraseña requeridos'], 400);
+        return;
+      }
 
-        $usersModel = new UsersModel();
-        $user = $usersModel->verifyCredentials($email, $password);
+      $usersModel = new UsersModel();
+      $user = $usersModel->verifyCredentials($email, $password);
 
-        if (!$user) {
-            Router::$response->json(['error' => 'Credenciales inválidas'], 401);
-            return;
-        }
+      if (!$user) {
+        Router::$response->json(['error' => 'Credenciales inválidas'], 401);
+        return;
+      }
 
-        // 🔹 Generar OTP
-        $otp = rand(100000, 999999);
+      // 🔹 Generar OTP
+      $otp = rand(100000, 999999);
 
-        $db = \App\Configs\Database::getInstance()->getConnection();
+      $db = \App\Configs\Database::getInstance()->getConnection();
 
-        // 🔹 Actualizar usuario con OTP y estado online
-        $stmt = $db->prepare("
+      // 🔹 Actualizar usuario con OTP y estado online
+      $stmt = $db->prepare("
             UPDATE users  
             SET otp = :otp, otp_created_at = NOW(), last_seen = NOW(), online = 1
             WHERE id = :id
         ");
-        $stmt->bindValue(':otp', $otp);
-        $stmt->bindValue(':id', $user['id']);
-        $stmt->execute();
+      $stmt->bindValue(':otp', $otp);
+      $stmt->bindValue(':id', $user['id']);
+      $stmt->execute();
 
-        // 🔹 Generar JWT
-        $secretKey = "TU_SECRET_KEY"; // debe coincidir con tu TokenMiddleware
-        $payload = [
-            'user_id' => $user['id'],
-            'email' => $user['email'],
-            'iat' => time(),
-            'exp' => time() + 3600 // expira en 1 hora
-        ];
-        $jwt = JWT::encode($payload, $secretKey, 'HS256');
+      // 🔹 Generar JWT
+      $secretKey = "TU_SECRET_KEY"; // debe coincidir con tu TokenMiddleware
+      $payload = [
+        'user_id' => $user['id'],
+        'email' => $user['email'],
+        'iat' => time(),
+        'exp' => time() + 3600 // expira en 1 hora
+      ];
+      $jwt = JWT::encode($payload, $secretKey, 'HS256');
 
-        // 🔹 Guardar el token en DB (corregido)
-        $expiresAt = date('Y-m-d H:i:s', time() + 3600);
-        $createdAt = date('Y-m-d H:i:s');
+      // 🔹 Guardar el token en DB (corregido)
+      $expiresAt = date('Y-m-d H:i:s', time() + 3600);
+      $createdAt = date('Y-m-d H:i:s');
 
-        // Opción 1: UPDATE si el token ya existe para este usuario
-        $stmt = $db->prepare("
+      // Opción 1: UPDATE si el token ya existe para este usuario
+      $stmt = $db->prepare("
             UPDATE user_tokens 
             SET token = :token, created_at = :created_at, expires_at = :expires_at
             WHERE user_id = :user_id
         ");
-        $stmt->bindValue(':token', $jwt);
-        $stmt->bindValue(':created_at', $createdAt);
-        $stmt->bindValue(':expires_at', $expiresAt);
-        $stmt->bindValue(':user_id', $user['id']);
-        $stmt->execute();
+      $stmt->bindValue(':token', $jwt);
+      $stmt->bindValue(':created_at', $createdAt);
+      $stmt->bindValue(':expires_at', $expiresAt);
+      $stmt->bindValue(':user_id', $user['id']);
+      $stmt->execute();
 
-        // Si no se actualizó ninguna fila, INSERT nuevo token
-        if ($stmt->rowCount() === 0) {
-            $stmt = $db->prepare("
+      // Si no se actualizó ninguna fila, INSERT nuevo token
+      if ($stmt->rowCount() === 0) {
+        $stmt = $db->prepare("
                 INSERT INTO user_tokens (user_id, token, created_at, expires_at)
                 VALUES (:user_id, :token, :created_at, :expires_at)
             ");
-            $stmt->bindValue(':user_id', $user['id']);
-            $stmt->bindValue(':token', $jwt);
-            $stmt->bindValue(':created_at', $createdAt);
-            $stmt->bindValue(':expires_at', $expiresAt);
-            $stmt->execute();
-        }
+        $stmt->bindValue(':user_id', $user['id']);
+        $stmt->bindValue(':token', $jwt);
+        $stmt->bindValue(':created_at', $createdAt);
+        $stmt->bindValue(':expires_at', $expiresAt);
+        $stmt->execute();
+      }
 
-        // 🔹 Devolver respuesta al frontend
-        Router::$response->json([
-            'message' => 'Login exitoso',
-            'token' => $jwt,
-            'otp' => $otp,
-            'user_id' => $user['id'],
-            'rol' => $user['rol'] 
-        ], 200);
-        
+      // 🔹 Devolver respuesta al frontend
+      Router::$response->json([
+        'message' => 'Login exitoso',
+        'token' => $jwt,
+        'otp' => $otp,
+        'user_id' => $user['id'],
+        'rol' => $user['rol']
+      ], 200);
     } catch (Exception $e) {
-        error_log("Login SQL ERROR: " . $e->getMessage(), 3, "/var/www/apituanichat/php-error.log");
-        Router::$response->json(['error' => 'Error en base de datos'], 500);
-        return;
+      error_log("Login SQL ERROR: " . $e->getMessage(), 3, "/var/www/apituanichat/php-error.log");
+      Router::$response->json(['error' => 'Error en base de datos'], 500);
+      return;
     }
-}
+  }
 
   public static function verifyOtp()
   {
@@ -161,17 +160,17 @@ public static function login()
   {
     try {
       $headers = getallheaders();
-        $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? '';
-        
-        if (!preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
-            Router::$response->json(['error' => 'Token no proporcionado'], 401);
-            return;
-        }
+      $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? '';
 
-        $token = $matches[1];
-        $secretKey = "TU_SECRET_KEY";
- $decoded = JWT::decode($token, new Key($secretKey, 'HS256'));
-        $userId = $decoded->user_id;
+      if (!preg_match('/Bearer\s+(.*)$/i', $authHeader, $matches)) {
+        Router::$response->json(['error' => 'Token no proporcionado'], 401);
+        return;
+      }
+
+      $token = $matches[1];
+      $secretKey = "TU_SECRET_KEY";
+      $decoded = JWT::decode($token, new Key($secretKey, 'HS256'));
+      $userId = $decoded->user_id;
 
       if (!$userId) {
         Router::$response->json(['error' => 'user_id requerido'], 400);

@@ -48,11 +48,18 @@ class ChatRouter
             fn() => $tokenMiddleware->strict(),
             fn() => $chatController->createChat()
         );
-        // Marcar como leído
+           // ✅ O también puedes usar PATCH:
+        $router->patch(
+            '/messages/{message_id}/read',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $chatController->markMessageAsRead()
+        );
+
+        // Marcar todo un chat como leído (el que ya tienes)
         $router->patch(
             '/chats/{chat_id}/read',
             fn() => $tokenMiddleware->strict(),
-            fn() => $chatController->markAsRead()
+            fn() => $chatController->markChatAsRead()
         );
     }
 }

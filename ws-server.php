@@ -16,7 +16,46 @@ class SignalServer implements MessageComponentInterface
         $this->sessions = []; // session_id => array of connections
         echo "WebSocket server started on ws://localhost:8080\n";
     }
+    // En SignalServer.php - agrega este método
+    public function emitToChat($chatId, $eventType, $data, $excludeUserId = null)
+    {
+        try {
+            // Verificar que el chat existe
+            if (!isset($this->sessions[$chatId])) {
+                file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | ❌ Chat {$chatId} no encontrado para emitir evento\n", FILE_APPEND);
+                return false;
+            }
 
+            // Preparar el mensaje
+            $messageData = [
+                'type' => $eventType,
+                'chat_id' => $chatId,
+                'data' => $data,
+                'timestamp' => date('c')
+            ];
+
+            $sentCount = 0;
+            foreach ($this->sessions[$chatId] as $client) {
+                // Excluir al usuario si se especifica
+                if ($excludeUserId && isset($client->userId) && $client->userId == $excludeUserId) {
+                    continue;
+                }
+
+                try {
+                    $client->send(json_encode($messageData));
+                    $sentCount++;
+                } catch (\Exception $e) {
+                    file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | ❌ Error enviando evento a cliente: " . $e->getMessage() . "\n", FILE_APPEND);
+                }
+            }
+
+            file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | ✅ Evento '{$eventType}' enviado a {$sentCount} cliente(s) en chat {$chatId}\n", FILE_APPEND);
+            return true;
+        } catch (\Exception $e) {
+            file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | ❌ Error en emitToChat: " . $e->getMessage() . "\n", FILE_APPEND);
+            return false;
+        }
+    }
     public function onOpen(ConnectionInterface $conn)
     {
         $this->clients->attach($conn);
@@ -48,6 +87,7 @@ class SignalServer implements MessageComponentInterface
 
             // 🔹 Manejar diferentes tipos de mensajes
             // En el switch de onMessage, agrega:
+            // En el switch de onMessage, agrega:
             switch ($data['type']) {
                 case 'auth':
                     $this->handleAuth($from, $data);
@@ -61,7 +101,6 @@ class SignalServer implements MessageComponentInterface
                     $this->handleChatMessage($from, $data);
                     break;
 
-                // ✅ AGREGAR ESTOS CASOS PARA ARCHIVOS
                 case 'image':
                 case 'file':
                     $this->handleFileUpload($from, $data);
@@ -75,6 +114,11 @@ class SignalServer implements MessageComponentInterface
                     $this->handleRideAccepted($from, $data);
                     break;
 
+                // ✅ NUEVO: Manejar eventos de mensaje leído
+                case 'message_read':
+                    $this->handleMessageRead($from, $data);
+                    break;
+
                 default:
                     file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | Tipo de mensaje desconocido: {$data['type']}\n", FILE_APPEND);
                     break;
@@ -82,6 +126,33 @@ class SignalServer implements MessageComponentInterface
         } catch (\Exception $e) {
             file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | ERROR procesando mensaje: " . $e->getMessage() . "\n", FILE_APPEND);
         }
+    }
+
+    // En SignalServer.php - agrega este método
+    private function handleMessageRead(ConnectionInterface $from, $data)
+    {
+        if (!isset($data['message_id'], $data['user_id'], $data['chat_id'])) {
+            file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | ❌ ERROR: Datos de message_read incompletos\n", FILE_APPEND);
+            return;
+        }
+
+        $messageId = $data['message_id'];
+        $userId = $data['user_id'];
+        $chatId = $data['chat_id'];
+
+        // Usar el método emitToChat para broadcast
+        $this->emitToChat(
+            $chatId,
+            'message_read',
+            [
+                'message_id' => $messageId,
+                'read_by' => $userId,
+                'read_at' => date('c')
+            ],
+            $userId // Excluir al usuario que marcó como leído
+        );
+
+        file_put_contents(__DIR__ . '/ws.log', date('Y-m-d H:i:s') . " | 📖 Mensaje {$messageId} marcado como leído por usuario {$userId} en chat {$chatId}\n", FILE_APPEND);
     }
     // 🔹 En SignalServer.php - Agrega este método
     private function handleFileUpload(ConnectionInterface $from, $data)
