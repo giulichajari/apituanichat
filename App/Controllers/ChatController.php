@@ -148,53 +148,85 @@ class ChatController
         }
     }
 
-    // En ChatController.php - método sendMessage mejorado
-    public function sendMessage()
-    {
-        try {
-            $user = Router::$request->user;
-            $userId = $user->id ?? null;
+   // En ChatController.php - método sendMessage mejorado
+public function sendMessage()
+{
+    try {
+        $user = Router::$request->user;
+        $userId = $user->id ?? null;
 
-            $body = Router::$request->body;
-            $chatId = $body->chat_id ?? null;
-            $contenido = trim($body->contenido ?? '');
-            $tipo = $body->tipo ?? 'texto';
-            $otherUserId = $body->other_user_id ?? null; // ✅ Nuevo parámetro
+        $body = Router::$request->body;
+        $chatId = $body->chat_id ?? null;
+        $contenido = trim($body->contenido ?? '');
+        $tipo = $body->tipo ?? 'texto';
+        $otherUserId = $body->other_user_id ?? null;
 
-            if (!$contenido || !$userId) {
-                Router::$response->status(400)->send([
-                    "success" => false,
-                    "message" => "Missing parameters"
-                ]);
-                return;
-            }
-
-            // ✅ Si no hay chatId, necesitamos el other_user_id
-            if (!$chatId && !$otherUserId) {
-                Router::$response->status(400)->send([
-                    "success" => false,
-                    "message" => "Se necesita chat_id o other_user_id para enviar mensaje"
-                ]);
-                return;
-            }
-
-            // ✅ Usar la función mejorada que crea chat automáticamente
-            $msgId = $this->chatModel->sendMessage($chatId, $userId, $contenido, $tipo, null, $otherUserId);
-
-            Router::$response->status(201)->send([
-                "success" => true,
-                "message_id" => $msgId,
-                "chat_id" => $chatId ?: 'nuevo-chat-creado', // Indica si se creó nuevo chat
-                "message" => "Message sent successfully"
-            ]);
-        } catch (Exception $e) {
-            error_log("Error enviando mensaje: " . $e->getMessage());
-            Router::$response->status(500)->send([
-                "success" => false,
-                "message" => "Error sending message: " . $e->getMessage()
-            ]);
+        // ✅ Obtener chat_id de los parámetros de la ruta si no viene en el body
+        if (!$chatId) {
+            $chatId = Router::$request->params->chat_id ?? null;
         }
+
+        if (!$contenido || !$userId) {
+            Router::$response->status(400)->send([
+                "success" => false,
+                "message" => "Missing parameters: contenido y user_id son requeridos"
+            ]);
+            return;
+        }
+
+        // ✅ Si el chat podría no existir, necesitamos other_user_id
+        if (!$otherUserId) {
+            // Intentar obtener el otro usuario del chat existente
+            $otherUserId = $this->getOtherUserFromChat($chatId, $userId);
+            
+            if (!$otherUserId) {
+                Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "Se necesita other_user_id para crear un chat nuevo o el chat no existe"
+                ]);
+                return;
+            }
+        }
+
+        // ✅ Usar la función mejorada que crea chat si no existe
+        $msgId = $this->chatModel->sendMessage($chatId, $userId, $contenido, $tipo, null, $otherUserId);
+
+        Router::$response->status(201)->send([
+            "success" => true,
+            "message_id" => $msgId,
+            "chat_id" => $chatId,
+            "message" => "Message sent successfully"
+        ]);
+
+    } catch (Exception $e) {
+        error_log("Error enviando mensaje: " . $e->getMessage());
+        Router::$response->status(500)->send([
+            "success" => false,
+            "message" => "Error sending message: " . $e->getMessage()
+        ]);
     }
+}
+
+// ✅ Método auxiliar para obtener el otro usuario de un chat existente
+private function getOtherUserFromChat($chatId, $currentUserId)
+{
+    try {
+        if (!$chatId) return null;
+        
+        $stmt = $this->chatModel->db->prepare("
+            SELECT user_id FROM chat_usuarios 
+            WHERE chat_id = ? AND user_id != ?
+            LIMIT 1
+        ");
+        $stmt->execute([$chatId, $currentUserId]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        return $result ? $result['user_id'] : null;
+    } catch (Exception $e) {
+        error_log("Error obteniendo otro usuario del chat: " . $e->getMessage());
+        return null;
+    }
+}
 
     // ✅ Obtener mensajes de un chat
     public function getMessages()
