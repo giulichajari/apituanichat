@@ -17,7 +17,8 @@ class ChatModel
     }
 
     // ✅ Crear chat - VERSIÓN OPTIMIZADA
-    public function createChat(array $userIds, string $chatName = null): int
+  public function createChat(array $userIds, ?string $chatName = null): int
+
     {
         try {
             // Validar que hay al menos 2 usuarios únicos

@@ -204,13 +204,12 @@ class ChatController
             // ✅ Usar la función mejorada
             $msgId = $this->chatModel->sendMessage($chatId, $userId, $contenido, $tipo, null, $otherUserId);
 
-            // ✅ Obtener el chat_id final que se usó
-            $finalChatId = $this->chatModel->getLastUsedChatId();
+          
 
             Router::$response->status(201)->send([
                 "success" => true,
                 "message_id" => $msgId,
-                "chat_id" => $finalChatId,
+                "chat_id" => $chatId,
                 "user_id" => $userId,
                 "other_user_id" => $otherUserId,
                 "message" => "Message sent successfully"
