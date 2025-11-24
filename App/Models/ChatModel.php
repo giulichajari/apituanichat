@@ -53,59 +53,54 @@ public function addMessage($messageData)
 
 
     // ✅ Crear chat - VERSIÓN OPTIMIZADA
-  public function createChat(array $userIds, ?string $chatName = null): int
+ public function createChat(array $userIds, ?string $chatName = null): int
+{
+    try {
+        $uniqueUserIds = array_unique($userIds);
+        if (count($uniqueUserIds) < 2) {
+            throw new Exception("Se necesitan al menos 2 usuarios diferentes para crear un chat");
+        }
 
-    {
-        try {
-            // Validar que hay al menos 2 usuarios únicos
-            $uniqueUserIds = array_unique($userIds);
-            if (count($uniqueUserIds) < 2) {
-                throw new Exception("Se necesitan al menos 2 usuarios diferentes para crear un chat");
+        // Verificar usuarios
+        foreach ($uniqueUserIds as $userId) {
+            if (!$this->userExists($userId)) {
+                throw new Exception("El usuario {$userId} no existe");
             }
+        }
 
-            // Verificar que todos los usuarios existen
-            foreach ($uniqueUserIds as $userId) {
-                if (!$this->userExists($userId)) {
-                    throw new Exception("El usuario {$userId} no existe");
-                }
-            }
+        if (!$chatName) {
+            $chatName = $this->generateChatName($uniqueUserIds);
+        }
 
-            // Generar nombre del chat si no se proporciona
-            if (!$chatName) {
-                $chatName = $this->generateChatName($uniqueUserIds);
-            }
-
-            // Iniciar transacción
-            $this->db->beginTransaction();
-
-            // 1. Crear el chat
-            $stmt = $this->db->prepare("
+        // ✅ ELIMINAR beginTransaction() y commit()/rollBack()
+        
+        // 1. Crear el chat
+        $stmt = $this->db->prepare("
             INSERT INTO chats (name, created_at, last_message_at) 
             VALUES (:name, NOW(), NOW())
         ");
-            $stmt->execute([':name' => $chatName]);
-            $chatId = (int)$this->db->lastInsertId();
+        $stmt->execute([':name' => $chatName]);
+        $chatId = (int)$this->db->lastInsertId();
 
-            // 2. Agregar usuarios al chat (preparar una sola vez, ejecutar múltiples veces)
-            $stmt = $this->db->prepare("
+        // 2. Agregar usuarios al chat
+        $stmt = $this->db->prepare("
             INSERT INTO chat_usuarios (chat_id, user_id, added_at) 
             VALUES (?, ?, NOW())
         ");
 
-            foreach ($uniqueUserIds as $userId) {
-                $stmt->execute([$chatId, $userId]);
-            }
-
-            $this->db->commit();
-
-            error_log("✅ Chat creado exitosamente - ID: {$chatId}, Nombre: '{$chatName}', Usuarios: " . implode(', ', $uniqueUserIds));
-            return $chatId;
-        } catch (Exception $e) {
-            $this->db->rollBack();
-            error_log("❌ Error creando chat: " . $e->getMessage());
-            throw $e;
+        foreach ($uniqueUserIds as $userId) {
+            $stmt->execute([$chatId, $userId]);
         }
+
+        error_log("✅ Chat creado exitosamente - ID: {$chatId}");
+        return $chatId;
+
+    } catch (Exception $e) {
+        // ✅ ELIMINAR rollBack() ya que no hay transacción
+        error_log("❌ Error creando chat: " . $e->getMessage());
+        throw $e;
     }
+}
 
     // ✅ Método auxiliar para verificar si usuario existe
     private function userExists($userId): bool
