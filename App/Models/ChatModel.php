@@ -522,7 +522,7 @@ public function getDb()
     /**
      * Buscar chat por usuarios exactos
      */
-    private function findChatByUsers(array $userIds): int|false
+    public function findChatByUsers(array $userIds): int|false
     {
         try {
             $userCount = count($userIds);
