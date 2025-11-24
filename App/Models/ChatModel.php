@@ -15,7 +15,28 @@ class ChatModel
     {
         $this->db = Database::getInstance()->getConnection();
     }
-
+// En App/Models/ChatModel.php - agrega este método si necesitas compatibilidad
+/**
+ * @deprecated Usar sendMessage en su lugar
+ */
+public function addMessage($messageData)
+{
+    try {
+        error_log("⚠️ addMessage llamado (método legacy)");
+        
+        return $this->sendMessage(
+            $messageData['chat_id'] ?? null,
+            $messageData['user_id'] ?? null,
+            $messageData['contenido'] ?? '',
+            $messageData['tipo'] ?? 'texto',
+            $messageData['file_id'] ?? null,
+            $messageData['other_user_id'] ?? null
+        );
+    } catch (Exception $e) {
+        error_log("Error en addMessage: " . $e->getMessage());
+        throw $e;
+    }
+}
     // ✅ Crear chat - VERSIÓN OPTIMIZADA
   public function createChat(array $userIds, ?string $chatName = null): int
 
