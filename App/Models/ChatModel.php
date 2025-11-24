@@ -515,7 +515,7 @@ public function getLastUsedChatId()
     /**
      * Verificar si el chat existe
      */
-    private function chatExists($chatId): bool
+    public function chatExists($chatId): bool
     {
         $stmt = $this->db->prepare("SELECT id FROM chats WHERE id = ?");
         $stmt->execute([$chatId]);
