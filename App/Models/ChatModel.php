@@ -501,7 +501,7 @@ public function getDb()
     /**
      * Buscar chat existente o crear uno nuevo
      */
-    private function findOrCreateChat(array $userIds): int
+    public function findOrCreateChat(array $userIds): int
     {
         // Ordenar IDs para consistencia
         sort($userIds);

@@ -163,7 +163,99 @@ class FileUploadService
             ];
         }
     }
+// En FileUploadService.php - agrega este método si no lo tienes
+public function uploadToConversation($file, $userId, $otherUserId)
+{
+    try {
+        // Validaciones básicas
+        if ($file['error'] !== UPLOAD_ERR_OK) {
+            return ['success' => false, 'message' => 'Error en la subida del archivo'];
+        }
 
+        if (!isset($this->allowedTypes[$file['type']])) {
+            return ['success' => false, 'message' => 'Tipo de archivo no permitido'];
+        }
+
+        $chatModel = new ChatModel();
+        
+        // ✅ BUSCAR O CREAR CHAT ENTRE LOS DOS USUARIOS
+        $chatId = $chatModel->findChatBetweenUsers($userId, $otherUserId);
+        
+        if (!$chatId) {
+            // Crear nuevo chat
+            $userIds = [$userId, $otherUserId];
+            $chatId = $chatModel->createChat($userIds);
+            error_log("🆕 Chat creado para archivo - ID: {$chatId}");
+        }
+
+        // Crear directorio
+        $chatPath = $this->uploadPath . 'chats/' . $chatId . '/';
+        if (!is_dir($chatPath) && !mkdir($chatPath, 0755, true)) {
+            return ['success' => false, 'message' => 'No se pudo crear el directorio'];
+        }
+
+        // Generar nombre único y mover archivo
+        $extension = $this->allowedTypes[$file['type']];
+        $fileName = uniqid() . '_' . $userId . '.' . $extension;
+        $filePath = $chatPath . $fileName;
+
+        if (!move_uploaded_file($file['tmp_name'], $filePath)) {
+            return ['success' => false, 'message' => 'Error al guardar el archivo'];
+        }
+
+        // Determinar tipo
+        $tipo = strpos($file['type'], 'image/') === 0 ? 'imagen' : 'archivo';
+        $fileUrl = '/uploads/chats/' . $chatId . '/' . $fileName;
+
+        // Guardar archivo en BD
+        $fileData = [
+            'name' => $fileName,
+            'original_name' => $file['name'],
+            'path' => $filePath,
+            'url' => $fileUrl,
+            'size' => $file['size'],
+            'mime_type' => $file['type'],
+            'chat_id' => $chatId,
+            'user_id' => $userId
+        ];
+
+        $fileId = $chatModel->saveFile($fileData);
+        
+        if (!$fileId) {
+            unlink($filePath);
+            return ['success' => false, 'message' => 'Error al guardar archivo en BD'];
+        }
+
+        // ✅ ENVIAR MENSAJE USANDO sendMessage (IGUAL QUE TEXTO)
+        $messageId = $chatModel->sendMessage(
+            $chatId,
+            $userId,
+            $file['name'],
+            $tipo,
+            $fileId,
+            $otherUserId
+        );
+
+        if (!$messageId) {
+            unlink($filePath);
+            $chatModel->deleteFile($fileId);
+            return ['success' => false, 'message' => 'Error al guardar mensaje'];
+        }
+
+        return [
+            'success' => true,
+            'file_url' => $fileUrl,
+            'file_id' => $fileId,
+            'message_id' => $messageId,
+            'chat_id' => $chatId,
+            'tipo' => $tipo
+        ];
+
+    } catch (\Exception $e) {
+        error_log("Error en uploadToConversation: " . $e->getMessage());
+        return ['success' => false, 'message' => 'Error durante la subida: ' . $e->getMessage()];
+    }
+}
     /**
      * ✅ MÉTODO CLAVE: Determinar el chatId correcto usando la misma lógica que los mensajes de texto
      */

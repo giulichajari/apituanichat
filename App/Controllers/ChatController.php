@@ -18,24 +18,18 @@ class ChatController
         $this->fileUploadService = new FileUploadService();
     }
 
-    // ✅ Subir archivo o imagen a un chat
+    // ✅ Subir archivo o imagen a un chat - VERSIÓN CORREGIDA
     public function uploadFile()
     {
         try {
             $body = Router::$request->body;
             $chatId = $body->chat_id ?? null;
             $user = Router::$request->user ?? null;
+            $otherUserId = $body->other_user_id ?? null; // ✅ AGREGAR ESTE PARÁMETRO
 
             error_log("🔍 Body chat_id: " . ($chatId ?? 'NULL'));
             error_log("🔍 User ID: " . ($user->id ?? 'NULL'));
-
-            if (!$chatId) {
-                Router::$response->status(400)->send([
-                    "success" => false,
-                    "message" => "Missing chat_id"
-                ]);
-                return;
-            }
+            error_log("🔍 Other User ID: " . ($otherUserId ?? 'NULL'));
 
             if (!$user) {
                 Router::$response->status(401)->send([
@@ -56,18 +50,8 @@ class ChatController
 
             $uploadedFile = $_FILES['file'];
 
-            // Validar el archivo
-            $validation = $this->fileUploadService->validateFile($uploadedFile);
-            if (!$validation['success']) {
-                Router::$response->status(400)->send([
-                    "success" => false,
-                    "message" => $validation['message']
-                ]);
-                return;
-            }
-
-            // Subir el archivo
-            $uploadResult = $this->fileUploadService->upload($uploadedFile, $chatId, $user->id);
+            // ✅ USAR EL MÉTODO uploadToConversation EN LUGAR DE upload
+            $uploadResult = $this->fileUploadService->uploadToConversation($uploadedFile, $user->id, $otherUserId);
 
             if (!$uploadResult['success']) {
                 Router::$response->status(500)->send([
@@ -77,47 +61,27 @@ class ChatController
                 return;
             }
 
-            // Crear registro en la base de datos
-            $fileData = [
-                'name' => $uploadResult['file_name'],
-                'original_name' => $uploadedFile['name'],
-                'path' => $uploadResult['file_path'],
-                'url' => $uploadResult['file_url'],
-                'size' => $uploadedFile['size'],
-                'mime_type' => $uploadedFile['type'],
-                'chat_id' => $chatId,
-                'user_id' => $user->id,
-                'message_id' => $uploadResult['message_id']
-            ];
+            // ✅ EL ARCHIVO YA SE GUARDÓ EN uploadToConversation, SOLO RESPONDER
+            Router::$response->status(201)->send([
+                "success" => true,
+                "message" => "File uploaded successfully",
+                "file_id" => $uploadResult['file_id'],
+                "file_url" => $uploadResult['file_url'],
+                "message_id" => $uploadResult['message_id'],
+                "chat_id" => $uploadResult['chat_id'],
+                "tipo" => $uploadResult['tipo']
+            ]);
 
-            $fileModel = new File();
-            $fileId = $fileModel->create($fileData);
-
-            if ($fileId) {
-                Router::$response->status(201)->send([
-                    "success" => true,
-                    "message" => "File uploaded successfully",
-                    "file_id" => $fileId,
-                    "file_url" => $uploadResult['file_url'],
-                    "message_id" => $uploadResult['message_id'],
-                    "file_data" => $fileData
-                ]);
-            } else {
-                Router::$response->status(500)->send([
-                    "success" => false,
-                    "message" => "Error saving file to database"
-                ]);
-            }
         } catch (Exception $e) {
             error_log("❌ Error in uploadFile: " . $e->getMessage());
             Router::$response->status(500)->send([
                 "success" => false,
-                "message" => "Internal server error"
+                "message" => "Internal server error: " . $e->getMessage()
             ]);
         }
     }
 
-    // ✅ Crear un chat nuevo (1 a 1 o grupal)
+    // Los demás métodos permanecen igual...
     public function createChat()
     {
         try {
@@ -148,7 +112,6 @@ class ChatController
         }
     }
 
-    // En ChatController.php - método sendMessage mejorado
     public function sendMessage()
     {
         try {
@@ -204,8 +167,6 @@ class ChatController
             // ✅ Usar la función mejorada
             $msgId = $this->chatModel->sendMessage($chatId, $userId, $contenido, $tipo, null, $otherUserId);
 
-          
-
             Router::$response->status(201)->send([
                 "success" => true,
                 "message_id" => $msgId,
@@ -223,9 +184,6 @@ class ChatController
         }
     }
 
-
-
-    // ✅ Obtener mensajes de un chat
     public function getMessages()
     {
         try {
@@ -253,17 +211,6 @@ class ChatController
 
             $messages = $this->chatModel->getMessages($chatId, $userId);
 
-            // Log para debugging
-            error_log("📨 Mensajes enviados al frontend: " . count($messages));
-            foreach ($messages as $index => $msg) {
-                if (isset($msg['file_name']) && $msg['file_name']) {
-                    error_log("🔍 Mensaje {$index} (ID: {$msg['id']}):");
-                    error_log("   - contenido: {$msg['contenido']}");
-                    error_log("   - file_name: " . ($msg['file_name'] ?? 'NULL'));
-                    error_log("   - file_url: " . ($msg['file_url'] ?? 'NULL'));
-                }
-            }
-
             Router::$response->status(200)->send([
                 "success" => true,
                 "data" => $messages,
@@ -279,7 +226,6 @@ class ChatController
         }
     }
 
-    // ✅ Listar chats de un usuario
     public function getChatsByUser()
     {
         try {
@@ -309,6 +255,8 @@ class ChatController
             ]);
         }
     }
+
+ 
 
     // ✅ Marcar un mensaje individual como leído
     public function markMessageAsRead()
