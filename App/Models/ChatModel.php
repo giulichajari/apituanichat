@@ -19,10 +19,22 @@ class ChatModel
 /**
  * @deprecated Usar sendMessage en su lugar
  */
+
+// En ChatModel.php - agrega este método para compatibilidad
+/**
+ * Método legacy para compatibilidad con FileUploadService
+ * @deprecated Usar sendMessage en su lugar
+ */
 public function addMessage($messageData)
 {
     try {
         error_log("⚠️ addMessage llamado (método legacy)");
+        
+        // Obtener other_user_id si no está en messageData
+        $otherUserId = $messageData['other_user_id'] ?? null;
+        if (!$otherUserId && isset($messageData['chat_id'])) {
+            $otherUserId = $this->getOtherUserFromChat($messageData['chat_id'], $messageData['user_id']);
+        }
         
         return $this->sendMessage(
             $messageData['chat_id'] ?? null,
@@ -30,13 +42,16 @@ public function addMessage($messageData)
             $messageData['contenido'] ?? '',
             $messageData['tipo'] ?? 'texto',
             $messageData['file_id'] ?? null,
-            $messageData['other_user_id'] ?? null
+            $otherUserId
         );
     } catch (Exception $e) {
         error_log("Error en addMessage: " . $e->getMessage());
         throw $e;
     }
 }
+
+
+
     // ✅ Crear chat - VERSIÓN OPTIMIZADA
   public function createChat(array $userIds, ?string $chatName = null): int
 

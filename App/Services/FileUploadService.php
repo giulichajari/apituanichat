@@ -156,7 +156,22 @@ class FileUploadService
                 'file_id' => $fileId
             ];
 
-            $messageId = $chatModel->addMessage($messageData);
+           // Y reemplázala por:
+// ✅ OBTENER OTHER_USER_ID PRIMERO
+$otherUserId = $chatModel->getOtherUserFromChat($chatId, $userId);
+if (!$otherUserId) {
+    throw new \Exception("No se pudo determinar el otro usuario del chat");
+}
+
+// ✅ USAR SENDMESSAGE CON OTHER_USER_ID
+$messageId = $chatModel->sendMessage(
+    $chatId,
+    $userId,
+    $file['name'],
+    $tipo,
+    $fileId,
+    $otherUserId
+);
 
             if (!$messageId) {
                 // Si falla el mensaje, eliminar el archivo y el registro de files
