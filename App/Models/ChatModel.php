@@ -203,7 +203,7 @@ public function sendMessage($chatId, $userId, $contenido, $tipo = 'texto', $file
 }
 
 // ✅ Buscar chat existente entre dos usuarios
-private function findChatBetweenUsers($user1, $user2)
+public function findChatBetweenUsers($user1, $user2)
 {
     try {
         $stmt = $this->db->prepare("
