@@ -18,68 +18,65 @@ class ChatController
         $this->fileUploadService = new FileUploadService();
     }
 
-    // ✅ Subir archivo o imagen a un chat - VERSIÓN CORREGIDA
-    public function uploadFile()
-    {
-        try {
-            $body = Router::$request->body;
-            $chatId = $body->chat_id ?? null;
-            $user = Router::$request->user ?? null;
-            $otherUserId = $body->other_user_id ?? null; // ✅ AGREGAR ESTE PARÁMETRO
+  public function uploadFile()
+{
+    try {
+        $body = Router::$request->body;
+        $user = Router::$request->user ?? null;
+        $otherUserId = $body->other_user_id ?? null;
 
-            error_log("🔍 Body chat_id: " . ($chatId ?? 'NULL'));
-            error_log("🔍 User ID: " . ($user->id ?? 'NULL'));
-            error_log("🔍 Other User ID: " . ($otherUserId ?? 'NULL'));
-
-            if (!$user) {
-                Router::$response->status(401)->send([
-                    "success" => false,
-                    "message" => "Unauthorized"
-                ]);
-                return;
-            }
-
-            // Verificar si se envió un archivo
-            if (empty($_FILES) || !isset($_FILES['file'])) {
-                Router::$response->status(400)->send([
-                    "success" => false,
-                    "message" => "No file uploaded"
-                ]);
-                return;
-            }
-
-            $uploadedFile = $_FILES['file'];
-
-            // ✅ USAR EL MÉTODO uploadToConversation EN LUGAR DE upload
-            $uploadResult = $this->fileUploadService->uploadToConversation($uploadedFile, $user->id, $otherUserId);
-
-            if (!$uploadResult['success']) {
-                Router::$response->status(500)->send([
-                    "success" => false,
-                    "message" => $uploadResult['message']
-                ]);
-                return;
-            }
-
-            // ✅ EL ARCHIVO YA SE GUARDÓ EN uploadToConversation, SOLO RESPONDER
-            Router::$response->status(201)->send([
-                "success" => true,
-                "message" => "File uploaded successfully",
-                "file_id" => $uploadResult['file_id'],
-                "file_url" => $uploadResult['file_url'],
-                "message_id" => $uploadResult['message_id'],
-                "chat_id" => $uploadResult['chat_id'],
-                "tipo" => $uploadResult['tipo']
-            ]);
-
-        } catch (Exception $e) {
-            error_log("❌ Error in uploadFile: " . $e->getMessage());
-            Router::$response->status(500)->send([
+        if (!$user) {
+            return Router::$response->status(401)->send([
                 "success" => false,
-                "message" => "Internal server error: " . $e->getMessage()
+                "message" => "Unauthorized"
             ]);
         }
+
+        if (empty($_FILES) || !isset($_FILES['file'])) {
+            return Router::$response->status(400)->send([
+                "success" => false,
+                "message" => "No file uploaded"
+            ]);
+        }
+
+        $uploadedFile = $_FILES['file'];
+        
+        // ✅ USAR EL MÉTODO PRINCIPAL CORREGIDO
+        $uploadResult = $this->fileUploadService->uploadToConversation(
+            $uploadedFile, 
+            $user->id,
+            $otherUserId
+        );
+
+        if (!$uploadResult['success']) {
+            return Router::$response->status(500)->send([
+                "success" => false,
+                "message" => $uploadResult['message']
+            ]);
+        }
+
+        Router::$response->status(201)->send([
+            "success" => true,
+            "message" => "File uploaded successfully",
+            "file_id" => $uploadResult['file_id'],
+            "file_url" => $uploadResult['file_url'],
+            "message_id" => $uploadResult['message_id'],
+            "chat_id" => $uploadResult['chat_id'],
+            "tipo" => $uploadResult['tipo'],
+            "file_name" => $uploadResult['file_name'],
+            "file_original_name" => $uploadResult['file_original_name'],
+            "file_size" => $uploadResult['file_size'],
+            "file_mime_type" => $uploadResult['file_mime_type']
+        ]);
+
+    } catch (Exception $e) {
+        error_log("❌ Error in uploadFile: " . $e->getMessage());
+        Router::$response->status(500)->send([
+            "success" => false,
+            "message" => "Internal server error: " . $e->getMessage()
+        ]);
     }
+}
 
     // Los demás métodos permanecen igual...
     public function createChat()
