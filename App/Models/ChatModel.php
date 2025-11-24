@@ -417,6 +417,39 @@ public function getLastUsedChatId()
             throw $e;
         }
     }
+
+// En tu ChatModel.php - agrega este método
+public function insertMessage(array $messageData): int
+{
+    try {
+        $stmt = $this->db->prepare("
+            INSERT INTO mensajes (chat_id, user_id, contenido, tipo, file_id, enviado_en) 
+            VALUES (:chat_id, :user_id, :contenido, :tipo, :file_id, :fecha)
+        ");
+        
+        $stmt->execute([
+            ':chat_id' => $messageData['chat_id'],
+            ':user_id' => $messageData['user_id'],
+            ':contenido' => $messageData['contenido'],
+            ':tipo' => $messageData['tipo'],
+            ':file_id' => $messageData['file_id'] ?? null,
+            ':fecha' => $messageData['fecha'] ?? date('Y-m-d H:i:s')
+        ]);
+
+        $messageId = (int)$this->db->lastInsertId();
+        
+        // Actualizar last_message_at del chat
+        $this->updateChatLastMessage($messageData['chat_id']);
+        
+        error_log("✅ Mensaje insertado directamente - ID: {$messageId}, Chat: {$messageData['chat_id']}");
+        return $messageId;
+        
+    } catch (PDOException $e) {
+        error_log("Error en insertMessage: " . $e->getMessage());
+        throw $e;
+    }
+}
+
 /**
  * ✅ Obtener la conexión a la base de datos (para FileUploadService)
  */

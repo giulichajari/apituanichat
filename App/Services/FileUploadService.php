@@ -259,6 +259,15 @@ class FileUploadService
                 unlink($filePath);
                 return ['success' => false, 'message' => 'Error al guardar archivo en BD'];
             }
+    // ✅ CORREGIDO: Primero crear el mensaje y luego obtener el messageId
+        $messageId = $chatModel->insertMessage([
+            'chat_id' => $chatId,
+            'user_id' => $userId,
+            'contenido' => $file['name'],
+            'tipo' => $tipo,
+            'file_id' => $fileId,
+            'fecha' => date('Y-m-d H:i:s')
+        ]);
 
             // Enviar mensaje de forma simplificada
              // ✅ ACTUALIZAR EL MENSAJE CON EL FILE_ID
@@ -283,7 +292,43 @@ class FileUploadService
             return ['success' => false, 'message' => 'Error durante la subida'];
         }
     }
+    // ✅ AGREGAR ESTE MÉTODO QUE FALTA
+    public function validateFile($file)
+    {
+        // Verificar errores de subida
+        if ($file['error'] !== UPLOAD_ERR_OK) {
+            return [
+                'success' => false,
+                'message' => 'Error al subir el archivo: ' . $this->getUploadError($file['error'])
+            ];
+        }
 
+        // Verificar tamaño
+        if ($file['size'] > $this->maxFileSize) {
+            return [
+                'success' => false,
+                'message' => 'El archivo es demasiado grande. Máximo ' . ($this->maxFileSize / 1024 / 1024) . 'MB permitido.'
+            ];
+        }
+
+        // Verificar tipo
+        if (!array_key_exists($file['type'], $this->allowedTypes)) {
+            return [
+                'success' => false,
+                'message' => 'Tipo de archivo no permitido. Formatos aceptados: ' . implode(', ', array_keys($this->allowedTypes))
+            ];
+        }
+
+        // Verificar seguridad básica
+        if (!$this->isFileSafe($file)) {
+            return [
+                'success' => false,
+                'message' => 'El archivo no es seguro'
+            ];
+        }
+
+        return ['success' => true];
+    }
      private function updateMessageFileId($messageId, $fileId): bool
     {
         try {
