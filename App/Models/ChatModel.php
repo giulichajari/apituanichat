@@ -191,6 +191,14 @@ private function findChatBetweenUsers($user1, $user2)
         return null;
     }
 }
+// En ChatModel.php
+private $lastUsedChatId = null;
+
+public function getLastUsedChatId()
+{
+    return $this->lastUsedChatId;
+}
+
 
     // ✅ Método auxiliar para agregar usuario a chat
     private function addUserToChat($chatId, $userId): bool

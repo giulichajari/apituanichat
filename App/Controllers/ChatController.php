@@ -148,82 +148,81 @@ class ChatController
         }
     }
 
-   // En ChatController.php - método sendMessage mejorado
-public function sendMessage()
-{
-    try {
-        $user = Router::$request->user;
-        $userId = $user->id ?? null;
+    // En ChatController.php - método sendMessage mejorado
+    public function sendMessage()
+    {
+        try {
+            $user = Router::$request->user;
+            $userId = $user->id ?? null;
 
-        $body = Router::$request->body;
-        $chatId = $body->chat_id ?? null;
-        $contenido = trim($body->contenido ?? '');
-        $tipo = $body->tipo ?? 'texto';
-        $otherUserId = $body->other_user_id ?? null;
+            $body = Router::$request->body;
+            $chatId = $body->chat_id ?? null;
+            $contenido = trim($body->contenido ?? '');
+            $tipo = $body->tipo ?? 'texto';
+            $otherUserId = $body->other_user_id ?? null;
 
-        // ✅ Obtener chat_id de los parámetros de la ruta si no viene en el body
-        if (!$chatId) {
-            $chatId = Router::$request->params->chat_id ?? null;
-        }
+            // ✅ Obtener chat_id de los parámetros de la ruta si no viene en el body
+            if (!$chatId) {
+                $chatId = Router::$request->params->chat_id ?? null;
+            }
 
-        if (!$contenido || !$userId) {
-            Router::$response->status(400)->send([
-                "success" => false,
-                "message" => "Missing parameters: contenido y user_id son requeridos"
-            ]);
-            return;
-        }
-
-        // ✅ VALIDACIÓN CRÍTICA: other_user_id no puede ser el mismo que user_id
-        if ($otherUserId && $otherUserId == $userId) {
-            Router::$response->status(400)->send([
-                "success" => false,
-                "message" => "No puedes enviar mensajes a ti mismo"
-            ]);
-            return;
-        }
-
-        // ✅ Si no tenemos other_user_id, intentar obtenerlo
-        if (!$otherUserId) {
-            // Si el chatId existe y es diferente al userId, usarlo como other_user_id
-            if ($chatId && $chatId != $userId) {
-                $otherUserId = $chatId;
-                $chatId = null; // Forzar búsqueda/creación de chat
-            } else {
+            if (!$contenido || !$userId) {
                 Router::$response->status(400)->send([
                     "success" => false,
-                    "message" => "Se necesita other_user_id para identificar con quién chatear"
+                    "message" => "Missing parameters: contenido y user_id son requeridos"
                 ]);
                 return;
             }
+
+            // ✅ VALIDACIÓN CRÍTICA: other_user_id no puede ser el mismo que user_id
+            if ($otherUserId && $otherUserId == $userId) {
+                Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "No puedes enviar mensajes a ti mismo"
+                ]);
+                return;
+            }
+
+            // ✅ Si no tenemos other_user_id, intentar obtenerlo
+            if (!$otherUserId) {
+                // Si el chatId existe y es diferente al userId, usarlo como other_user_id
+                if ($chatId && $chatId != $userId) {
+                    $otherUserId = $chatId;
+                    $chatId = null; // Forzar búsqueda/creación de chat
+                } else {
+                    Router::$response->status(400)->send([
+                        "success" => false,
+                        "message" => "Se necesita other_user_id para identificar con quién chatear"
+                    ]);
+                    return;
+                }
+            }
+
+            // ✅ LOG PARA DEBUG
+            error_log("📨 Enviando mensaje - User: {$userId}, Other: {$otherUserId}, Chat: {$chatId}");
+
+            // ✅ Usar la función mejorada
+            $msgId = $this->chatModel->sendMessage($chatId, $userId, $contenido, $tipo, null, $otherUserId);
+
+            // ✅ Obtener el chat_id final que se usó
+            $finalChatId = $this->chatModel->getLastUsedChatId();
+
+            Router::$response->status(201)->send([
+                "success" => true,
+                "message_id" => $msgId,
+                "chat_id" => $finalChatId,
+                "user_id" => $userId,
+                "other_user_id" => $otherUserId,
+                "message" => "Message sent successfully"
+            ]);
+        } catch (Exception $e) {
+            error_log("Error enviando mensaje: " . $e->getMessage());
+            Router::$response->status(500)->send([
+                "success" => false,
+                "message" => "Error sending message: " . $e->getMessage()
+            ]);
         }
-
-        // ✅ LOG PARA DEBUG
-        error_log("📨 Enviando mensaje - User: {$userId}, Other: {$otherUserId}, Chat: {$chatId}");
-
-        // ✅ Usar la función mejorada
-        $msgId = $this->chatModel->sendMessage($chatId, $userId, $contenido, $tipo, null, $otherUserId);
-
-        // ✅ Obtener el chat_id final que se usó
-        $finalChatId = $this->chatModel->getLastUsedChatId();
-
-        Router::$response->status(201)->send([
-            "success" => true,
-            "message_id" => $msgId,
-            "chat_id" => $finalChatId,
-            "user_id" => $userId,
-            "other_user_id" => $otherUserId,
-            "message" => "Message sent successfully"
-        ]);
-
-    } catch (Exception $e) {
-        error_log("Error enviando mensaje: " . $e->getMessage());
-        Router::$response->status(500)->send([
-            "success" => false,
-            "message" => "Error sending message: " . $e->getMessage()
-        ]);
     }
-}
 
 
 
