@@ -417,7 +417,13 @@ public function getLastUsedChatId()
             throw $e;
         }
     }
-
+/**
+ * ✅ Obtener la conexión a la base de datos (para FileUploadService)
+ */
+public function getDb()
+{
+    return $this->db;
+}
     // ✅ Obtener información de un archivo
     public function getFile($fileId): array|false
     {
