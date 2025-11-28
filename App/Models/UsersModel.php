@@ -16,19 +16,39 @@ class UsersModel
     }
 
     // Obtener todos los usuarios paginados
-    public function getUsers(int $page, int $perPage = 10): array|bool
-    {
-        try {
-            $offset = ($page - 1) * $perPage;
-            $stmt = $this->db->prepare("SELECT id, name, email, phone, is_verified,online,rol, created_at FROM users LIMIT :limit OFFSET :offset");
-            $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
-            $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
-            $stmt->execute();
-            return $stmt->fetchAll(PDO::FETCH_ASSOC);
-        } catch (PDOException $e) {
-            return false;
+  public function getUsers(int $page, int $perPage = 10, int $excludeUserId = null): array|bool
+{
+    try {
+        $offset = ($page - 1) * $perPage;
+        
+        if ($excludeUserId) {
+            $stmt = $this->db->prepare("
+                SELECT id, name, email, phone, is_verified, online, rol, created_at 
+                FROM users 
+                WHERE id != :exclude_user_id
+                ORDER BY created_at DESC 
+                LIMIT :limit OFFSET :offset
+            ");
+            $stmt->bindValue(':exclude_user_id', $excludeUserId, PDO::PARAM_INT);
+        } else {
+            $stmt = $this->db->prepare("
+                SELECT id, name, email, phone, is_verified, online, rol, created_at 
+                FROM users 
+                ORDER BY created_at DESC 
+                LIMIT :limit OFFSET :offset
+            ");
         }
+        
+        $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+        $stmt->execute();
+        
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("GetUsers ERROR: " . $e->getMessage());
+        return false;
     }
+}
 // En UsuariosModel.php
 
     /**
