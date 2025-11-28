@@ -12,11 +12,11 @@ class Database
 
     private function __construct()
     {
-        $host = "72.60.124.216";
+        $host = "localhost";
         $dbname = "tuanichatbd";
 $user = "tuanichat";
 $pass = "Argentina1991!";
-    //    $user = "root";
+   //     $user = "root";
     //     $pass = "";
         try {
             $this->connection = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8", $user, $pass);

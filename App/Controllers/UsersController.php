@@ -12,43 +12,67 @@ class UsersController
         private ?UsersModel $usuariosModel = new UsersModel(),
         private ?DriverModel $driverModel = new DriverModel(),
     ) {}
+   public function getUsers($page = 1)
+{
+    // ✅ Asegurar que page sea un número
+    $page = intval($page) ?: 1;
+    
+    // Obtener el ID del usuario actual desde el token JWT
+    $currentUserId = $this->getCurrentUserId();
+    
+    $users = $this->usuariosModel->getUsers($page, $currentUserId);
+    if ($users) {
+        // Filtrar para excluir al usuario actual (doble verificación)
+        $filteredUsers = array_filter($users, function($user) use ($currentUserId) {
+            return $user['id'] != $currentUserId;
+        });
+        
+        // Adaptar los datos para el componente frontend
+        $adaptedUsers = array_map(function ($user) {
+            return [
+                'id' => $user['id'],
+                'name' => $user['name'],
+                'email' => $user['email'],
+                'phone' => $user['phone'],
+                'role' => $user['rol'] ?? 'user',
+                'avatar' => $this->generateDefaultAvatar($user['name']),
+                'type' => $user['rol'] ?? 'user',
+                'isOnline' => $user['online'] == 1,
+                'lastSeen' => $user['created_at'],
+                'lastMessage' => null
+            ];
+        }, $filteredUsers);
 
-    public function getUsers()
-    {
-        $page = Router::$request->params->page ?? 1;
-        $users = $this->usuariosModel->getUsers($page);
-
-        if ($users) {
-            // Adaptar los datos para el componente frontend
-            $adaptedUsers = array_map(function ($user) {
-                return [
-                    'id' => $user['id'],
-                    'name' => $user['name'],
-                    'email' => $user['email'],
-                    'phone' => $user['phone'],
-                    'role' => $user['rol'] ?? 'user',
-                    'avatar' => $this->generateDefaultAvatar($user['name']),
-                    'type' => $user['rol'] ?? 'user',
-                     'isOnline' => $user['online'] == 1, // ✅ CORREGIDO: Usar campo 'online' real
-                    'lastSeen' => $user['created_at'], // Usar created_at como último visto
-                    'lastMessage' => null
-                ];
-            }, $users);
-
-            Router::$response->status(200)->send([
-                "data" => $adaptedUsers,
-                "message" => "Has been listed the users"
-            ]);
-        } else if (is_array($users) && count($users) == 0) {
-            Router::$response->status(404)->send([
-                "message" => "The users not found"
-            ]);
-        } else {
-            Router::$response->status(500)->send([
-                "message" => "An error has occurred"
-            ]);
-        }
+        Router::$response->status(200)->send([
+            "data" => array_values($adaptedUsers), // Reindexar el array
+            "message" => "Has been listed the users"
+        ]);
+    } else if (is_array($users) && count($users) == 0) {
+        Router::$response->status(404)->send([
+            "message" => "The users not found"
+        ]);
+    } else {
+        Router::$response->status(500)->send([
+            "message" => "An error has occurred"
+        ]);
     }
+}
+
+// Método para obtener el ID del usuario actual desde el token
+private function getCurrentUserId()
+{
+    // Dependiendo de cómo manejes los tokens JWT en tu aplicación
+    $headers = apache_request_headers();
+    $token = str_replace('Bearer ', '', $headers['Authorization'] ?? '');
+    
+    if ($token) {
+        // Decodificar el token JWT para obtener el user_id
+        $payload = json_decode(base64_decode(explode('.', $token)[1]), true);
+        return $payload['user_id'] ?? null;
+    }
+    
+    return null;
+}
 
     private function generateDefaultAvatar(string $name): string
     {
@@ -339,7 +363,7 @@ class UsersController
     {
         $userId = Router::$request->params->idUser;
 
-        $user = $this->usuariosModel->getUserStatus($userId);
+        $user = $this->usuariosModel->getUserStatus((int)$userId);
 
         if ($user === false) {
             Router::$response->status(500)->send(["message" => "Error obteniendo estado"]);
@@ -351,11 +375,10 @@ class UsersController
             return;
         }
 
-        $online = (time() - strtotime($user['last_seen'])) < 120;
+        $online = $user === 1;
 
         Router::$response->status(200)->send([
-            "online" => $online,
-            "last_seen" => $user['last_seen']
+            "online" => $online
         ]);
     }
 }

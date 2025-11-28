@@ -7,6 +7,7 @@ use EasyProjects\SimpleRouter\Router;
 use PDO;
 use App\Models\UsersModel;
 use Exception;
+use Firebase\JWT\Key; // ✅ Importar la clase Key
 
 class AuthController
 {
@@ -92,7 +93,9 @@ class AuthController
         'token' => $jwt,
         'otp' => $otp,
         'user_id' => $user['id'],
-        'rol' => $user['rol']
+        'rol' => $user['rol'],
+        'email' => $user['email'],
+        'name' => $user['name']
       ], 200);
     } catch (Exception $e) {
       error_log("Login SQL ERROR: " . $e->getMessage(), 3, "/var/www/apituanichat/php-error.log");
@@ -168,9 +171,9 @@ class AuthController
       }
 
       $token = $matches[1];
-      $secretKey = "TU_SECRET_KEY";
-      $decoded = JWT::decode($token, new Key($secretKey, 'HS256'));
-      $userId = $decoded->user_id;
+ $secretKey = $_ENV['JWT_SECRET'] ?? 'TU_SECRET_KEY';
+            $decoded = JWT::decode($token, new Key($secretKey, 'HS256'));
+            $userId = $decoded->user_id;
 
       if (!$userId) {
         Router::$response->json(['error' => 'user_id requerido'], 400);

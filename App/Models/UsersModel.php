@@ -176,17 +176,23 @@ class UsersModel
             return false;
         }
     }
-    public function getUserStatus(int $id): array|bool
-    {
-        try {
-            $stmt = $this->db->prepare("SELECT last_seen, is_verified FROM users WHERE id = :id");
-            $stmt->bindValue(':id', $id, \PDO::PARAM_INT);
-            $stmt->execute();
-            return $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
-        } catch (\PDOException $e) {
-            return false;
-        }
+ public function getUserStatus(int $id): array|bool
+{
+    try {
+        $stmt = $this->db->prepare("SELECT online FROM users WHERE id = :id");
+        $stmt->bindValue(':id', $id, \PDO::PARAM_INT);
+        $stmt->execute();
+        
+        $result = $stmt->fetch(\PDO::FETCH_ASSOC);
+        
+        // Retornar array vacío si no hay resultados, no false
+        return $result ?: [];
+        
+    } catch (\PDOException $e) {
+        error_log("Error getUserStatus: " . $e->getMessage());
+        return false; // Solo false en caso de error excepcional
     }
+}
 
     // Actualizar usuario
     public function updateUser(int $id, string $name, string $email, string $phone = ""): bool

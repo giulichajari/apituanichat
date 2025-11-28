@@ -342,7 +342,7 @@ public function getLastUsedChatId()
                 FROM mensajes m
                 LEFT JOIN users u ON m.user_id = u.id
                 LEFT JOIN files f ON m.file_id = f.id
-                WHERE m.chat_id = :chat_id
+                WHERE m.chat_id = :chat_id AND leido=0
                 ORDER BY m.enviado_en ASC
                 LIMIT :limit OFFSET :offset
             ");
@@ -555,11 +555,46 @@ public function getDb()
         $stmt->execute([$chatId]);
         return $stmt->fetch() !== false;
     }
+public function getChatIdByUsers($userId1, $userId2)
+{
+    $stmt = $this->db->prepare("
+        SELECT c1.chat_id 
+        FROM chat_usuarios c1
+        INNER JOIN chat_usuarios c2 ON c1.chat_id = c2.chat_id
+        WHERE c1.user_id = ? 
+        AND c2.user_id = ?
+        AND c1.chat_id IN (
+            SELECT chat_id 
+            FROM chat_usuarios 
+            GROUP BY chat_id 
+            HAVING COUNT(DISTINCT user_id) = 2
+        )
+        LIMIT 1
+    ");
+    
+    $stmt->execute([$userId1, $userId2]);
+    $result = $stmt->fetch(PDO::FETCH_OBJ);
+    
+    return $result ? $result->chat_id : null;
+}
+public function markMessagesAsRead($chatId, $currentUserId)
+{
+    $stmt = $this->db->prepare("
+        UPDATE mensajes 
+        SET leido = 1
+           
+        WHERE chat_id = ? 
+        AND user_id != ? 
+        AND leido = 0
+    ");
 
+    $stmt->execute([$chatId, $currentUserId]);
+    return $stmt->rowCount();
+}
     /**
      * Verificar si el usuario pertenece al chat
      */
-    private function userInChat($chatId, $userId): bool
+    public function userInChat($chatId, $userId): bool
     {
         $stmt = $this->db->prepare("
             SELECT 1 FROM chat_usuarios 
