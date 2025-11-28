@@ -16,7 +16,7 @@ class UsersModel
     }
 
     // Obtener todos los usuarios paginados
-  public function getUsers(int $page, int $perPage = 10, int $excludeUserId = null): array|bool
+  public function getUsers(int $page, int $perPage = 10, int $excludeUserId): array|bool
 {
     try {
         $offset = ($page - 1) * $perPage;

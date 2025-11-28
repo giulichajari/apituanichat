@@ -20,7 +20,7 @@ class UsersController
     // Obtener el ID del usuario actual desde el token JWT
     $currentUserId = $this->getCurrentUserId();
     
-    $users = $this->usuariosModel->getUsers($page, $currentUserId);
+    $users = $this->usuariosModel->getUsers($page,10, $currentUserId);
     if ($users) {
         // Filtrar para excluir al usuario actual (doble verificación)
         $filteredUsers = array_filter($users, function($user) use ($currentUserId) {
