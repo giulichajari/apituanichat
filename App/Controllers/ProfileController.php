@@ -90,10 +90,8 @@ class ProfileController
         }
     }
 
-    // Actualizar solo avatar
-    public function updateAvatar()
+  public function updateAvatar()
     {
-
         $userId = Router::$request->params->userId;
 
         if (!isset($_FILES['avatar'])) {
@@ -106,17 +104,23 @@ class ProfileController
         $file = array_map('trim', $_FILES['avatar']);
         $targetDir = realpath(__DIR__ . '/../../uploads/avatars') . DIRECTORY_SEPARATOR;
 
+        // ✅ Crear directorio si no existe
+        if (!is_dir($targetDir)) {
+            mkdir($targetDir, 0755, true);
+        }
+
         $filename = uniqid() . "_" . basename($file['name']);
         $targetFile = $targetDir . $filename;
 
         if (move_uploaded_file($file['tmp_name'], $targetFile)) {
             $avatarPath = "/uploads/avatars/" . $filename;
+            
+            // ✅ CORREGIDO: Llamar SOLO UNA VEZ al método
             if ($this->profileModel->updateAvatar($userId, $avatarPath)) {
                 Router::$response->status(200)->json([
                     "message" => "Avatar updated successfully",
                     "avatar" => $avatarPath
                 ]);
-                $this->profileModel->updateAvatar($userId, $filename);
             } else {
                 Router::$response->status(500)->json([
                     "message" => "Error saving avatar path in database"

@@ -93,17 +93,20 @@ class ProfileModel
         }
     }
 
-    // Actualizar solo avatar
-    public function updateAvatar(int $userId, string $avatarPath): bool
+   public function updateAvatar(int $userId, string $avatarPath): bool
     {
         try {
-            $stmt = $this->db->prepare("UPDATE profiles SET avatar = :avatar WHERE id = :id");
+            $stmt = $this->db->prepare("
+                UPDATE profiles 
+                SET avatar = :avatar 
+                WHERE user_id = :user_id
+            ");
             return $stmt->execute([
                 ':avatar' => $avatarPath,
-                ':id' => $userId
+                ':user_id' => $userId  // ✅ CORREGIDO: usar user_id en lugar de id
             ]);
         } catch (PDOException $e) {
-            error_log("Error updating avatar: " . $e->getMessage());
+            error_log("UpdateAvatar ERROR: " . $e->getMessage());
             return false;
         }
     }

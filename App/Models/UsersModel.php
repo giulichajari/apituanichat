@@ -16,39 +16,39 @@ class UsersModel
     }
 
     // Obtener todos los usuarios paginados
-  public function getUsers(int $page, int $perPage = 10, int $excludeUserId): array|bool
-{
-    try {
-        $offset = ($page - 1) * $perPage;
-        
-        if ($excludeUserId) {
-            $stmt = $this->db->prepare("
+    public function getUsers(int $page, int $perPage = 10, int $excludeUserId): array|bool
+    {
+        try {
+            $offset = ($page - 1) * $perPage;
+
+            if ($excludeUserId) {
+                $stmt = $this->db->prepare("
                 SELECT id, name, email, phone, is_verified, online, rol, created_at 
                 FROM users 
                 WHERE id != :exclude_user_id
                 ORDER BY created_at DESC 
                 LIMIT :limit OFFSET :offset
             ");
-            $stmt->bindValue(':exclude_user_id', $excludeUserId, PDO::PARAM_INT);
-        } else {
-            $stmt = $this->db->prepare("
+                $stmt->bindValue(':exclude_user_id', $excludeUserId, PDO::PARAM_INT);
+            } else {
+                $stmt = $this->db->prepare("
                 SELECT id, name, email, phone, is_verified, online, rol, created_at 
                 FROM users 
                 ORDER BY created_at DESC 
                 LIMIT :limit OFFSET :offset
             ");
+            }
+
+            $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
+            $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+            $stmt->execute();
+
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            error_log("GetUsers ERROR: " . $e->getMessage());
+            return false;
         }
-        
-        $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
-        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
-        $stmt->execute();
-        
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
-    } catch (PDOException $e) {
-        error_log("GetUsers ERROR: " . $e->getMessage());
-        return false;
     }
-}
 // En UsuariosModel.php
 
     /**
@@ -144,7 +144,7 @@ class UsersModel
         }
     }
 
-   
+
     // Obtener un usuario por ID
     public function getUser(int $id): array|bool
     {
@@ -158,14 +158,17 @@ class UsersModel
         }
     }
 
-    // Crear un usuario
     public function addUser(string $name, string $email, string $password, string $phone = "", string $rol = "user"): int|false
     {
         try {
+            // Iniciar transacción para asegurar que se creen tanto usuario como perfil
+            $this->db->beginTransaction();
+
+            // 1. Crear el usuario
             $stmt = $this->db->prepare("
-            INSERT INTO users (name, email, pass, phone, rol) 
-            VALUES (:name, :email, :pass, :phone, :rol)
-        ");
+                INSERT INTO users (name, email, pass, phone, rol) 
+                VALUES (:name, :email, :pass, :phone, :rol)
+            ");
 
             $stmt->execute([
                 ':name' => $name,
@@ -175,9 +178,34 @@ class UsersModel
                 ':rol' => $rol
             ]);
 
-            return (int)$this->db->lastInsertId();
+            $userId = (int)$this->db->lastInsertId();
+
+            // 2. ✅ CREAR PERFIL AUTOMÁTICAMENTE
+            $profileCreated = $this->createUserProfile([
+                'user_id' => $userId,
+                'email' => $email,
+                'bio' => '',
+                'website' => '',
+                'instagram' => '',
+                'facebook' => '',
+                'twitter' => '',
+                'linkedin' => '',
+                'tiktok' => '',
+                'avatar' => ''
+            ]);
+
+            if (!$profileCreated) {
+                throw new PDOException('Failed to create user profile');
+            }
+
+            // Confirmar transacción
+            $this->db->commit();
+
+            return $userId;
         } catch (PDOException $e) {
-            error_log($e->getMessage() . "\n", 3, __DIR__ . '/../php-error.log');
+            // Revertir transacción en caso de error
+            $this->db->rollBack();
+            error_log("AddUser ERROR: " . $e->getMessage());
             return false;
         }
     }
@@ -196,23 +224,22 @@ class UsersModel
             return false;
         }
     }
- public function getUserStatus(int $id): array|bool
-{
-    try {
-        $stmt = $this->db->prepare("SELECT online FROM users WHERE id = :id");
-        $stmt->bindValue(':id', $id, \PDO::PARAM_INT);
-        $stmt->execute();
-        
-        $result = $stmt->fetch(\PDO::FETCH_ASSOC);
-        
-        // Retornar array vacío si no hay resultados, no false
-        return $result ?: [];
-        
-    } catch (\PDOException $e) {
-        error_log("Error getUserStatus: " . $e->getMessage());
-        return false; // Solo false en caso de error excepcional
+    public function getUserStatus(int $id): array|bool
+    {
+        try {
+            $stmt = $this->db->prepare("SELECT online FROM users WHERE id = :id");
+            $stmt->bindValue(':id', $id, \PDO::PARAM_INT);
+            $stmt->execute();
+
+            $result = $stmt->fetch(\PDO::FETCH_ASSOC);
+
+            // Retornar array vacío si no hay resultados, no false
+            return $result ?: [];
+        } catch (\PDOException $e) {
+            error_log("Error getUserStatus: " . $e->getMessage());
+            return false; // Solo false en caso de error excepcional
+        }
     }
-}
 
     // Actualizar usuario
     public function updateUser(int $id, string $name, string $email, string $phone = ""): bool
