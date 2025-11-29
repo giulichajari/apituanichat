@@ -479,6 +479,7 @@ public function markChatAsRead()
     try {
         $data = Router::$request->body;
         $otherUserId = $data->user_id ?? null;
+        $chatId = $data->chat_id ?? null;
         $currentUser = Router::$request->user ?? null;
 
         if (!$otherUserId) {
@@ -498,7 +499,7 @@ public function markChatAsRead()
         }
 
         // Obtener el chat_id real basado en los dos usuarios
-        $chatId = $this->chatModel->getChatIdByUsers($currentUser->id, $otherUserId);
+        $chatId = $this->chatModel->getChatIdByUsers($currentUser->id, $chatId);
         
         if (!$chatId) {
             Router::$response->status(404)->send([
