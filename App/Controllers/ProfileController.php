@@ -116,7 +116,7 @@ class ProfileController
             $avatarPath = "/uploads/avatars/" . $filename;
             
             // ✅ CORREGIDO: Llamar SOLO UNA VEZ al método
-            if ($this->profileModel->updateAvatar($userId, $avatarPath)) {
+            if ($this->profileModel->updateAvatar($userId, $filename)) {
                 Router::$response->status(200)->json([
                     "message" => "Avatar updated successfully",
                     "avatar" => $avatarPath
