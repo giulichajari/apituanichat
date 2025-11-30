@@ -383,35 +383,71 @@ public function getLastUsedChatId()
     }
 
     // ✅ Marcar como leído - VERSIÓN MEJORADA
-    public function markAsRead($chatId, $userId): bool
-    {
-        try {
-            // Obtener último mensaje
-            $stmt = $this->db->prepare("
-                SELECT id FROM mensajes 
-                WHERE chat_id = :chat_id 
-                ORDER BY id DESC LIMIT 1
-            ");
-            $stmt->execute([':chat_id' => $chatId]);
-            $lastId = $stmt->fetchColumn();
+  public function markAsRead($chatId, $userId): bool
+{
+    try {
+        // ✅ Obtener mensajes no leídos que tengan más de 1 minuto de enviados
+        $stmt = $this->db->prepare("
+            SELECT id 
+            FROM mensajes 
+            WHERE chat_id = :chat_id 
+            AND user_id != :user_id  -- Solo mensajes de otros usuarios
+            AND leido = 0  -- Solo no leídos
+            AND TIMESTAMPDIFF(MINUTE, enviado_en, NOW()) >= 1  -- Más de 1 minuto
+            ORDER BY id DESC
+        ");
+        $stmt->execute([
+            ':chat_id' => $chatId,
+            ':user_id' => $userId
+        ]);
+        $messagesToMark = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
-            $stmt = $this->db->prepare("
-                UPDATE chat_usuarios 
-                SET ultimo_no_leido = :ultimo, leido = 1
-                WHERE chat_id = :chat_id AND user_id = :user_id
-            ");
-            $stmt->execute([
-                ':ultimo' => $lastId ?? 0,
-                ':chat_id' => $chatId,
-                ':user_id' => $userId
-            ]);
-
+        if (empty($messagesToMark)) {
+            error_log("ℹ️ No hay mensajes para marcar como leídos (chat: {$chatId}, usuario: {$userId})");
             return true;
-        } catch (PDOException $e) {
-            error_log("Error marcando como leído: " . $e->getMessage());
-            throw $e;
         }
+
+        // ✅ Marcar mensajes como leídos
+        $placeholders = str_repeat('?,', count($messagesToMark) - 1) . '?';
+        $stmt = $this->db->prepare("
+            UPDATE mensajes 
+            SET leido = 1, 
+                leido_en = NOW()
+            WHERE id IN ({$placeholders})
+            AND leido = 0
+        ");
+        $stmt->execute($messagesToMark);
+        $updatedRows = $stmt->rowCount();
+
+        // ✅ Actualizar el último mensaje no leído en chat_usuarios
+        $stmt = $this->db->prepare("
+            UPDATE chat_usuarios 
+            SET ultimo_no_leido = (
+                SELECT COALESCE(MAX(id), 0) 
+                FROM mensajes 
+                WHERE chat_id = :chat_id 
+                AND leido = 0
+                AND user_id != :user_id
+            ),
+            leido = 1,
+            ultima_vista = NOW()
+            WHERE chat_id = :chat_id 
+            AND user_id = :user_id
+        ");
+        $stmt->execute([
+            ':chat_id' => $chatId,
+            ':user_id' => $userId
+        ]);
+
+        error_log("✅ Marcados {$updatedRows} mensajes como leídos (chat: {$chatId}, usuario: {$userId})");
+
+        return true;
+
+    } catch (PDOException $e) {
+        error_log("❌ Error marcando como leído: " . $e->getMessage());
+        throw $e;
     }
+}
 
 // En tu ChatModel.php - agrega este método
 public function insertMessage(array $messageData): int
