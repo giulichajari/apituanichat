@@ -1,6 +1,17 @@
 <?php
-
 namespace App\WebSocket;
+
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+ini_set('log_errors', 1);
+ini_set('error_log', __DIR__ . '/php_errors.log');
+
+// Crear archivo de log si no existe
+if (!file_exists(__DIR__ . '/php_errors.log')) {
+    file_put_contents(__DIR__ . '/php_errors.log', '');
+}
+
+echo "🔧 Modo DEBUG activado\n";
 
 use Ratchet\MessageComponentInterface;
 use Ratchet\ConnectionInterface;
