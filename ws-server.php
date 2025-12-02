@@ -224,7 +224,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         ]));
     }
 
- private function handleChatMessage($from, $data)
+private function handleChatMessage($from, $data)
 {
     $this->logToFile("💭 Procesando mensaje de chat");
     
@@ -313,7 +313,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         'status' => 'sent'
     ];
 
-    // 4. Enviar a todos en el chat
+    // 4. Enviar a todos en el chat (INCLUYENDO al remitente)
     $sentCount = 0;
     if (isset($this->sessions[$chatId])) {
         foreach ($this->sessions[$chatId] as $client) {
@@ -326,10 +326,14 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
     } else {
         $this->logToFile("⚠️ No hay sesiones activas para chat $chatId");
+        
+        // Si no hay sesión, al menos enviar al remitente
+        $from->send(json_encode($response));
+        $sentCount = 1;
     }
 
-    // 5. También enviar al remitente
-    $from->send(json_encode($response));
+    // 5. ⚠️ REMOVI ESTA LÍNEA - NO la necesitas
+    // $from->send(json_encode($response));
 
     $this->logToFile("📤 Mensaje enviado a {$sentCount} cliente(s) en chat {$chatId}");
 }
