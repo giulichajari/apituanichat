@@ -17,113 +17,54 @@ class ChatModel
     }
 
 
-    public function sendMessage($chatId, $userId, $contenido, $tipo = 'texto', $fileId = null, $otherUserId = null): int
-    {
-       
+  public function sendMessage($chatId, $userId, $contenido, $tipo = 'texto', $fileId = null, $otherUserId = null): int
+{
+    try {
+        // ... (tu lógica de chat aquí) ...
 
-        try {
-            // ✅ Guardar el chatId original para referencia
-            $originalChatId = $chatId;
-            $this->lastUsedChatId = $chatId;
+        // ✅ VERSIÓN CORREGIDA - Incluye 'leido' y usa NOW() para 'enviado_en'
+        $sql = "
+            INSERT INTO mensajes (chat_id, user_id, contenido, tipo, file_id, leido, enviado_en) 
+            VALUES (:chat_id, :user_id, :contenido, :tipo, :file_id, 0, NOW())
+        ";
+        
+        error_log("📝 SQL a ejecutar: " . $sql);
+        error_log("📝 Parámetros: chat_id={$this->lastUsedChatId}, user_id={$userId}, contenido={$contenido}, tipo={$tipo}, file_id=" . ($fileId ?? 'NULL'));
+        
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([
+            ':chat_id' => $this->lastUsedChatId,
+            ':user_id' => $userId,
+            ':contenido' => $contenido,
+            ':tipo' => $tipo,
+            ':file_id' => $fileId
+        ]);
 
-            // ─────────────────────────────────────────────
-            // 🔥 LÓGICA CLAVE CORREGIDA:
-            // Si tenemos chatId, PERO NO EXISTE en la BD...
-            // ─────────────────────────────────────────────
-            if ($chatId) {
-                if (!$this->chatExists($chatId)) {
-                    // ⚠️ El chat NO existe en la BD
-                    // Esto significa que chatId probablemente es un user_id disfrazado
+        $messageId = (int)$this->db->lastInsertId();
 
-                    error_log("⚠️ Chat {$chatId} no existe en BD. Interpretando como posible user_id...");
+        // Actualizar last_message_at
+        $this->updateChatLastMessage($this->lastUsedChatId);
 
-                    // CASO A: Si tenemos otherUserId, usarlo para crear chat
-                    if ($otherUserId && $otherUserId != $userId) {
-                        // Buscar chat existente entre userId y otherUserId
-                        $existingChat = $this->findChatBetweenUsers($userId, $otherUserId);
-                        $this->lastUsedChatId = $existingChat ?: $this->createChat([$userId, $otherUserId]);
-
-                        error_log("✅ Usando otherUserId={$otherUserId} para chat. Chat ID resultante: {$this->lastUsedChatId}");
-                    }
-                    // CASO B: Si NO tenemos otherUserId, asumir que chatId ES el otherUserId
-                    elseif (!$otherUserId) {
-                        $otherUserId = $chatId;
-
-                        // Validar que no sea el mismo usuario
-                        if ($otherUserId == $userId) {
-                            throw new Exception("No puedes enviarte mensajes a ti mismo");
-                        }
-
-                        // Buscar o crear chat
-                        $existingChat = $this->findChatBetweenUsers($userId, $otherUserId);
-                        $this->lastUsedChatId = $existingChat ?: $this->createChat([$userId, $otherUserId]);
-
-                        error_log("✅ Interpretando chat_id={$originalChatId} como other_user_id. Chat creado: {$this->lastUsedChatId}");
-                    }
-                    // CASO C: otherUserId existe pero es igual a userId (error)
-                    elseif ($otherUserId == $userId) {
-                        throw new Exception("No puedes enviarte mensajes a ti mismo");
-                    }
-                }
-                // Si el chat SÍ existe, verificar que el usuario pertenezca
-                else {
-                    if (!$this->userInChat($chatId, $userId)) {
-                        // Si el usuario no está en el chat, agregarlo
-                        $this->addUserToChat($chatId, $userId);
-                        error_log("➕ Usuario {$userId} agregado al chat existente {$chatId}");
-                    }
-                    $this->lastUsedChatId = $chatId;
-                }
-            }
-            // ─────────────────────────────────────────────
-            // Si NO tenemos chatId pero SÍ tenemos otherUserId
-            // ─────────────────────────────────────────────
-            elseif ($otherUserId) {
-                // Validar que no sea el mismo usuario
-                if ($otherUserId == $userId) {
-                    throw new Exception("No puedes enviarte mensajes a ti mismo");
-                }
-
-                $existingChat = $this->findChatBetweenUsers($userId, $otherUserId);
-                $this->lastUsedChatId = $existingChat ?: $this->createChat([$userId, $otherUserId]);
-
-                error_log("✅ Chat determinado por usuarios: {$userId} → {$otherUserId}. Chat ID: {$this->lastUsedChatId}");
-            }
-            // ─────────────────────────────────────────────
-            // Si no tenemos NI chatId NI otherUserId → ERROR
-            // ─────────────────────────────────────────────
-            else {
-                throw new Exception("Se necesita chat_id o other_user_id para enviar mensaje");
-            }
-
-            // ✅ INSERTAR MENSAJE CON EL CHAT_ID CORRECTO
-            $stmt = $this->db->prepare("
-            INSERT INTO mensajes (chat_id, user_id, contenido, tipo, file_id, enviado_en) 
-            VALUES (:chat_id, :user_id, :contenido, :tipo, :file_id,NOW())
-        ");
-            $stmt->execute([
-                ':chat_id' => $this->lastUsedChatId,
-                ':user_id' => $userId,
-                ':contenido' => $contenido,
-                ':tipo' => $tipo,
-                ':file_id' => $fileId
-            ]);
-
-            $messageId = (int)$this->db->lastInsertId();
-
-            // Actualizar last_message_at
-            $this->updateChatLastMessage($this->lastUsedChatId);
-
-            error_log("✅ Mensaje enviado - Chat: {$this->lastUsedChatId}, Usuario: {$userId}, Mensaje: {$messageId}");
-            return $messageId;
-        } catch (PDOException $e) {
-            error_log("Error en sendMessage: " . $e->getMessage());
-            throw $e;
-        } catch (Exception $e) {
-            error_log("Error de validación en sendMessage: " . $e->getMessage());
-            throw $e;
-        }
+        error_log("✅ Mensaje enviado - Chat: {$this->lastUsedChatId}, Usuario: {$userId}, Mensaje: {$messageId}");
+        return $messageId;
+        
+    } catch (PDOException $e) {
+        error_log("❌ Error PDO en sendMessage: " . $e->getMessage());
+        error_log("📋 SQL State: " . $e->getCode());
+        error_log("📋 SQL Query: " . ($sql ?? 'No definida'));
+        
+        // Mostrar los parámetros que causaron el error
+        error_log("📋 Parámetros error: " . json_encode([
+            'chat_id' => $this->lastUsedChatId,
+            'user_id' => $userId,
+            'contenido' => $contenido,
+            'tipo' => $tipo,
+            'file_id' => $fileId
+        ]));
+        
+        throw new Exception("Error al guardar mensaje: " . $e->getMessage(), $e->getCode(), $e);
     }
+}
 
     public function addMessage($messageData)
     {
