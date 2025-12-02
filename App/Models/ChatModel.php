@@ -99,7 +99,7 @@ class ChatModel
             // ✅ INSERTAR MENSAJE CON EL CHAT_ID CORRECTO
             $stmt = $this->db->prepare("
             INSERT INTO mensajes (chat_id, user_id, contenido, tipo, file_id, enviado_en) 
-            VALUES (:chat_id, :user_id, :contenido, :tipo, :file_id, NOW())
+            VALUES (:chat_id, :user_id, :contenido, :tipo, :file_id)
         ");
             $stmt->execute([
                 ':chat_id' => $this->lastUsedChatId,
