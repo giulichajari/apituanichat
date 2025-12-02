@@ -251,7 +251,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         try {
          
                 $chatModel = new App\Models\ChatModel();
-                
+                error_log("se creo chatmodel");
                 // Verificar si el chat existe
                 if (!$chatModel->chatExists($chatId)) {
                     // Si no existe, podría ser un user_id
@@ -265,6 +265,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                     
                     $chatId = $realChatId;
                 }
+                error_log("por guardar msj");
                 
                 // Guardar mensaje
                 $messageId = $chatModel->sendMessage(
@@ -279,6 +280,8 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             
         } catch (\Exception $e) {
             echo "❌ Error BD: {$e->getMessage()}\n";
+                error_log($e->getMessage());
+
             $messageId = rand(1000, 9999); // ID temporal
         }
         
