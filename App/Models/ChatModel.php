@@ -842,7 +842,7 @@ class ChatModel
     private function getUserName($userId)
     {
         try {
-            $stmt = $this->db->prepare("SELECT name FROM usuarios WHERE id = ?");
+            $stmt = $this->db->prepare("SELECT name FROM users WHERE id = ?");
             $stmt->execute([$userId]);
             $result = $stmt->fetch(PDO::FETCH_ASSOC);
             return $result ? $result['name'] : null;
