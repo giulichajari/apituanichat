@@ -227,19 +227,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     {
         echo "💭 Procesando mensaje de chat\n";
         
-        // Validar datos básicos
-        $required = ['chat_id', 'user_id', 'contenido'];
-        foreach ($required as $field) {
-            if (!isset($data[$field])) {
-                $from->send(json_encode([
-                    'type' => 'error',
-                    'message' => "Falta campo: {$field}",
-                    'temp_id' => $data['temp_id'] ?? null
-                ]));
-                echo "❌ Falta {$field}\n";
-                return;
-            }
-        }
+       
         
         $chatId = $data['chat_id'];
         $userId = $data['user_id'];
