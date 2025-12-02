@@ -40,6 +40,7 @@ foreach ($requiredClasses as $class) {
         echo "❌ $class - NO encontrada\n";
     }
 }
+
 use App\Models\ChatModel;
 // ===================== CLASE DEL SERVIDOR =====================
 class SignalServer implements \Ratchet\MessageComponentInterface
@@ -47,18 +48,18 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     protected $clients;
     protected $sessions = []; // chat_id => [conexiones]
     protected $userConnections = []; // user_id => [conexiones]
-    
+
     public function __construct()
     {
         $this->clients = new \SplObjectStorage();
         echo "🚀 SignalServer inicializado\n";
     }
-    
+
     public function onOpen(\Ratchet\ConnectionInterface $conn)
     {
         $this->clients->attach($conn);
         echo date('H:i:s') . " 🔗 Conexión #{$conn->resourceId} abierta\n";
-        
+
         // Enviar test de conexión
         $conn->send(json_encode([
             'type' => 'welcome',
@@ -67,7 +68,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'server_time' => date('Y-m-d H:i:s')
         ]));
     }
-    
+
     public function onClose(\Ratchet\ConnectionInterface $conn)
     {
         // Remover de sesiones de chat
@@ -77,7 +78,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 echo "👋 Removido de chat {$chatId}\n";
             }
         }
-        
+
         // Remover de conexiones de usuario
         foreach ($this->userConnections as $userId => $connections) {
             if (isset($connections[$conn->resourceId])) {
@@ -85,50 +86,51 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 echo "👋 Removido conexiones usuario {$userId}\n";
             }
         }
-        
+
         $this->clients->detach($conn);
         echo date('H:i:s') . " ❌ Conexión #{$conn->resourceId} cerrada\n";
     }
-    
+
     public function onError(\Ratchet\ConnectionInterface $conn, \Exception $e)
     {
         echo date('H:i:s') . " ⚠️ Error #{$conn->resourceId}: {$e->getMessage()}\n";
         $conn->close();
     }
-    
+
     public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
     {
         echo date('H:i:s') . " 📨 #{$from->resourceId} → " . substr($msg, 0, 100) . "\n";
-        
+
         try {
             $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
-            
+
             if (!isset($data['type'])) {
                 echo "❌ Sin tipo de mensaje\n";
                 return;
             }
-            
+
             switch ($data['type']) {
                 case 'ping':
                     $this->handlePing($from);
                     break;
-                    
+
                 case 'auth':
                     $this->handleAuth($from, $data);
                     break;
-                    
+
                 case 'join_chat':
                     $this->handleJoinChat($from, $data);
                     break;
-                    
+
                 case 'chat_message':
+                    error_log("chat_message recibido de " . $from->resourceId);
                     $this->handleChatMessage($from, $data);
                     break;
-                    
+
                 case 'test':
                     $this->handleTest($from, $data);
                     break;
-                    
+
                 default:
                     echo "⚠️ Tipo desconocido: {$data['type']}\n";
                     $from->send(json_encode([
@@ -136,7 +138,6 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                         'message' => 'Tipo no soportado: ' . $data['type']
                     ]));
             }
-            
         } catch (\JsonException $e) {
             echo "❌ JSON inválido: {$e->getMessage()}\n";
             $from->send(json_encode([
@@ -151,9 +152,9 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             ]));
         }
     }
-    
+
     // ===================== HANDLERS =====================
-    
+
     private function handlePing($from)
     {
         $from->send(json_encode([
@@ -163,7 +164,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         ]));
         echo "🏓 Ping respondido\n";
     }
-    
+
     private function handleAuth($from, $data)
     {
         if (!isset($data['user_id'])) {
@@ -173,18 +174,18 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             ]));
             return;
         }
-        
+
         $userId = $data['user_id'];
         $from->userId = $userId;
-        
+
         // Registrar conexión de usuario
         if (!isset($this->userConnections[$userId])) {
             $this->userConnections[$userId] = [];
         }
         $this->userConnections[$userId][$from->resourceId] = $from;
-        
+
         echo "🔐 Usuario {$userId} autenticado en conexión #{$from->resourceId}\n";
-        
+
         $from->send(json_encode([
             'type' => 'auth_success',
             'user_id' => $userId,
@@ -192,29 +193,29 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'connection_id' => $from->resourceId
         ]));
     }
-    
+
     private function handleJoinChat($from, $data)
     {
         if (!isset($data['chat_id'], $data['user_id'])) {
             $from->send(json_encode(['type' => 'error', 'message' => 'Datos incompletos']));
             return;
         }
-        
+
         $chatId = $data['chat_id'];
         $userId = $data['user_id'];
-        
+
         // Inicializar sesión de chat si no existe
         if (!isset($this->sessions[$chatId])) {
             $this->sessions[$chatId] = [];
             echo "💬 Nueva sesión chat {$chatId}\n";
         }
-        
+
         // Agregar conexión al chat
         $this->sessions[$chatId][$from->resourceId] = $from;
         $from->currentChat = $chatId;
-        
+
         echo "➕ Usuario {$userId} unido al chat {$chatId}\n";
-        
+
         $from->send(json_encode([
             'type' => 'joined_chat',
             'chat_id' => $chatId,
@@ -222,20 +223,20 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'online_count' => count($this->sessions[$chatId])
         ]));
     }
-    
+
     private function handleChatMessage($from, $data)
     {
         echo "💭 Procesando mensaje de chat\n";
-        
-       
-        
+
+
+
         $chatId = $data['chat_id'];
         $userId = $data['user_id'];
         $content = $data['contenido'];
         $tempId = $data['temp_id'] ?? null;
-        
+
         echo "📝 Chat: {$chatId}, User: {$userId}, Content: " . substr($content, 0, 50) . "\n";
-        
+
         // 1. Confirmación inmediata
         if ($tempId) {
             $from->send(json_encode([
@@ -245,46 +246,44 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 'timestamp' => time()
             ]));
         }
-        
+
         // 2. Intentar guardar en BD (si existe ChatModel)
         $messageId = null;
         try {
-         
-                $chatModel = new App\Models\ChatModel();
-                error_log("se creo chatmodel");
-                // Verificar si el chat existe
-                if (!$chatModel->chatExists($chatId)) {
-                    // Si no existe, podría ser un user_id
-                    $otherUserId = $data['other_user_id'] ?? $chatId;
-                    $realChatId = $chatModel->findChatBetweenUsers($userId, $otherUserId);
-                    
-                    if (!$realChatId) {
-                        $realChatId = $chatModel->createChat([$userId, $otherUserId]);
-                        echo "🆕 Chat creado: {$realChatId}\n";
-                    }
-                    
-                    $chatId = $realChatId;
+
+            $chatModel = new App\Models\ChatModel();
+            error_log("se creo chatmodel");
+            // Verificar si el chat existe
+            if (!$chatModel->chatExists($chatId)) {
+                // Si no existe, podría ser un user_id
+                $otherUserId = $data['other_user_id'] ?? $chatId;
+                $realChatId = $chatModel->findChatBetweenUsers($userId, $otherUserId);
+
+                if (!$realChatId) {
+                    $realChatId = $chatModel->createChat([$userId, $otherUserId]);
+                    echo "🆕 Chat creado: {$realChatId}\n";
                 }
-                error_log("por guardar msj");
-                
-                // Guardar mensaje
-                $messageId = $chatModel->sendMessage(
-                    $chatId,
-                    $userId,
-                    $content,
-                    'texto'
-                );
-                
-                echo "✅ Mensaje guardado en BD: ID {$messageId}\n";
-         
-            
+
+                $chatId = $realChatId;
+            }
+            error_log("por guardar msj");
+
+            // Guardar mensaje
+            $messageId = $chatModel->sendMessage(
+                $chatId,
+                $userId,
+                $content,
+                'texto'
+            );
+
+            echo "✅ Mensaje guardado en BD: ID {$messageId}\n";
         } catch (\Exception $e) {
             echo "❌ Error BD: {$e->getMessage()}\n";
-                error_log($e->getMessage());
+            error_log($e->getMessage());
 
             $messageId = rand(1000, 9999); // ID temporal
         }
-        
+
         // 3. Preparar respuesta
         $response = [
             'type' => 'chat_message',
@@ -299,7 +298,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'user_name' => $data['user_name'] ?? 'Usuario',
             'status' => 'sent'
         ];
-        
+
         // 4. Enviar a todos en el chat
         $sentCount = 0;
         if (isset($this->sessions[$chatId])) {
@@ -312,17 +311,17 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 }
             }
         }
-        
+
         // 5. También enviar al remitente (por si acaso)
         $from->send(json_encode($response));
-        
+
         echo "📤 Mensaje enviado a {$sentCount} cliente(s) en chat {$chatId}\n";
     }
-    
+
     private function handleTest($from, $data)
     {
         echo "🧪 Test recibido\n";
-        
+
         $response = [
             'type' => 'test_response',
             'message' => 'WebSocket funcionando correctamente',
@@ -330,9 +329,9 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'server_time' => date('c'),
             'clients_count' => $this->clients->count()
         ];
-        
+
         $from->send(json_encode($response));
-        
+
         echo "✅ Test respondido\n";
     }
 }
@@ -346,7 +345,7 @@ echo "========================================\n\n";
 try {
     // Crear instancia del servidor
     $app = new SignalServer();
-    
+
     // Configurar servidor WebSocket
     $server = \Ratchet\Server\IoServer::factory(
         new \Ratchet\Http\HttpServer(
@@ -355,7 +354,7 @@ try {
         8081, // Puerto
         '0.0.0.0' // Escuchar en todas las interfaces
     );
-    
+
     echo "✅ Servidor WebSocket configurado\n";
     echo "📡 Escuchando en: ws://0.0.0.0:8080\n";
     echo "📡 También en: ws://localhost:8080\n";
@@ -364,10 +363,9 @@ try {
     echo "========================================\n";
     echo "🟢 Servidor en ejecución (Ctrl+C para detener)\n";
     echo "========================================\n\n";
-    
+
     // Iniciar servidor
     $server->run();
-    
 } catch (\Exception $e) {
     echo "\n❌❌❌ ERROR CRÍTICO ❌❌❌\n";
     echo "Mensaje: " . $e->getMessage() . "\n";
