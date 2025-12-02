@@ -40,7 +40,7 @@ foreach ($requiredClasses as $class) {
         echo "❌ $class - NO encontrada\n";
     }
 }
-
+use App\Models\ChatModel;
 // ===================== CLASE DEL SERVIDOR =====================
 class SignalServer implements \Ratchet\MessageComponentInterface
 {
@@ -261,7 +261,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         // 2. Intentar guardar en BD (si existe ChatModel)
         $messageId = null;
         try {
-            if (class_exists('App\Models\ChatModel')) {
+         
                 $chatModel = new App\Models\ChatModel();
                 
                 // Verificar si el chat existe
@@ -287,12 +287,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 );
                 
                 echo "✅ Mensaje guardado en BD: ID {$messageId}\n";
-                
-            } else {
-                // Si no hay ChatModel, usar ID simulado
-                $messageId = rand(1000, 9999);
-                echo "⚠️ ChatModel no disponible, usando ID simulado: {$messageId}\n";
-            }
+         
             
         } catch (\Exception $e) {
             echo "❌ Error BD: {$e->getMessage()}\n";
