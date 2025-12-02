@@ -15,92 +15,191 @@ class ChatModel
     {
         $this->db = Database::getInstance()->getConnection();
     }
-// En App/Models/ChatModel.php - agrega este método si necesitas compatibilidad
-/**
- * @deprecated Usar sendMessage en su lugar
- */
 
-// En ChatModel.php - agrega este método para compatibilidad
-/**
- * Método legacy para compatibilidad con FileUploadService
- * @deprecated Usar sendMessage en su lugar
- */
-public function addMessage($messageData)
-{
-    try {
-        error_log("⚠️ addMessage llamado (método legacy)");
-        
-        // Obtener other_user_id si no está en messageData
-        $otherUserId = $messageData['other_user_id'] ?? null;
-        if (!$otherUserId && isset($messageData['chat_id'])) {
-            $otherUserId = $this->getOtherUserFromChat($messageData['chat_id'], $messageData['user_id']);
+
+    public function sendMessage($chatId, $userId, $contenido, $tipo = 'texto', $fileId = null, $otherUserId = null): int
+    {
+       
+
+        try {
+            // ✅ Guardar el chatId original para referencia
+            $originalChatId = $chatId;
+            $this->lastUsedChatId = $chatId;
+
+            // ─────────────────────────────────────────────
+            // 🔥 LÓGICA CLAVE CORREGIDA:
+            // Si tenemos chatId, PERO NO EXISTE en la BD...
+            // ─────────────────────────────────────────────
+            if ($chatId) {
+                if (!$this->chatExists($chatId)) {
+                    // ⚠️ El chat NO existe en la BD
+                    // Esto significa que chatId probablemente es un user_id disfrazado
+
+                    error_log("⚠️ Chat {$chatId} no existe en BD. Interpretando como posible user_id...");
+
+                    // CASO A: Si tenemos otherUserId, usarlo para crear chat
+                    if ($otherUserId && $otherUserId != $userId) {
+                        // Buscar chat existente entre userId y otherUserId
+                        $existingChat = $this->findChatBetweenUsers($userId, $otherUserId);
+                        $this->lastUsedChatId = $existingChat ?: $this->createChat([$userId, $otherUserId]);
+
+                        error_log("✅ Usando otherUserId={$otherUserId} para chat. Chat ID resultante: {$this->lastUsedChatId}");
+                    }
+                    // CASO B: Si NO tenemos otherUserId, asumir que chatId ES el otherUserId
+                    elseif (!$otherUserId) {
+                        $otherUserId = $chatId;
+
+                        // Validar que no sea el mismo usuario
+                        if ($otherUserId == $userId) {
+                            throw new Exception("No puedes enviarte mensajes a ti mismo");
+                        }
+
+                        // Buscar o crear chat
+                        $existingChat = $this->findChatBetweenUsers($userId, $otherUserId);
+                        $this->lastUsedChatId = $existingChat ?: $this->createChat([$userId, $otherUserId]);
+
+                        error_log("✅ Interpretando chat_id={$originalChatId} como other_user_id. Chat creado: {$this->lastUsedChatId}");
+                    }
+                    // CASO C: otherUserId existe pero es igual a userId (error)
+                    elseif ($otherUserId == $userId) {
+                        throw new Exception("No puedes enviarte mensajes a ti mismo");
+                    }
+                }
+                // Si el chat SÍ existe, verificar que el usuario pertenezca
+                else {
+                    if (!$this->userInChat($chatId, $userId)) {
+                        // Si el usuario no está en el chat, agregarlo
+                        $this->addUserToChat($chatId, $userId);
+                        error_log("➕ Usuario {$userId} agregado al chat existente {$chatId}");
+                    }
+                    $this->lastUsedChatId = $chatId;
+                }
+            }
+            // ─────────────────────────────────────────────
+            // Si NO tenemos chatId pero SÍ tenemos otherUserId
+            // ─────────────────────────────────────────────
+            elseif ($otherUserId) {
+                // Validar que no sea el mismo usuario
+                if ($otherUserId == $userId) {
+                    throw new Exception("No puedes enviarte mensajes a ti mismo");
+                }
+
+                $existingChat = $this->findChatBetweenUsers($userId, $otherUserId);
+                $this->lastUsedChatId = $existingChat ?: $this->createChat([$userId, $otherUserId]);
+
+                error_log("✅ Chat determinado por usuarios: {$userId} → {$otherUserId}. Chat ID: {$this->lastUsedChatId}");
+            }
+            // ─────────────────────────────────────────────
+            // Si no tenemos NI chatId NI otherUserId → ERROR
+            // ─────────────────────────────────────────────
+            else {
+                throw new Exception("Se necesita chat_id o other_user_id para enviar mensaje");
+            }
+
+            // ✅ INSERTAR MENSAJE CON EL CHAT_ID CORRECTO
+            $stmt = $this->db->prepare("
+            INSERT INTO mensajes (chat_id, user_id, contenido, tipo, file_id, enviado_en) 
+            VALUES (:chat_id, :user_id, :contenido, :tipo, :file_id, NOW())
+        ");
+            $stmt->execute([
+                ':chat_id' => $this->lastUsedChatId,
+                ':user_id' => $userId,
+                ':contenido' => $contenido,
+                ':tipo' => $tipo,
+                ':file_id' => $fileId
+            ]);
+
+            $messageId = (int)$this->db->lastInsertId();
+
+            // Actualizar last_message_at
+            $this->updateChatLastMessage($this->lastUsedChatId);
+
+            error_log("✅ Mensaje enviado - Chat: {$this->lastUsedChatId}, Usuario: {$userId}, Mensaje: {$messageId}");
+            return $messageId;
+        } catch (PDOException $e) {
+            error_log("Error en sendMessage: " . $e->getMessage());
+            throw $e;
+        } catch (Exception $e) {
+            error_log("Error de validación en sendMessage: " . $e->getMessage());
+            throw $e;
         }
-        
-        return $this->sendMessage(
-            $messageData['chat_id'] ?? null,
-            $messageData['user_id'] ?? null,
-            $messageData['contenido'] ?? '',
-            $messageData['tipo'] ?? 'texto',
-            $messageData['file_id'] ?? null,
-            $otherUserId
-        );
-    } catch (Exception $e) {
-        error_log("Error en addMessage: " . $e->getMessage());
-        throw $e;
     }
-}
+
+    public function addMessage($messageData)
+    {
+        try {
+            error_log("⚠️ addMessage llamado (método legacy)");
+
+            // Obtener other_user_id si no está en messageData
+            $otherUserId = $messageData['other_user_id'] ?? null;
+            if (!$otherUserId && isset($messageData['chat_id'])) {
+                $otherUserId = $this->getOtherUserFromChat($messageData['chat_id'], $messageData['user_id']);
+            }
+
+            return $this->sendMessage(
+                $messageData['chat_id'] ?? null,
+                $messageData['user_id'] ?? null,
+                $messageData['contenido'] ?? '',
+                $messageData['tipo'] ?? 'texto',
+                $messageData['file_id'] ?? null,
+                $otherUserId
+            );
+        } catch (Exception $e) {
+            error_log("Error en addMessage: " . $e->getMessage());
+            throw $e;
+        }
+    }
 
 
 
     // ✅ Crear chat - VERSIÓN OPTIMIZADA
- public function createChat(array $userIds, ?string $chatName = null): int
-{
-    try {
-        $uniqueUserIds = array_unique($userIds);
-        if (count($uniqueUserIds) < 2) {
-            throw new Exception("Se necesitan al menos 2 usuarios diferentes para crear un chat");
-        }
-
-        // Verificar usuarios
-        foreach ($uniqueUserIds as $userId) {
-            if (!$this->userExists($userId)) {
-                throw new Exception("El usuario {$userId} no existe");
+    public function createChat(array $userIds, ?string $chatName = null): int
+    {
+        try {
+            $uniqueUserIds = array_unique($userIds);
+            if (count($uniqueUserIds) < 2) {
+                throw new Exception("Se necesitan al menos 2 usuarios diferentes para crear un chat");
             }
-        }
 
-        if (!$chatName) {
-            $chatName = $this->generateChatName($uniqueUserIds);
-        }
+            // Verificar usuarios
+            foreach ($uniqueUserIds as $userId) {
+                if (!$this->userExists($userId)) {
+                    throw new Exception("El usuario {$userId} no existe");
+                }
+            }
 
-        // ✅ ELIMINAR beginTransaction() y commit()/rollBack()
-        
-        // 1. Crear el chat
-        $stmt = $this->db->prepare("
+            if (!$chatName) {
+                $chatName = $this->generateChatName($uniqueUserIds);
+            }
+
+            // ✅ ELIMINAR beginTransaction() y commit()/rollBack()
+
+            // 1. Crear el chat
+            $stmt = $this->db->prepare("
             INSERT INTO chats (name, created_at, last_message_at) 
             VALUES (:name, NOW(), NOW())
         ");
-        $stmt->execute([':name' => $chatName]);
-        $chatId = (int)$this->db->lastInsertId();
+            $stmt->execute([':name' => $chatName]);
+            $chatId = (int)$this->db->lastInsertId();
 
-        // 2. Agregar usuarios al chat
-        $stmt = $this->db->prepare("
+            // 2. Agregar usuarios al chat
+            $stmt = $this->db->prepare("
             INSERT INTO chat_usuarios (chat_id, user_id, added_at) 
             VALUES (?, ?, NOW())
         ");
 
-        foreach ($uniqueUserIds as $userId) {
-            $stmt->execute([$chatId, $userId]);
+            foreach ($uniqueUserIds as $userId) {
+                $stmt->execute([$chatId, $userId]);
+            }
+
+            error_log("✅ Chat creado exitosamente - ID: {$chatId}");
+            return $chatId;
+        } catch (Exception $e) {
+            // ✅ ELIMINAR rollBack() ya que no hay transacción
+            error_log("❌ Error creando chat: " . $e->getMessage());
+            throw $e;
         }
-
-        error_log("✅ Chat creado exitosamente - ID: {$chatId}");
-        return $chatId;
-
-    } catch (Exception $e) {
-        // ✅ ELIMINAR rollBack() ya que no hay transacción
-        error_log("❌ Error creando chat: " . $e->getMessage());
-        throw $e;
     }
-}
 
     // ✅ Método auxiliar para verificar si usuario existe
     private function userExists($userId): bool
@@ -135,73 +234,12 @@ public function addMessage($messageData)
         }
     }
 
-   // ✅ Enviar mensaje - VERSIÓN CORREGIDA
-public function sendMessage($chatId, $userId, $contenido, $tipo = 'texto', $fileId = null, $otherUserId = null): int
-{
-    try {
-        $finalChatId = $chatId;
 
-        // ✅ SI el chat no existe O si chatId es el mismo que userId (error), crear nuevo chat
-        if (!$this->chatExists($chatId) || $chatId == $userId) {
-            if (!$otherUserId || $otherUserId == $userId) {
-                throw new Exception("Se necesita un usuario diferente para crear un chat nuevo");
-            }
-            
-            // ✅ BUSCAR PRIMERO si ya existe un chat entre estos usuarios
-            $existingChatId = $this->findChatBetweenUsers($userId, $otherUserId);
-            
-            if ($existingChatId) {
-                $finalChatId = $existingChatId;
-                error_log("✅ Chat existente encontrado entre {$userId} y {$otherUserId}: {$finalChatId}");
-            } else {
-                // Crear nuevo chat entre los dos usuarios
-                $userIds = [$userId, $otherUserId];
-                $finalChatId = $this->createChat($userIds);
-                error_log("🆕 Chat creado automáticamente - ID: {$finalChatId}, Usuarios: " . implode(', ', $userIds));
-            }
-        }
-
-        // ✅ Verificar que el usuario pertenece al chat, si no, agregarlo
-        if (!$this->userInChat($finalChatId, $userId)) {
-            $this->addUserToChat($finalChatId, $userId);
-            error_log("➕ Usuario {$userId} agregado al chat {$finalChatId}");
-        }
-
-        // ✅ INSERTAR MENSAJE CON EL CHAT_ID CORRECTO
-        $stmt = $this->db->prepare("
-            INSERT INTO mensajes (chat_id, user_id, contenido, tipo, file_id, enviado_en) 
-            VALUES (:chat_id, :user_id, :contenido, :tipo, :file_id, NOW())
-        ");
-        $stmt->execute([
-            ':chat_id' => $finalChatId, // ✅ MISMO chat_id para ambos usuarios
-            ':user_id' => $userId,      // ✅ DIFERENTE user_id para cada mensaje
-            ':contenido' => $contenido,
-            ':tipo' => $tipo,
-            ':file_id' => $fileId
-        ]);
-
-        $messageId = (int)$this->db->lastInsertId();
-
-        // Actualizar last_message_at
-        $this->updateChatLastMessage($finalChatId);
-
-        error_log("✅ Mensaje enviado - Chat: {$finalChatId}, Usuario: {$userId}, Mensaje: {$messageId}");
-        return $messageId;
-
-    } catch (PDOException $e) {
-        error_log("Error en sendMessage: " . $e->getMessage());
-        throw $e;
-    } catch (Exception $e) {
-        error_log("Error de validación en sendMessage: " . $e->getMessage());
-        throw $e;
-    }
-}
-
-// ✅ Buscar chat existente entre dos usuarios
-public function findChatBetweenUsers($user1, $user2)
-{
-    try {
-        $stmt = $this->db->prepare("
+    // ✅ Buscar chat existente entre dos usuarios
+    public function findChatBetweenUsers($user1, $user2)
+    {
+        try {
+            $stmt = $this->db->prepare("
             SELECT c.id
             FROM chats c
             INNER JOIN chat_usuarios cu1 ON c.id = cu1.chat_id AND cu1.user_id = ?
@@ -213,23 +251,22 @@ public function findChatBetweenUsers($user1, $user2)
             ) = 2
             LIMIT 1
         ");
-        $stmt->execute([$user1, $user2]);
-        
-        $result = $stmt->fetch(PDO::FETCH_ASSOC);
-        return $result ? (int)$result['id'] : null;
+            $stmt->execute([$user1, $user2]);
 
-    } catch (Exception $e) {
-        error_log("Error buscando chat entre usuarios: " . $e->getMessage());
-        return null;
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+            return $result ? (int)$result['id'] : null;
+        } catch (Exception $e) {
+            error_log("Error buscando chat entre usuarios: " . $e->getMessage());
+            return null;
+        }
     }
-}
-// En ChatModel.php
-private $lastUsedChatId = null;
+    // En ChatModel.php
+    private $lastUsedChatId = null;
 
-public function getLastUsedChatId()
-{
-    return $this->lastUsedChatId;
-}
+    public function getLastUsedChatId()
+    {
+        return $this->lastUsedChatId;
+    }
 
 
     // ✅ Método auxiliar para agregar usuario a chat
@@ -247,6 +284,42 @@ public function getLastUsedChatId()
             throw $e;
         }
     }
+    /**
+ * Buscar chat existente o crear uno nuevo entre dos usuarios
+ */
+public function findOrCreateChat(array $userIds)
+{
+    try {
+        if (count($userIds) !== 2) {
+            throw new Exception("Se necesitan exactamente 2 usuarios para un chat privado");
+        }
+        
+        $userId1 = $userIds[0];
+        $userId2 = $userIds[1];
+        
+        // Validar que no sean el mismo usuario
+        if ($userId1 == $userId2) {
+            throw new Exception("No puedes crear un chat contigo mismo");
+        }
+        
+        // Buscar chat existente
+        $existingChat = $this->findChatBetweenUsers($userId1, $userId2);
+        
+        if ($existingChat) {
+            error_log("🔍 Chat existente encontrado: {$existingChat}");
+            return $existingChat;
+        }
+        
+        // Crear nuevo chat
+        $newChatId = $this->createChat($userIds);
+        error_log("🆕 Chat creado: {$newChatId}");
+        
+        return $newChatId;
+    } catch (Exception $e) {
+        error_log("Error en findOrCreateChat: " . $e->getMessage());
+        throw $e;
+    }
+}
     // ✅ Enviar mensaje con verificación/creación de chat
     public function sendMessageWithChatCheck(array $userIds, string $contenido, string $tipo = 'texto', $fileId = null, $chatId = null): int
     {
@@ -364,15 +437,28 @@ public function getLastUsedChatId()
     {
         try {
             $stmt = $this->db->prepare("
-                SELECT 
-                    c.*, 
-                    (SELECT contenido FROM mensajes m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) as ultimo_mensaje,
-                    (SELECT enviado_en FROM mensajes m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) as ultimo_mensaje_fecha
-                FROM chats c
-                JOIN chat_usuarios cu ON cu.chat_id = c.id
-                WHERE cu.user_id = :user_id
-                ORDER BY c.last_message_at DESC
-            ");
+            SELECT 
+                c.id as chat_id, -- ✅ ESTE ES EL ID DEL CHAT
+                c.created_at,
+                c.updated_at,
+                c.last_message_at,
+                -- Información del otro usuario
+                u.id as other_user_id,
+                u.name as other_user_name,
+                u.email as other_user_email,
+                u.avatar as other_user_avatar,
+                -- Último mensaje
+                (SELECT contenido FROM mensajes m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) as ultimo_mensaje,
+                (SELECT enviado_en FROM mensajes m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) as ultimo_mensaje_fecha,
+                -- Mensajes no leídos
+                (SELECT COUNT(*) FROM mensajes m WHERE m.chat_id = c.id AND m.leido = 0 AND m.user_id != :user_id) as unread_count
+            FROM chats c
+            JOIN chat_usuarios cu ON cu.chat_id = c.id
+            JOIN chat_usuarios cu2 ON cu2.chat_id = c.id AND cu2.user_id != :user_id
+            JOIN users u ON u.id = cu2.user_id
+            WHERE cu.user_id = :user_id
+            ORDER BY c.last_message_at DESC
+        ");
             $stmt->execute([':user_id' => $userId]);
 
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -383,11 +469,11 @@ public function getLastUsedChatId()
     }
 
     // ✅ Marcar como leído - VERSIÓN MEJORADA
-  public function markAsRead($chatId, $userId): bool
-{
-    try {
-        // ✅ Obtener mensajes no leídos que tengan más de 1 minuto de enviados
-        $stmt = $this->db->prepare("
+    public function markAsRead($chatId, $userId): bool
+    {
+        try {
+            // ✅ Obtener mensajes no leídos que tengan más de 1 minuto de enviados
+            $stmt = $this->db->prepare("
             SELECT id 
             FROM mensajes 
             WHERE chat_id = :chat_id 
@@ -396,31 +482,31 @@ public function getLastUsedChatId()
             AND TIMESTAMPDIFF(MINUTE, enviado_en, NOW()) >= 1  -- Más de 1 minuto
             ORDER BY id DESC
         ");
-        $stmt->execute([
-            ':chat_id' => $chatId,
-            ':user_id' => $userId
-        ]);
-        $messagesToMark = $stmt->fetchAll(PDO::FETCH_COLUMN);
+            $stmt->execute([
+                ':chat_id' => $chatId,
+                ':user_id' => $userId
+            ]);
+            $messagesToMark = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
-        if (empty($messagesToMark)) {
-            error_log("ℹ️ No hay mensajes para marcar como leídos (chat: {$chatId}, usuario: {$userId})");
-            return true;
-        }
+            if (empty($messagesToMark)) {
+                error_log("ℹ️ No hay mensajes para marcar como leídos (chat: {$chatId}, usuario: {$userId})");
+                return true;
+            }
 
-        // ✅ Marcar mensajes como leídos
-        $placeholders = str_repeat('?,', count($messagesToMark) - 1) . '?';
-        $stmt = $this->db->prepare("
+            // ✅ Marcar mensajes como leídos
+            $placeholders = str_repeat('?,', count($messagesToMark) - 1) . '?';
+            $stmt = $this->db->prepare("
             UPDATE mensajes 
             SET leido = 1, 
                 leido_en = NOW()
             WHERE id IN ({$placeholders})
             AND leido = 0
         ");
-        $stmt->execute($messagesToMark);
-        $updatedRows = $stmt->rowCount();
+            $stmt->execute($messagesToMark);
+            $updatedRows = $stmt->rowCount();
 
-        // ✅ Actualizar el último mensaje no leído en chat_usuarios
-        $stmt = $this->db->prepare("
+            // ✅ Actualizar el último mensaje no leído en chat_usuarios
+            $stmt = $this->db->prepare("
             UPDATE chat_usuarios 
             SET ultimo_no_leido = (
                 SELECT COALESCE(MAX(id), 0) 
@@ -434,62 +520,53 @@ public function getLastUsedChatId()
             WHERE chat_id = :chat_id 
             AND user_id = :user_id
         ");
-        $stmt->execute([
-            ':chat_id' => $chatId,
-            ':user_id' => $userId
-        ]);
+            $stmt->execute([
+                ':chat_id' => $chatId,
+                ':user_id' => $userId
+            ]);
 
-        error_log("✅ Marcados {$updatedRows} mensajes como leídos (chat: {$chatId}, usuario: {$userId})");
+            error_log("✅ Marcados {$updatedRows} mensajes como leídos (chat: {$chatId}, usuario: {$userId})");
 
-        return true;
-
-    } catch (PDOException $e) {
-        error_log("❌ Error marcando como leído: " . $e->getMessage());
-        throw $e;
+            return true;
+        } catch (PDOException $e) {
+            error_log("❌ Error marcando como leído: " . $e->getMessage());
+            throw $e;
+        }
     }
-}
 
-// En tu ChatModel.php - agrega este método
-public function insertMessage(array $messageData): int
-{
-    try {
-        $stmt = $this->db->prepare("
+    // En tu ChatModel.php - agrega este método
+    public function insertMessage(array $messageData): int
+    {
+        try {
+            $stmt = $this->db->prepare("
             INSERT INTO mensajes (chat_id, user_id, contenido, tipo, file_id, enviado_en) 
             VALUES (:chat_id, :user_id, :contenido, :tipo, :file_id, :fecha)
         ");
-        
-        $stmt->execute([
-            ':chat_id' => $messageData['chat_id'],
-            ':user_id' => $messageData['user_id'],
-            ':contenido' => $messageData['contenido'],
-            ':tipo' => $messageData['tipo'],
-            ':file_id' => $messageData['file_id'] ?? null,
-            ':fecha' => $messageData['fecha'] ?? date('Y-m-d H:i:s')
-        ]);
 
-        $messageId = (int)$this->db->lastInsertId();
-        
-        // Actualizar last_message_at del chat
-        $this->updateChatLastMessage($messageData['chat_id']);
-        
-        error_log("✅ Mensaje insertado directamente - ID: {$messageId}, Chat: {$messageData['chat_id']}");
-        return $messageId;
-        
-    } catch (PDOException $e) {
-        error_log("Error en insertMessage: " . $e->getMessage());
-        throw $e;
+            $stmt->execute([
+                ':chat_id' => $messageData['chat_id'],
+                ':user_id' => $messageData['user_id'],
+                ':contenido' => $messageData['contenido'],
+                ':tipo' => $messageData['tipo'],
+                ':file_id' => $messageData['file_id'] ?? null,
+                ':fecha' => $messageData['fecha'] ?? date('Y-m-d H:i:s')
+            ]);
+
+            $messageId = (int)$this->db->lastInsertId();
+
+            // Actualizar last_message_at del chat
+            $this->updateChatLastMessage($messageData['chat_id']);
+
+            error_log("✅ Mensaje insertado directamente - ID: {$messageId}, Chat: {$messageData['chat_id']}");
+            return $messageId;
+        } catch (PDOException $e) {
+            error_log("Error en insertMessage: " . $e->getMessage());
+            throw $e;
+        }
     }
-}
 
-/**
- * ✅ Obtener la conexión a la base de datos (para FileUploadService)
- */
-public function getDb()
-{
-    return $this->db;
-}
     // ✅ Obtener información de un archivo
-    public function getFile($fileId): array|false
+    public function getFile($fileId)
     {
         try {
             $stmt = $this->db->prepare("SELECT * FROM files WHERE id = :file_id");
@@ -532,28 +609,13 @@ public function getDb()
     /**
      * Buscar chat existente o crear uno nuevo
      */
-    public function findOrCreateChat(array $userIds): int
-    {
-        // Ordenar IDs para consistencia
-        sort($userIds);
 
-        // Buscar chat existente con exactamente estos usuarios
-        $existingChat = $this->findChatByUsers($userIds);
 
-        if ($existingChat) {
-            error_log("✅ Chat existente encontrado: " . $existingChat);
-            return $existingChat;
-        }
-
-        // Crear nuevo chat
-        error_log("🆕 Creando nuevo chat para usuarios: " . implode(', ', $userIds));
-        return $this->createChat($userIds);
-    }
 
     /**
      * Buscar chat por usuarios exactos
      */
-    public function findChatByUsers(array $userIds): int|false
+    public function findChatByUsers(array $userIds)
     {
         try {
             $userCount = count($userIds);
@@ -591,9 +653,9 @@ public function getDb()
         $stmt->execute([$chatId]);
         return $stmt->fetch() !== false;
     }
-public function getChatIdByUsers($userId1, $userId2)
-{
-    $stmt = $this->db->prepare("
+    public function getChatIdByUsers($userId1, $userId2)
+    {
+        $stmt = $this->db->prepare("
         SELECT c1.chat_id 
         FROM chat_usuarios c1
         INNER JOIN chat_usuarios c2 ON c1.chat_id = c2.chat_id
@@ -607,15 +669,15 @@ public function getChatIdByUsers($userId1, $userId2)
         )
         LIMIT 1
     ");
-    
-    $stmt->execute([$userId1, $userId2]);
-    $result = $stmt->fetch(PDO::FETCH_OBJ);
-    
-    return $result ? $result->chat_id : null;
-}
-public function markMessagesAsRead($chatId, $currentUserId)
-{
-    $stmt = $this->db->prepare("
+
+        $stmt->execute([$userId1, $userId2]);
+        $result = $stmt->fetch(PDO::FETCH_OBJ);
+
+        return $result ? $result->chat_id : null;
+    }
+    public function markMessagesAsRead($chatId, $currentUserId)
+    {
+        $stmt = $this->db->prepare("
         UPDATE mensajes 
         SET leido = 1
            
@@ -624,9 +686,9 @@ public function markMessagesAsRead($chatId, $currentUserId)
         AND leido = 0
     ");
 
-    $stmt->execute([$chatId, $currentUserId]);
-    return $stmt->rowCount();
-}
+        $stmt->execute([$chatId, $currentUserId]);
+        return $stmt->rowCount();
+    }
     /**
      * Verificar si el usuario pertenece al chat
      */
@@ -639,10 +701,124 @@ public function markMessagesAsRead($chatId, $currentUserId)
         $stmt->execute([$chatId, $userId]);
         return $stmt->fetch() !== false;
     }
+    // En ChatModel.php - Modificar getUsersWithChats para que SOLO devuelva datos
+    public function getUsersWithChats($currentUserId): array
+    {
+        try {
+            // 1. Obtener todos los usuarios excepto el actual
+            $sqlUsers = "
+            SELECT 
+                id, 
+                name, 
+                email, 
+                avatar,
+                created_at
+            FROM users 
+            WHERE id != :currentUserId 
+            ORDER BY name
+        ";
+            $stmtUsers = $this->db->prepare($sqlUsers);
+            $stmtUsers->execute([':currentUserId' => $currentUserId]);
+            $users = $stmtUsers->fetchAll(PDO::FETCH_ASSOC);
 
-    /**
-     * Generar nombre automático para el chat
-     */
+            // 2. Obtener chats existentes con info del otro usuario
+            $sqlChats = "
+            SELECT 
+                c.id as chat_id,
+                -- Información del otro usuario
+                u.id as other_user_id,
+                u.name as other_user_name,
+                u.email as other_user_email,
+                u.avatar as other_user_avatar,
+                -- Último mensaje
+                (SELECT contenido FROM mensajes m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) as last_message,
+                (SELECT enviado_en FROM mensajes m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) as last_message_time,
+                -- Mensajes no leídos
+                (SELECT COUNT(*) FROM mensajes m WHERE m.chat_id = c.id AND m.leido = 0 AND m.user_id != :currentUserId) as unread_count
+            FROM chats c
+            JOIN chat_usuarios cu ON cu.chat_id = c.id
+            JOIN chat_usuarios cu2 ON cu2.chat_id = c.id AND cu2.user_id != :currentUserId
+            JOIN users u ON u.id = cu2.user_id
+            WHERE cu.user_id = :currentUserId
+            ORDER BY c.last_message_at DESC
+        ";
+            $stmtChats = $this->db->prepare($sqlChats);
+            $stmtChats->execute([':currentUserId' => $currentUserId]);
+            $existingChats = $stmtChats->fetchAll(PDO::FETCH_ASSOC);
+
+            // 3. Crear un mapa rápido de chats por usuario
+            $chatMap = [];
+            foreach ($existingChats as $chat) {
+                $chatMap[$chat['other_user_id']] = $chat;
+            }
+
+            // 4. Combinar usuarios con su info de chat
+            $usersWithChats = [];
+            foreach ($users as $user) {
+                $chatInfo = $chatMap[$user['id']] ?? null;
+
+                $usersWithChats[] = [
+                    // Información del usuario
+                    'id' => $user['id'],
+                    'name' => $user['name'],
+                    'email' => $user['email'],
+                    'avatar' => $user['avatar'],
+                    'created_at' => $user['created_at'],
+
+                    // Información del chat (si existe)
+                    'chat_id' => $chatInfo['chat_id'] ?? null,
+                    'has_existing_chat' => !empty($chatInfo),
+                    'last_message' => $chatInfo['last_message'] ?? null,
+                    'last_message_time' => $chatInfo['last_message_time'] ?? null,
+                    'unread_count' => $chatInfo['unread_count'] ?? 0,
+
+                    // Información del otro usuario
+                    'other_user_id' => $chatInfo['other_user_id'] ?? null,
+                    'other_user_name' => $chatInfo['other_user_name'] ?? null,
+                    'other_user_avatar' => $chatInfo['other_user_avatar'] ?? null
+                ];
+            }
+
+            return $usersWithChats;
+        } catch (Exception $e) {
+            error_log("Error obteniendo usuarios con chats: " . $e->getMessage());
+            throw $e;
+        }
+    }
+// En ChatModel.php
+public function getMessageById($messageId)
+{
+    try {
+        $stmt = $this->db->prepare("
+            SELECT 
+                m.*,
+                u.name as user_name,
+                u.email as user_email,
+                u.avatar as user_avatar,
+                f.name as file_name,
+                f.original_name as file_original_name,
+                f.url as file_url,
+                f.size as file_size,
+                f.mime_type as file_mime_type
+            FROM mensajes m
+            LEFT JOIN users u ON m.user_id = u.id
+            LEFT JOIN files f ON m.file_id = f.id
+            WHERE m.id = ?
+        ");
+        $stmt->execute([$messageId]);
+        
+        $message = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$message) {
+            throw new Exception("Mensaje no encontrado: {$messageId}");
+        }
+        
+        return $message;
+    } catch (Exception $e) {
+        error_log("Error obteniendo mensaje por ID: " . $e->getMessage());
+        return null;
+    }
+}
     private function generateChatName(array $userIds): string
     {
         if (count($userIds) === 2) {
@@ -664,7 +840,7 @@ public function markMessagesAsRead($chatId, $currentUserId)
     /**
      * Obtener nombre de usuario
      */
-    private function getUserName($userId): string|null
+    private function getUserName($userId)
     {
         try {
             $stmt = $this->db->prepare("SELECT name FROM usuarios WHERE id = ?");

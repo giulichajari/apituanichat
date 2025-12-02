@@ -19,6 +19,7 @@ class FileUploadService
 
     private $maxFileSize = 10 * 1024 * 1024;
     private $uploadPath = '/var/www/apituanichat/public/uploads/';
+   // private $uploadPath = 'D:/pruebaschat/';
 
     /**
      * ✅ MÉTODO PRINCIPAL - Usa EXACTAMENTE la misma lógica que mensajes de texto
