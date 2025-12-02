@@ -283,7 +283,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                     $chatId,
                     $userId,
                     $content,
-                    $data['tipo'] ?? 'texto'
+                    'texto'
                 );
                 
                 echo "✅ Mensaje guardado en BD: ID {$messageId}\n";
