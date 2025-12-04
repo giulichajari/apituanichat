@@ -18,12 +18,13 @@ class ChatController
         $this->fileUploadService = new FileUploadService();
     }
 
+// En ChatController.php - REEMPLAZA EL MÉTODO uploadFile()
+
 public function uploadFile()
 {
     try {
         $body = Router::$request->body;
         $user = Router::$request->user ?? null;
-        
         $chatId = Router::$request->params->chat_id ?? null;
         
         error_log("📋 uploadFile called - User ID: " . ($user->id ?? 'null'));
@@ -45,7 +46,7 @@ public function uploadFile()
 
         $uploadedFile = $_FILES['file'];
 
-        // Subir archivo
+        // ✅ SUBIR ARCHIVO SOLAMENTE
         $uploadResult = $this->fileUploadService->uploadToConversation(
             $uploadedFile,
             $user->id,
@@ -60,9 +61,7 @@ public function uploadFile()
             ]);
         }
 
-        // ✅ AGREGAR: NOTIFICAR AL WEBSOCKET
-        $this->notifyWebSocketAfterUpload($uploadResult, $user->id, $chatId, $uploadedFile);
-
+        // ✅ RESPONDER ÉXITO SIN INTENTAR WEBSOCKET
         return Router::$response->status(201)->send([
             "success" => true,
             "message" => "File uploaded successfully",
