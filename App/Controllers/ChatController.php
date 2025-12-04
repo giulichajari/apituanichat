@@ -1031,7 +1031,7 @@ private function notifyWebSocketAfterUpload($uploadResult, $userId, $chatId, $up
     {
         try {
             // Conectar al WebSocket y enviar el mensaje
-            $client = new \WebSocket\Client("ws://localhost:8080");
+            $client = new \WebSocket\Client("wss://tuanichat.com/ws/");
             $client->text(json_encode($data));
             $client->close();
         } catch (Exception $e) {
