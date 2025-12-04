@@ -97,47 +97,67 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $conn->close();
     }
 
-   public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
+public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
 {
-    echo date('H:i:s') . " 📨 #{$from->resourceId} → " . substr($msg, 0, 100) . "\n";
-
+    echo date('H:i:s') . " 📨 #{$from->resourceId} → " . substr($msg, 0, 200) . "\n";
+    
+    // ⭐⭐ GUARDAR LOG COMPLETO DEL MENSAJE RECIBIDO ⭐⭐
+    $this->logToFile("📨 Mensaje RAW recibido: " . $msg);
+    
     try {
         $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
-
+        
+        // ⭐⭐ GUARDAR LOG DEL DATA DECODIFICADO ⭐⭐
+        $this->logToFile("📋 Data decodificado: " . json_encode($data, JSON_PRETTY_PRINT));
+        
         if (!isset($data['type'])) {
             echo "❌ Sin tipo de mensaje\n";
+            $this->logToFile("❌ ERROR: Mensaje sin tipo");
             return;
         }
 
+        // ⭐⭐ GUARDAR LOG DEL TIPO RECIBIDO ⭐⭐
+        $this->logToFile("🎯 Tipo recibido: " . $data['type']);
+        
         switch ($data['type']) {
             case 'ping':
+                $this->logToFile("🔄 Caso: ping");
                 $this->handlePing($from);
                 break;
 
             case 'auth':
+                $this->logToFile("🔄 Caso: auth");
                 $this->handleAuth($from, $data);
                 break;
 
             case 'join_chat':
+                $this->logToFile("🔄 Caso: join_chat");
                 $this->handleJoinChat($from, $data);
                 break;
 
             case 'chat_message':
-                error_log("chat_message recibido de " . $from->resourceId);
+                $this->logToFile("🔄 Caso: chat_message");
                 $this->handleChatMessage($from, $data);
                 break;
 
             case 'file_upload':
             case 'image_upload':
+            case 'imagen': // ⭐⭐ NUEVO: Agregar este caso
+            case 'archivo': // ⭐⭐ NUEVO: Agregar este caso
+            case 'file_uploaded': // ⭐⭐ NUEVO: Agregar este caso
+            case 'image_uploaded': // ⭐⭐ NUEVO: Agregar este caso
+                $this->logToFile("🔄 Caso: " . $data['type'] . " (manejado como file_upload)");
                 $this->handleFileUpload($from, $data);
                 break;
 
             case 'test':
+                $this->logToFile("🔄 Caso: test");
                 $this->handleTest($from, $data);
                 break;
 
             default:
                 echo "⚠️ Tipo desconocido: {$data['type']}\n";
+                $this->logToFile("⚠️ Tipo desconocido: " . $data['type']);
                 $from->send(json_encode([
                     'type' => 'error',
                     'message' => 'Tipo no soportado: ' . $data['type']
@@ -145,12 +165,14 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
     } catch (\JsonException $e) {
         echo "❌ JSON inválido: {$e->getMessage()}\n";
+        $this->logToFile("❌ JSON inválido: " . $e->getMessage());
         $from->send(json_encode([
             'type' => 'error',
             'message' => 'JSON inválido'
         ]));
     } catch (\Exception $e) {
         echo "❌ Error: {$e->getMessage()}\n";
+        $this->logToFile("❌ Error general: " . $e->getMessage());
         $from->send(json_encode([
             'type' => 'error',
             'message' => 'Error interno'
