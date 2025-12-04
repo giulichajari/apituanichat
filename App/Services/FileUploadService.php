@@ -25,126 +25,216 @@ class FileUploadService
      * ✅ MÉTODO PRINCIPAL - Usa EXACTAMENTE la misma lógica que mensajes de texto
      */
     public function uploadToConversation($file, $userId, $otherUserId = null, $chatId = null)
-{
-    try {
-        error_log("🔄 Iniciando uploadToConversation - User: {$userId}, Chat ID: {$chatId}");
+    {
+        try {
+            error_log("🔄 Iniciando uploadToConversation - User: {$userId}, Chat ID: {$chatId}");
 
-        // Validaciones básicas
-        if ($file['error'] !== UPLOAD_ERR_OK) {
-            throw new Exception('Error en la subida del archivo: ' . $file['error']);
-        }
-
-        if (!isset($this->allowedTypes[$file['type']])) {
-            throw new Exception('Tipo de archivo no permitido: ' . $file['type']);
-        }
-
-        $chatModel = new ChatModel();
-
-        // ✅ PASO 1: VALIDAR QUE EL CHAT EXISTA Y EL USUARIO PERTENEZCA A ÉL
-        if ($chatId) {
-            // Verificar que el chat existe y el usuario es participante
-            if (!$this->validateChatAndUser($chatModel, $chatId, $userId)) {
-                throw new Exception('Chat no válido o usuario no pertenece al chat');
+            // Validaciones básicas
+            if ($file['error'] !== UPLOAD_ERR_OK) {
+                throw new Exception('Error en la subida del archivo: ' . $file['error']);
             }
-            error_log("✅ Chat validado: {$chatId}");
-        } else {
-            // Si no hay chatId, usar la lógica anterior (crear/find)
-            error_log("🔍 Buscando chat entre usuario: {$userId} y otro: {$otherUserId}");
-            $chatId = $this->determineChatId($chatModel, $userId, $otherUserId);
-            
-            if (!$chatId) {
-                throw new Exception('No se pudo crear o encontrar el chat entre los usuarios');
+
+            if (!isset($this->allowedTypes[$file['type']])) {
+                throw new Exception('Tipo de archivo no permitido: ' . $file['type']);
             }
-            error_log("✅ Chat determinado: {$chatId}");
+
+            $chatModel = new ChatModel();
+
+            // ✅ PASO 1: VALIDAR QUE EL CHAT EXISTA Y EL USUARIO PERTENEZCA A ÉL
+            if ($chatId) {
+                // Verificar que el chat existe y el usuario es participante
+                if (!$this->validateChatAndUser($chatModel, $chatId, $userId)) {
+                    throw new Exception('Chat no válido o usuario no pertenece al chat');
+                }
+                error_log("✅ Chat validado: {$chatId}");
+            } else {
+                // Si no hay chatId, usar la lógica anterior (crear/find)
+                error_log("🔍 Buscando chat entre usuario: {$userId} y otro: {$otherUserId}");
+                $chatId = $this->determineChatId($chatModel, $userId, $otherUserId);
+
+                if (!$chatId) {
+                    throw new Exception('No se pudo crear o encontrar el chat entre los usuarios');
+                }
+                error_log("✅ Chat determinado: {$chatId}");
+            }
+
+            // ✅ PASO 2: SUBIR EL ARCHIVO FÍSICO
+            $fileInfo = $this->uploadPhysicalFile($file, $chatId, $userId);
+
+            // ✅ PASO 3: GUARDAR EN BD (file_id)
+            $fileId = $chatModel->saveFile([
+                'name' => $fileInfo['fileName'],
+                'original_name' => $file['name'],
+                'path' => $fileInfo['filePath'],
+                'url' => $fileInfo['fileUrl'],
+                'size' => $file['size'],
+                'mime_type' => $file['type'],
+                'chat_id' => $chatId,
+                'user_id' => $userId
+            ]);
+
+            if (!$fileId) {
+                // Limpiar archivo físico si falla BD
+                unlink($fileInfo['filePath']);
+                throw new Exception('Error al guardar archivo en la base de datos');
+            }
+
+            error_log("✅ Archivo guardado en BD - File ID: {$fileId}");
+
+            // ✅ PASO 4: CREAR MENSAJE
+            $tipo = strpos($file['type'], 'image/') === 0 ? 'imagen' : 'archivo';
+
+            // Si no hay otherUserId, obtenerlo del chat
+            if (!$otherUserId) {
+                $otherUserId = $chatModel->getOtherUserIdInChat($chatId, $userId);
+            }
+
+            $messageId = $chatModel->sendMessage(
+                $chatId,      // chat_id
+                $userId,      // user_id
+                $file['name'], // contenido (nombre del archivo)
+                $tipo,        // tipo (imagen/archivo)
+                $fileId,      // file_id
+                $otherUserId  // other_user_id (para notificaciones)
+            );
+
+            if (!$messageId) {
+                // Si falla el mensaje, limpiar todo
+                unlink($fileInfo['filePath']);
+                $chatModel->deleteFile($fileId);
+                throw new Exception('Error al crear el mensaje en el chat');
+            }
+            // ⭐⭐ IMPORTANTE: ENVIAR MENSAJE COMPLETO VIA WEBSOCKET
+            $this->sendMessageToWebSocket([
+                'type' => 'chat_message',
+                'message_id' => $messageId,
+                'chat_id' => $chatId,
+                'user_id' => $userId,
+                'contenido' => $file['name'],
+                'tipo' => $tipo,
+                'timestamp' => date('Y-m-d H:i:s'),
+                'leido' => 0,
+                // ⭐ CAMPOS DEL ARCHIVO CRÍTICOS
+                'file_name' => $fileInfo['fileName'],
+                'file_url' => $fileInfo['fileUrl'],
+                'file_original_name' => $file['name'],
+                'file_size' => $file['size'],
+                'file_mime_type' => $file['type'],
+                'file_id' => $fileId
+            ]);
+
+            return [
+                'success' => true,
+                'file_url' => $fileInfo['fileUrl'],
+                'file_id' => $fileId,
+                'message_id' => $messageId,
+                'chat_id' => $chatId,
+                'tipo' => $tipo,
+                'file_name' => $fileInfo['fileName'],
+                'file_original_name' => $file['name'],
+                'file_size' => $file['size'],
+                'file_mime_type' => $file['type']
+            ];
+        } catch (Exception $e) {
+            error_log("❌ Error en uploadToConversation: " . $e->getMessage());
+            return [
+                'success' => false,
+                'message' => $e->getMessage()
+            ];
         }
-
-        // ✅ PASO 2: SUBIR EL ARCHIVO FÍSICO
-        $fileInfo = $this->uploadPhysicalFile($file, $chatId, $userId);
-
-        // ✅ PASO 3: GUARDAR EN BD (file_id)
-        $fileId = $chatModel->saveFile([
-            'name' => $fileInfo['fileName'],
-            'original_name' => $file['name'],
-            'path' => $fileInfo['filePath'],
-            'url' => $fileInfo['fileUrl'],
-            'size' => $file['size'],
-            'mime_type' => $file['type'],
-            'chat_id' => $chatId,
-            'user_id' => $userId
-        ]);
-
-        if (!$fileId) {
-            // Limpiar archivo físico si falla BD
-            unlink($fileInfo['filePath']);
-            throw new Exception('Error al guardar archivo en la base de datos');
-        }
-
-        error_log("✅ Archivo guardado en BD - File ID: {$fileId}");
-
-        // ✅ PASO 4: CREAR MENSAJE
-        $tipo = strpos($file['type'], 'image/') === 0 ? 'imagen' : 'archivo';
-
-        // Si no hay otherUserId, obtenerlo del chat
-        if (!$otherUserId) {
-            $otherUserId = $chatModel->getOtherUserIdInChat($chatId, $userId);
-        }
-
-        $messageId = $chatModel->sendMessage(
-            $chatId,      // chat_id
-            $userId,      // user_id
-            $file['name'], // contenido (nombre del archivo)
-            $tipo,        // tipo (imagen/archivo)
-            $fileId,      // file_id
-            $otherUserId  // other_user_id (para notificaciones)
-        );
-
-        if (!$messageId) {
-            // Si falla el mensaje, limpiar todo
-            unlink($fileInfo['filePath']);
-            $chatModel->deleteFile($fileId);
-            throw new Exception('Error al crear el mensaje en el chat');
-        }
-
-        error_log("✅ Mensaje creado - Message ID: {$messageId}");
-
-        return [
-            'success' => true,
-            'file_url' => $fileInfo['fileUrl'],
-            'file_id' => $fileId,
-            'message_id' => $messageId,
-            'chat_id' => $chatId,
-            'tipo' => $tipo,
-            'file_name' => $fileInfo['fileName'],
-            'file_original_name' => $file['name'],
-            'file_size' => $file['size'],
-            'file_mime_type' => $file['type']
-        ];
-    } catch (Exception $e) {
-        error_log("❌ Error en uploadToConversation: " . $e->getMessage());
-        return [
-            'success' => false,
-            'message' => $e->getMessage()
-        ];
     }
-}
+    private function sendMessageToWebSocket($messageData)
+    {
+        try {
+            // Configurar opciones para el contexto de stream
+            $context = stream_context_create([
+                'ssl' => [
+                    'verify_peer' => false,
+                    'verify_peer_name' => false,
+                    'allow_self_signed' => true
+                ]
+            ]);
 
-// Método para validar chat y usuario
-private function validateChatAndUser($chatModel, $chatId, $userId)
-{
-    try {
-        // Verificar si el usuario es participante del chat
-        $sql = "SELECT COUNT(*) as count 
+            // Conectar al servidor WebSocket
+            $socket = stream_socket_client(
+                'ssl://tuanichat.com:8080',
+                $errno,
+                $errstr,
+                10,
+                STREAM_CLIENT_CONNECT,
+                $context
+            );
+
+            if (!$socket) {
+                error_log("❌ Error conectando al WebSocket: $errstr ($errno)");
+                return false;
+            }
+
+            // Preparar mensaje WebSocket
+            $wsMessage = json_encode([
+                'type' => 'chat_message',
+                'data' => $messageData,
+                'action' => 'broadcast_to_chat',
+                'chat_id' => $messageData['chat_id']
+            ]);
+
+            // Enviar mensaje al WebSocket
+            fwrite($socket, $wsMessage);
+            fclose($socket);
+
+            error_log("✅ Mensaje enviado al WebSocket: " . json_encode($messageData, JSON_UNESCAPED_SLASHES));
+            return true;
+        } catch (Exception $e) {
+            error_log("❌ Error enviando mensaje al WebSocket: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * ⭐ MÉTODO ALTERNATIVO usando tu WebSocket server existente
+     */
+    private function broadcastToChat($chatId, $messageData)
+    {
+        try {
+            // Esta función depende de cómo tengas configurado tu WebSocket server
+            // Si usas Ratchet o similar, necesitas acceder a las conexiones activas
+
+            // Opción 1: Si tienes acceso global a las conexiones
+            global $clients;
+            if (isset($clients)) {
+                foreach ($clients as $client) {
+                    if (isset($client->chat_id) && $client->chat_id == $chatId) {
+                        $client->send(json_encode($messageData));
+                    }
+                }
+            }
+
+            // Opción 2: Guardar en BD para que el WebSocket lo procese
+            $this->saveMessageForWebSocket($chatId, $messageData);
+
+            error_log("✅ Mensaje broadcast a chat {$chatId}");
+        } catch (Exception $e) {
+            error_log("❌ Error en broadcastToChat: " . $e->getMessage());
+        }
+    }
+
+    // Método para validar chat y usuario
+    private function validateChatAndUser($chatModel, $chatId, $userId)
+    {
+        try {
+            // Verificar si el usuario es participante del chat
+            $sql = "SELECT COUNT(*) as count 
                 FROM chat_usuarios 
                 WHERE chat_id = ? AND user_id = ?";
-        
-        $result = $chatModel->query($sql, [$chatId, $userId]);
-        
-        return ($result && $result[0]['count'] > 0);
-    } catch (Exception $e) {
-        error_log("❌ Error en validateChatAndUser: " . $e->getMessage());
-        return false;
+
+            $result = $chatModel->query($sql, [$chatId, $userId]);
+
+            return ($result && $result[0]['count'] > 0);
+        } catch (Exception $e) {
+            error_log("❌ Error en validateChatAndUser: " . $e->getMessage());
+            return false;
+        }
     }
-}
 // En FileUploadService.php, agrega estos métodos:
 
     /**
@@ -350,7 +440,7 @@ private function validateChatAndUser($chatModel, $chatId, $userId)
 
         return ['success' => true];
     }
- 
+
     public function uploadProductFile($file, $userId, $productId = null)
     {
         try {
