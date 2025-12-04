@@ -18,46 +18,54 @@ class ChatController
         $this->fileUploadService = new FileUploadService();
     }
 
-    public function uploadFile()
-    {
-        try {
-            $body = Router::$request->body;
-            $user = Router::$request->user ?? null;
-            $otherUserId = $body->other_user_id ?? null;
+  public function uploadFile()
+{
+    try {
+        $body = Router::$request->body;
+        $user = Router::$request->user ?? null;
+        
+        // ✅ OBTENER CHAT_ID DE LA RUTA (en lugar de other_user_id)
+        $chatId = Router::$request->params->chat_id ?? null;
+        
+        error_log("📋 uploadFile called - User ID: " . ($user->id ?? 'null'));
+        error_log("📋 Chat ID from route: " . ($chatId ?? 'null'));
+        error_log("📋 FILES: " . json_encode($_FILES));
 
-            if (!$user) {
-                return Router::$response->status(401)->send([
-                    "success" => false,
-                    "message" => "Unauthorized"
-                ]);
-            }
+        if (!$user) {
+            return Router::$response->status(401)->send([
+                "success" => false,
+                "message" => "Unauthorized"
+            ]);
+        }
 
-            if (empty($_FILES) || !isset($_FILES['file'])) {
-                return Router::$response->status(400)->send([
-                    "success" => false,
-                    "message" => "No file uploaded"
-                ]);
-            }
+        if (empty($_FILES) || !isset($_FILES['file'])) {
+            return Router::$response->status(400)->send([
+                "success" => false,
+                "message" => "No file uploaded"
+            ]);
+        }
 
-            $uploadedFile = $_FILES['file'];
+        $uploadedFile = $_FILES['file'];
 
-            // ✅ USAR EL MÉTODO PRINCIPAL CORREGIDO
-            $uploadResult = $this->fileUploadService->uploadToConversation(
-                $uploadedFile,
-                $user->id,
-                $otherUserId
-            );
+        // ✅ PASAR DIRECTAMENTE EL CHAT_ID (no necesitas determinar chat)
+        $uploadResult = $this->fileUploadService->uploadToConversation(
+            $uploadedFile,
+            $user->id,
+            null, // No necesitas other_user_id
+            $chatId // Pasar el chat_id directamente
+        );
 
-            if (!$uploadResult['success']) {
-                return Router::$response->status(500)->send([
-                    "success" => false,
-                    "message" => $uploadResult['message']
-                ]);
-            }
+        if (!$uploadResult['success']) {
+            return Router::$response->status(500)->send([
+                "success" => false,
+                "message" => $uploadResult['message']
+            ]);
+        }
 
-            Router::$response->status(201)->send([
-                "success" => true,
-                "message" => "File uploaded successfully",
+        return Router::$response->status(201)->send([
+            "success" => true,
+            "message" => "File uploaded successfully",
+            "data" => [ // ⭐ IMPORTANTE: Añadir 'data' wrapper
                 "file_id" => $uploadResult['file_id'],
                 "file_url" => $uploadResult['file_url'],
                 "message_id" => $uploadResult['message_id'],
@@ -66,16 +74,18 @@ class ChatController
                 "file_name" => $uploadResult['file_name'],
                 "file_original_name" => $uploadResult['file_original_name'],
                 "file_size" => $uploadResult['file_size'],
-                "file_mime_type" => $uploadResult['file_mime_type']
-            ]);
-        } catch (Exception $e) {
-            error_log("❌ Error in uploadFile: " . $e->getMessage());
-            Router::$response->status(500)->send([
-                "success" => false,
-                "message" => "Internal server error: " . $e->getMessage()
-            ]);
-        }
+                "file_mime_type" => $uploadResult['file_mime_type'],
+                "timestamp" => date('Y-m-d H:i:s')
+            ]
+        ]);
+    } catch (Exception $e) {
+        error_log("❌ Error in uploadFile: " . $e->getMessage());
+        return Router::$response->status(500)->send([
+            "success" => false,
+            "message" => "Internal server error: " . $e->getMessage()
+        ]);
     }
+}
     /**
      * ✅ SUBIR ARCHIVO DE CHAT VÍA HTTP (para archivos grandes)
      */
@@ -182,25 +192,46 @@ class ChatController
      */
     public function uploadChatImage($userId)
     {
-        try {
-            if (empty($_FILES) || !isset($_FILES['image'])) {
-                return Router::$response->status(400)->send([
-                    "success" => false,
-                    "message" => "No se recibió ninguna imagen"
-                ]);
-            }
+     try {
+        // Verificación más detallada
+        if (!isset($_FILES['image'])) {
+            error_log("❌ No se encontró 'image' en \$_FILES");
+            error_log("\$_FILES contenido: " . print_r($_FILES, true));
+            error_log("Contenido de POST: " . print_r($_POST, true));
+            
+            return Router::$response->status(400)->send([
+                "success" => false,
+                "message" => "No se recibió ninguna imagen"
+            ]);
+        }
 
-            $uploadedFile = $_FILES['image'];
-            $body = Router::$request->body;
+        $uploadedFile = $_FILES['image'];
+        
+        // Verificar errores de subida
+        if ($uploadedFile['error'] !== UPLOAD_ERR_OK) {
+            $errorMessages = [
+                UPLOAD_ERR_INI_SIZE => 'El archivo excede el tamaño máximo permitido',
+                UPLOAD_ERR_FORM_SIZE => 'El archivo excede el tamaño máximo del formulario',
+                UPLOAD_ERR_PARTIAL => 'El archivo fue subido parcialmente',
+                UPLOAD_ERR_NO_FILE => 'No se subió ningún archivo',
+                UPLOAD_ERR_NO_TMP_DIR => 'Falta la carpeta temporal',
+                UPLOAD_ERR_CANT_WRITE => 'Error al escribir en disco',
+                UPLOAD_ERR_EXTENSION => 'Una extensión de PHP detuvo la subida'
+            ];
+            
+            return Router::$response->status(400)->send([
+                "success" => false,
+                "message" => $errorMessages[$uploadedFile['error']] ?? "Error desconocido al subir"
+            ]);
+        }
 
-            // Verificar que sea una imagen real
-            $imageInfo = @getimagesize($uploadedFile['tmp_name']);
-            if (!$imageInfo) {
-                return Router::$response->status(400)->send([
-                    "success" => false,
-                    "message" => "El archivo no es una imagen válida"
-                ]);
-            }
+        // Verificar si el archivo temporal existe
+        if (!file_exists($uploadedFile['tmp_name']) || !is_uploaded_file($uploadedFile['tmp_name'])) {
+            return Router::$response->status(400)->send([
+                "success" => false,
+                "message" => "Archivo temporal no válido"
+            ]);
+        }
 
             $otherUserId = $body->other_user_id ?? null;
             $chatId = $body->chat_id ?? null;

@@ -24,96 +24,127 @@ class FileUploadService
     /**
      * ✅ MÉTODO PRINCIPAL - Usa EXACTAMENTE la misma lógica que mensajes de texto
      */
-    public function uploadToConversation($file, $userId, $otherUserId)
-    {
-        try {
-            error_log("🔄 Iniciando uploadToConversation - User: {$userId}, Other: {$otherUserId}");
+    public function uploadToConversation($file, $userId, $otherUserId = null, $chatId = null)
+{
+    try {
+        error_log("🔄 Iniciando uploadToConversation - User: {$userId}, Chat ID: {$chatId}");
 
-            // Validaciones básicas
-            if ($file['error'] !== UPLOAD_ERR_OK) {
-                throw new Exception('Error en la subida del archivo: ' . $file['error']);
-            }
-
-            if (!isset($this->allowedTypes[$file['type']])) {
-                throw new Exception('Tipo de archivo no permitido: ' . $file['type']);
-            }
-
-            $chatModel = new ChatModel();
-
-            // ✅ PASO 1: DETERMINAR EL CHAT (igual que mensajes de texto)
-            // Esto automáticamente crea el chat si no existe
-            $chatId = $this->determineChatId($chatModel, $userId, $otherUserId);
-
-            if (!$chatId) {
-                throw new Exception('No se pudo crear o encontrar el chat');
-            }
-
-            error_log("✅ Chat determinado: {$chatId}");
-
-            // ✅ PASO 2: SUBIR EL ARCHIVO FÍSICO
-            $fileInfo = $this->uploadPhysicalFile($file, $chatId, $userId);
-
-            // ✅ PASO 3: GUARDAR EN BD (file_id)
-            $fileId = $chatModel->saveFile([
-                'name' => $fileInfo['fileName'],
-                'original_name' => $file['name'],
-                'path' => $fileInfo['filePath'],
-                'url' => $fileInfo['fileUrl'],
-                'size' => $file['size'],
-                'mime_type' => $file['type'],
-                'chat_id' => $chatId,
-                'user_id' => $userId
-            ]);
-
-            if (!$fileId) {
-                // Limpiar archivo físico si falla BD
-                unlink($fileInfo['filePath']);
-                throw new Exception('Error al guardar archivo en la base de datos');
-            }
-
-            error_log("✅ Archivo guardado en BD - File ID: {$fileId}");
-
-            // ✅ PASO 4: CREAR MENSAJE (igual que mensajes de texto)
-            $tipo = strpos($file['type'], 'image/') === 0 ? 'imagen' : 'archivo';
-
-            $messageId = $chatModel->sendMessage(
-                $chatId,      // chat_id
-                $userId,      // user_id
-                $file['name'], // contenido (nombre del archivo)
-                $tipo,        // tipo (imagen/archivo)
-                $fileId,      // file_id
-                $otherUserId  // other_user_id (para lógica de chat)
-            );
-
-            if (!$messageId) {
-                // Si falla el mensaje, limpiar todo
-                unlink($fileInfo['filePath']);
-                $chatModel->deleteFile($fileId);
-                throw new Exception('Error al crear el mensaje en el chat');
-            }
-
-            error_log("✅ Mensaje creado - Message ID: {$messageId}");
-
-            return [
-                'success' => true,
-                'file_url' => $fileInfo['fileUrl'],
-                'file_id' => $fileId,
-                'message_id' => $messageId,
-                'chat_id' => $chatId,
-                'tipo' => $tipo,
-                'file_name' => $fileInfo['fileName'],
-                'file_original_name' => $file['name'],
-                'file_size' => $file['size'],
-                'file_mime_type' => $file['type']
-            ];
-        } catch (Exception $e) {
-            error_log("❌ Error en uploadToConversation: " . $e->getMessage());
-            return [
-                'success' => false,
-                'message' => $e->getMessage()
-            ];
+        // Validaciones básicas
+        if ($file['error'] !== UPLOAD_ERR_OK) {
+            throw new Exception('Error en la subida del archivo: ' . $file['error']);
         }
+
+        if (!isset($this->allowedTypes[$file['type']])) {
+            throw new Exception('Tipo de archivo no permitido: ' . $file['type']);
+        }
+
+        $chatModel = new ChatModel();
+
+        // ✅ PASO 1: VALIDAR QUE EL CHAT EXISTA Y EL USUARIO PERTENEZCA A ÉL
+        if ($chatId) {
+            // Verificar que el chat existe y el usuario es participante
+            if (!$this->validateChatAndUser($chatModel, $chatId, $userId)) {
+                throw new Exception('Chat no válido o usuario no pertenece al chat');
+            }
+            error_log("✅ Chat validado: {$chatId}");
+        } else {
+            // Si no hay chatId, usar la lógica anterior (crear/find)
+            error_log("🔍 Buscando chat entre usuario: {$userId} y otro: {$otherUserId}");
+            $chatId = $this->determineChatId($chatModel, $userId, $otherUserId);
+            
+            if (!$chatId) {
+                throw new Exception('No se pudo crear o encontrar el chat entre los usuarios');
+            }
+            error_log("✅ Chat determinado: {$chatId}");
+        }
+
+        // ✅ PASO 2: SUBIR EL ARCHIVO FÍSICO
+        $fileInfo = $this->uploadPhysicalFile($file, $chatId, $userId);
+
+        // ✅ PASO 3: GUARDAR EN BD (file_id)
+        $fileId = $chatModel->saveFile([
+            'name' => $fileInfo['fileName'],
+            'original_name' => $file['name'],
+            'path' => $fileInfo['filePath'],
+            'url' => $fileInfo['fileUrl'],
+            'size' => $file['size'],
+            'mime_type' => $file['type'],
+            'chat_id' => $chatId,
+            'user_id' => $userId
+        ]);
+
+        if (!$fileId) {
+            // Limpiar archivo físico si falla BD
+            unlink($fileInfo['filePath']);
+            throw new Exception('Error al guardar archivo en la base de datos');
+        }
+
+        error_log("✅ Archivo guardado en BD - File ID: {$fileId}");
+
+        // ✅ PASO 4: CREAR MENSAJE
+        $tipo = strpos($file['type'], 'image/') === 0 ? 'imagen' : 'archivo';
+
+        // Si no hay otherUserId, obtenerlo del chat
+        if (!$otherUserId) {
+            $otherUserId = $chatModel->getOtherUserIdInChat($chatId, $userId);
+        }
+
+        $messageId = $chatModel->sendMessage(
+            $chatId,      // chat_id
+            $userId,      // user_id
+            $file['name'], // contenido (nombre del archivo)
+            $tipo,        // tipo (imagen/archivo)
+            $fileId,      // file_id
+            $otherUserId  // other_user_id (para notificaciones)
+        );
+
+        if (!$messageId) {
+            // Si falla el mensaje, limpiar todo
+            unlink($fileInfo['filePath']);
+            $chatModel->deleteFile($fileId);
+            throw new Exception('Error al crear el mensaje en el chat');
+        }
+
+        error_log("✅ Mensaje creado - Message ID: {$messageId}");
+
+        return [
+            'success' => true,
+            'file_url' => $fileInfo['fileUrl'],
+            'file_id' => $fileId,
+            'message_id' => $messageId,
+            'chat_id' => $chatId,
+            'tipo' => $tipo,
+            'file_name' => $fileInfo['fileName'],
+            'file_original_name' => $file['name'],
+            'file_size' => $file['size'],
+            'file_mime_type' => $file['type']
+        ];
+    } catch (Exception $e) {
+        error_log("❌ Error en uploadToConversation: " . $e->getMessage());
+        return [
+            'success' => false,
+            'message' => $e->getMessage()
+        ];
     }
+}
+
+// Método para validar chat y usuario
+private function validateChatAndUser($chatModel, $chatId, $userId)
+{
+    try {
+        // Verificar si el usuario es participante del chat
+        $sql = "SELECT COUNT(*) as count 
+                FROM chat_participants 
+                WHERE chat_id = ? AND user_id = ?";
+        
+        $result = $chatModel->query($sql, [$chatId, $userId]);
+        
+        return ($result && $result[0]['count'] > 0);
+    } catch (Exception $e) {
+        error_log("❌ Error en validateChatAndUser: " . $e->getMessage());
+        return false;
+    }
+}
 // En FileUploadService.php, agrega estos métodos:
 
     /**

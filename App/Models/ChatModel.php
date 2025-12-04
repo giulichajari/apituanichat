@@ -836,7 +836,17 @@ class ChatModel
         }
     }
 // En tu ChatModel.php, agrega:
-
+public function getOtherUserIdInChat($chatId, $currentUserId)
+{
+    $sql = "SELECT user_id 
+            FROM chat_participants 
+            WHERE chat_id = ? AND user_id != ?
+            LIMIT 1";
+    
+    $result = $this->query($sql, [$chatId, $currentUserId]);
+    
+    return !empty($result) ? $result[0]['user_id'] : null;
+}
 public function userHasAccessToFile($fileId, $userId)
 {
     $stmt = $this->db->prepare("
