@@ -188,22 +188,21 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     // ===================== HANDLERS =====================
 
 
-private function handleFileUpload($from, $data)
+ private function handleFileUpload($from, $data)
 {
     $this->logToFile("📁 Procesando notificación de archivo subido");
     
     $chatId = $data['chat_id'] ?? null;
     $userId = $data['user_id'] ?? null;
-    $senderConnectionId = $from->resourceId ?? null; // ⭐ Obtener ID de conexión del remitente
     
     if (!$chatId || !$userId) {
         $this->logToFile("❌ Datos incompletos");
         return;
     }
     
-    $this->logToFile("✅ Notificación válida - Chat: $chatId, User: $userId, SenderConn: $senderConnectionId");
+    $this->logToFile("✅ Notificación válida - Chat: $chatId, User: $userId");
     
-    // ⭐⭐ PREPARAR MENSAJE PARA BROADCAST (A TODOS EXCEPTO REMITENTE)
+    // ⭐⭐ PREPARAR MENSAJE PARA BROADCAST (A TODOS INCLUYENDO REMITENTE)
     $broadcastMessage = [
         'type' => $data['type'], // 'image_upload' o 'file_upload'
         'message_id' => $data['message_id'] ?? uniqid(),
@@ -245,30 +244,26 @@ private function handleFileUpload($from, $data)
         $broadcastMessage['mime_type'] = $data['mime_type'];
     }
     
-    // ⭐⭐ ENVIAR A TODOS EN EL CHAT (EXCEPTO AL REMITENTE)
+    // ⭐⭐ ENVIAR A TODOS EN EL CHAT (INCLUYENDO AL REMITENTE)
     $sentCount = 0;
     if (isset($this->sessions[$chatId])) {
         foreach ($this->sessions[$chatId] as $client) {
-            // ⭐⭐ IMPORTANTE: NO enviar al remitente
-            $clientConnectionId = $client->resourceId ?? null;
-            if ($clientConnectionId === $senderConnectionId) {
-                $this->logToFile("⚠️ Saltando remitente (conn: $clientConnectionId)");
-                continue;
-            }
-            
             try {
                 $client->send(json_encode($broadcastMessage));
                 $sentCount++;
-                $this->logToFile("✅ Enviado a cliente (conn: $clientConnectionId)");
+                $this->logToFile("✅ Enviado a cliente");
             } catch (\Exception $e) {
                 $this->logToFile("❌ Error enviando: {$e->getMessage()}");
             }
         }
     } else {
         $this->logToFile("⚠️ No hay sesiones activas para chat $chatId");
+        // Enviar solo al remitente
+        $from->send(json_encode($broadcastMessage));
+        $sentCount = 1;
     }
     
-    $this->logToFile("📤 Mensaje de archivo enviado a {$sentCount} cliente(s) en chat {$chatId} (excluyendo remitente)");
+    $this->logToFile("📤 Mensaje de archivo enviado a {$sentCount} cliente(s) en chat {$chatId}");
 }
 
     private function handlePing($from)
