@@ -859,7 +859,7 @@ class ChatModel
 public function getOtherUserIdInChat($chatId, $currentUserId)
 {
     $sql = "SELECT user_id 
-            FROM chat_participants 
+            FROM chat_usuarios
             WHERE chat_id = ? AND user_id != ?
             LIMIT 1";
     
