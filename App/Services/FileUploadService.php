@@ -134,7 +134,7 @@ private function validateChatAndUser($chatModel, $chatId, $userId)
     try {
         // Verificar si el usuario es participante del chat
         $sql = "SELECT COUNT(*) as count 
-                FROM chat_participants 
+                FROM chat_usuarios 
                 WHERE chat_id = ? AND user_id = ?";
         
         $result = $chatModel->query($sql, [$chatId, $userId]);
