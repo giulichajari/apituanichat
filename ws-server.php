@@ -97,244 +97,248 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $conn->close();
     }
 
-public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
-{
-    echo date('H:i:s') . " 📨 #{$from->resourceId} → " . substr($msg, 0, 200) . "\n";
-    
-    // ⭐⭐ GUARDAR LOG COMPLETO DEL MENSAJE RECIBIDO ⭐⭐
-    $this->logToFile("📨 Mensaje RAW recibido: " . $msg);
-    
-    try {
-        $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
-        
-        // ⭐⭐ GUARDAR LOG DEL DATA DECODIFICADO ⭐⭐
-        $this->logToFile("📋 Data decodificado: " . json_encode($data, JSON_PRETTY_PRINT));
-        
-        if (!isset($data['type'])) {
-            echo "❌ Sin tipo de mensaje\n";
-            $this->logToFile("❌ ERROR: Mensaje sin tipo");
-            return;
+    public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
+    {
+        echo date('H:i:s') . " 📨 #{$from->resourceId} → " . substr($msg, 0, 200) . "\n";
+
+        // ⭐⭐ GUARDAR LOG COMPLETO DEL MENSAJE RECIBIDO ⭐⭐
+        $this->logToFile("📨 Mensaje RAW recibido: " . $msg);
+
+        try {
+            $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
+
+            // ⭐⭐ GUARDAR LOG DEL DATA DECODIFICADO ⭐⭐
+            $this->logToFile("📋 Data decodificado: " . json_encode($data, JSON_PRETTY_PRINT));
+
+            if (!isset($data['type'])) {
+                echo "❌ Sin tipo de mensaje\n";
+                $this->logToFile("❌ ERROR: Mensaje sin tipo");
+                return;
+            }
+
+            // ⭐⭐ GUARDAR LOG DEL TIPO RECIBIDO ⭐⭐
+            $this->logToFile("🎯 Tipo recibido: " . $data['type']);
+
+            switch ($data['type']) {
+                case 'ping':
+                    $this->logToFile("🔄 Caso: ping");
+                    $this->handlePing($from);
+                    break;
+
+                case 'auth':
+                    $this->logToFile("🔄 Caso: auth");
+                    $this->handleAuth($from, $data);
+                    break;
+
+                case 'join_chat':
+                    $this->logToFile("🔄 Caso: join_chat");
+                    $this->handleJoinChat($from, $data);
+                    break;
+
+                case 'chat_message':
+                    $this->logToFile("🔄 Caso: chat_message");
+                    $this->handleChatMessage($from, $data);
+                    break;
+
+                case 'file_upload':
+                    $this->logToFile("🔄 Caso: " . $data['type'] . " (manejado como file_upload)");
+                    $this->handleFileUpload($from, $data);
+                    break;
+                case 'image_upload':
+                    $this->logToFile("🔄 Caso: " . $data['type'] . " (manejado como file_upload)");
+                    $this->handleFileUpload($from, $data);
+                    break;
+
+                case 'file_uploaded': // ⭐⭐ NUEVO: Agregar este caso
+                case 'image_uploaded': // ⭐⭐ NUEVO: Agregar este caso
+                    $this->logToFile("🔄 Caso: " . $data['type'] . " (manejado como file_upload)");
+                    $this->handleFileUpload($from, $data);
+                    break;
+
+                case 'test':
+                    $this->logToFile("🔄 Caso: test");
+                    $this->handleTest($from, $data);
+                    break;
+
+                default:
+                    echo "⚠️ Tipo desconocido: {$data['type']}\n";
+                    $this->logToFile("⚠️ Tipo desconocido: " . $data['type']);
+                    $from->send(json_encode([
+                        'type' => 'error',
+                        'message' => 'Tipo no soportado: ' . $data['type']
+                    ]));
+            }
+        } catch (\JsonException $e) {
+            echo "❌ JSON inválido: {$e->getMessage()}\n";
+            $this->logToFile("❌ JSON inválido: " . $e->getMessage());
+            $from->send(json_encode([
+                'type' => 'error',
+                'message' => 'JSON inválido'
+            ]));
+        } catch (\Exception $e) {
+            echo "❌ Error: {$e->getMessage()}\n";
+            $this->logToFile("❌ Error general: " . $e->getMessage());
+            $from->send(json_encode([
+                'type' => 'error',
+                'message' => 'Error interno'
+            ]));
         }
-
-        // ⭐⭐ GUARDAR LOG DEL TIPO RECIBIDO ⭐⭐
-        $this->logToFile("🎯 Tipo recibido: " . $data['type']);
-        
-        switch ($data['type']) {
-            case 'ping':
-                $this->logToFile("🔄 Caso: ping");
-                $this->handlePing($from);
-                break;
-
-            case 'auth':
-                $this->logToFile("🔄 Caso: auth");
-                $this->handleAuth($from, $data);
-                break;
-
-            case 'join_chat':
-                $this->logToFile("🔄 Caso: join_chat");
-                $this->handleJoinChat($from, $data);
-                break;
-
-            case 'chat_message':
-                $this->logToFile("🔄 Caso: chat_message");
-                $this->handleChatMessage($from, $data);
-                break;
-
-            case 'file_upload':
-            case 'image_upload':
-            case 'imagen': // ⭐⭐ NUEVO: Agregar este caso
-            case 'archivo': // ⭐⭐ NUEVO: Agregar este caso
-            case 'file_uploaded': // ⭐⭐ NUEVO: Agregar este caso
-            case 'image_uploaded': // ⭐⭐ NUEVO: Agregar este caso
-                $this->logToFile("🔄 Caso: " . $data['type'] . " (manejado como file_upload)");
-                $this->handleFileUpload($from, $data);
-                break;
-
-            case 'test':
-                $this->logToFile("🔄 Caso: test");
-                $this->handleTest($from, $data);
-                break;
-
-            default:
-                echo "⚠️ Tipo desconocido: {$data['type']}\n";
-                $this->logToFile("⚠️ Tipo desconocido: " . $data['type']);
-                $from->send(json_encode([
-                    'type' => 'error',
-                    'message' => 'Tipo no soportado: ' . $data['type']
-                ]));
-        }
-    } catch (\JsonException $e) {
-        echo "❌ JSON inválido: {$e->getMessage()}\n";
-        $this->logToFile("❌ JSON inválido: " . $e->getMessage());
-        $from->send(json_encode([
-            'type' => 'error',
-            'message' => 'JSON inválido'
-        ]));
-    } catch (\Exception $e) {
-        echo "❌ Error: {$e->getMessage()}\n";
-        $this->logToFile("❌ Error general: " . $e->getMessage());
-        $from->send(json_encode([
-            'type' => 'error',
-            'message' => 'Error interno'
-        ]));
     }
-}
 
     // ===================== HANDLERS =====================
 
- 
-    private function handleFileUpload($from, $data)
-{
-    $this->logToFile("📁 Procesando subida de archivo/imagen");
-    
-    $chatId = $data['chat_id'] ?? null;
-    $userId = $data['user_id'] ?? null;
-    $fileName = $data['file_name'] ?? null;
-    $fileSize = $data['file_size'] ?? 0;
-    $fileType = $data['file_type'] ?? 'application/octet-stream';
-    $fileData = $data['file_data'] ?? null; // Base64 o datos del archivo
-    $tempId = $data['temp_id'] ?? null;
-    
-    if (!$chatId || !$userId || !$fileName || !$fileData) {
-        $this->logToFile("❌ Datos incompletos para subida de archivo");
-        $from->send(json_encode([
-            'type' => 'upload_error',
-            'message' => 'Datos incompletos',
-            'temp_id' => $tempId
-        ]));
-        return;
-    }
-    
-    // Verificar tamaño máximo (ej: 10MB)
-    $maxSize = 10 * 1024 * 1024; // 10MB
-    if ($fileSize > $maxSize) {
-        $this->logToFile("❌ Archivo demasiado grande: {$fileSize} bytes");
-        $from->send(json_encode([
-            'type' => 'upload_error',
-            'message' => 'Archivo demasiado grande. Máximo: 10MB',
-            'temp_id' => $tempId
-        ]));
-        return;
-    }
-    
-    // Confirmación inmediata
-    if ($tempId) {
-        $from->send(json_encode([
-            'type' => 'upload_started',
-            'temp_id' => $tempId,
-            'status' => 'uploading',
-            'timestamp' => time()
-        ]));
-        $this->logToFile("✅ Confirmación de subida enviada para temp_id: $tempId");
-    }
-    
-    // Determinar tipo de mensaje (archivo o imagen)
-    $isImage = (strpos($fileType, 'image/') === 0) || ($data['type'] === 'image_upload');
-    $tipo = $isImage ? 'imagen' : 'archivo';
-    
-    $this->logToFile("📂 {$tipo}: {$fileName}, Tipo: {$fileType}, Tamaño: {$fileSize} bytes");
-    
-    // Guardar en sistema de archivos
-    $savedFilePath = $this->saveUploadedFile($fileName, $fileData, $isImage);
-    
-    if (!$savedFilePath) {
-        $this->logToFile("❌ Error guardando archivo");
-        $from->send(json_encode([
-            'type' => 'upload_error',
-            'message' => 'Error guardando archivo',
-            'temp_id' => $tempId
-        ]));
-        return;
-    }
-    
-    $this->logToFile("✅ Archivo guardado en: {$savedFilePath}");
-    
-    // Guardar en base de datos
-    $messageId = null;
-    try {
-        if (!class_exists('App\Models\ChatModel')) {
-            throw new Exception("Clase ChatModel no encontrada");
-        }
-        
-        $chatModel = new App\Models\ChatModel();
-        
-        // Verificar/crear chat (similar a handleChatMessage)
-        if (!$chatModel->chatExists($chatId)) {
-            $otherUserId = $data['other_user_id'] ?? $chatId;
-            $realChatId = $chatModel->findChatBetweenUsers($userId, $otherUserId);
 
-            if (!$realChatId) {
-                $realChatId = $chatModel->createChat([$userId, $otherUserId]);
-            }
-            
-            $chatId = $realChatId;
+    private function handleFileUpload($from, $data)
+    {
+        $this->logToFile("📁 Procesando subida de archivo/imagen");
+
+        $chatId = $data['chat_id'] ?? null;
+        $userId = $data['user_id'] ?? null;
+        $fileName = $data['file_name'] ?? null;
+        $fileSize = $data['file_size'] ?? 0;
+        $fileType = $data['file_type'] ?? 'application/octet-stream';
+        $fileData = $data['file_data'] ?? null; // Base64 o datos del archivo
+        $tempId = $data['temp_id'] ?? null;
+
+        if (!$chatId || !$userId || !$fileName || !$fileData) {
+            $this->logToFile("❌ Datos incompletos para subida de archivo");
+            $from->send(json_encode([
+                'type' => 'upload_error',
+                'message' => 'Datos incompletos',
+                'temp_id' => $tempId
+            ]));
+            return;
         }
-        
-        // Contenido del mensaje (puede ser descripción o el nombre del archivo)
-        $content = $data['contenido'] ?? $fileName;
-        
-        // Guardar mensaje como archivo/imagen
-        $messageId = $chatModel->sendMessage(
-            $chatId,
-            $userId,
-            $content,
-            $tipo, // Tipo 'imagen' o 'archivo'
-            $savedFilePath, // Ruta del archivo
-            $fileName // Nombre original
-        );
-        
-        $this->logToFile("✅ {$tipo} guardado en BD: ID {$messageId}");
-        
-    } catch (\Exception $e) {
-        $errorMsg = "❌ Error BD al guardar archivo: " . $e->getMessage();
-        $this->logToFile($errorMsg);
-        $messageId = 'temp_file_' . rand(1000, 9999);
-    }
-    
-    // Preparar respuesta para difundir
-    $response = [
-        'type' => $isImage ? 'image_message' : 'file_message',
-        'message_id' => $messageId,
-        'chat_id' => $chatId,
-        'user_id' => $userId,
-        'contenido' => $data['contenido'] ?? ($isImage ? '📷 Imagen enviada' : '📎 Archivo enviado'),
-        'file_name' => $fileName,
-        'file_size' => $fileSize,
-        'file_type' => $fileType,
-        'file_url' => $this->getFileUrl($savedFilePath), // URL pública para acceder al archivo
-        'tipo' => $tipo,
-        'timestamp' => date('c'),
-        'temp_id' => $tempId,
-        'leido' => 0,
-        'user_name' => $data['user_name'] ?? 'Usuario',
-        'status' => 'sent'
-    ];
-    
-    // Enviar a todos en el chat
-    $sentCount = 0;
-    if (isset($this->sessions[$chatId])) {
-        foreach ($this->sessions[$chatId] as $client) {
-            try {
-                $client->send(json_encode($response));
-                $sentCount++;
-            } catch (\Exception $e) {
-                $this->logToFile("❌ Error enviando archivo a cliente: {$e->getMessage()}");
+
+        // Verificar tamaño máximo (ej: 10MB)
+        $maxSize = 10 * 1024 * 1024; // 10MB
+        if ($fileSize > $maxSize) {
+            $this->logToFile("❌ Archivo demasiado grande: {$fileSize} bytes");
+            $from->send(json_encode([
+                'type' => 'upload_error',
+                'message' => 'Archivo demasiado grande. Máximo: 10MB',
+                'temp_id' => $tempId
+            ]));
+            return;
+        }
+
+        // Confirmación inmediata
+        if ($tempId) {
+            $from->send(json_encode([
+                'type' => 'upload_started',
+                'temp_id' => $tempId,
+                'status' => 'uploading',
+                'timestamp' => time()
+            ]));
+            $this->logToFile("✅ Confirmación de subida enviada para temp_id: $tempId");
+        }
+
+        // Determinar tipo de mensaje (archivo o imagen)
+        $isImage = (strpos($fileType, 'image/') === 0) || ($data['type'] === 'image_upload');
+        $tipo = $isImage ? 'imagen' : 'archivo';
+
+        $this->logToFile("📂 {$tipo}: {$fileName}, Tipo: {$fileType}, Tamaño: {$fileSize} bytes");
+
+        // Guardar en sistema de archivos
+        $savedFilePath = $this->saveUploadedFile($fileName, $fileData, $isImage);
+
+        if (!$savedFilePath) {
+            $this->logToFile("❌ Error guardando archivo");
+            $from->send(json_encode([
+                'type' => 'upload_error',
+                'message' => 'Error guardando archivo',
+                'temp_id' => $tempId
+            ]));
+            return;
+        }
+
+        $this->logToFile("✅ Archivo guardado en: {$savedFilePath}");
+
+        // Guardar en base de datos
+        $messageId = null;
+        try {
+            if (!class_exists('App\Models\ChatModel')) {
+                throw new Exception("Clase ChatModel no encontrada");
+            }
+
+            $chatModel = new App\Models\ChatModel();
+
+            // Verificar/crear chat (similar a handleChatMessage)
+            if (!$chatModel->chatExists($chatId)) {
+                $otherUserId = $data['other_user_id'] ?? $chatId;
+                $realChatId = $chatModel->findChatBetweenUsers($userId, $otherUserId);
+
+                if (!$realChatId) {
+                    $realChatId = $chatModel->createChat([$userId, $otherUserId]);
+                }
+
+                $chatId = $realChatId;
+            }
+
+            // Contenido del mensaje (puede ser descripción o el nombre del archivo)
+            $content = $data['contenido'] ?? $fileName;
+
+            // Guardar mensaje como archivo/imagen
+            $messageId = $chatModel->sendMessage(
+                $chatId,
+                $userId,
+                $content,
+                $tipo, // Tipo 'imagen' o 'archivo'
+                $savedFilePath, // Ruta del archivo
+                $fileName // Nombre original
+            );
+
+            $this->logToFile("✅ {$tipo} guardado en BD: ID {$messageId}");
+        } catch (\Exception $e) {
+            $errorMsg = "❌ Error BD al guardar archivo: " . $e->getMessage();
+            $this->logToFile($errorMsg);
+            $messageId = 'temp_file_' . rand(1000, 9999);
+        }
+
+        // Preparar respuesta para difundir
+        $response = [
+            'type' => $isImage ? 'image_message' : 'file_message',
+            'message_id' => $messageId,
+            'chat_id' => $chatId,
+            'user_id' => $userId,
+            'contenido' => $data['contenido'] ?? ($isImage ? '📷 Imagen enviada' : '📎 Archivo enviado'),
+            'file_name' => $fileName,
+            'file_size' => $fileSize,
+            'file_type' => $fileType,
+            'file_url' => $this->getFileUrl($savedFilePath), // URL pública para acceder al archivo
+            'tipo' => $tipo,
+            'timestamp' => date('c'),
+            'temp_id' => $tempId,
+            'leido' => 0,
+            'user_name' => $data['user_name'] ?? 'Usuario',
+            'status' => 'sent'
+        ];
+
+        // Enviar a todos en el chat
+        $sentCount = 0;
+        if (isset($this->sessions[$chatId])) {
+            foreach ($this->sessions[$chatId] as $client) {
+                try {
+                    $client->send(json_encode($response));
+                    $sentCount++;
+                } catch (\Exception $e) {
+                    $this->logToFile("❌ Error enviando archivo a cliente: {$e->getMessage()}");
+                }
             }
         }
+
+        // Confirmación final al remitente
+        $from->send(json_encode([
+            'type' => 'upload_complete',
+            'temp_id' => $tempId,
+            'message_id' => $messageId,
+            'file_url' => $response['file_url'],
+            'status' => 'complete'
+        ]));
+
+        $this->logToFile("📤 {$tipo} enviado a {$sentCount} cliente(s) en chat {$chatId}");
     }
-    
-    // Confirmación final al remitente
-    $from->send(json_encode([
-        'type' => 'upload_complete',
-        'temp_id' => $tempId,
-        'message_id' => $messageId,
-        'file_url' => $response['file_url'],
-        'status' => 'complete'
-    ]));
-    
-    $this->logToFile("📤 {$tipo} enviado a {$sentCount} cliente(s) en chat {$chatId}");
-}
- 
+
     private function handlePing($from)
     {
         $from->send(json_encode([
@@ -404,134 +408,133 @@ public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
         ]));
     }
 
-private function handleChatMessage($from, $data)
-{
-    $this->logToFile("💭 Procesando mensaje de chat");
-    
-    $chatId = $data['chat_id'] ?? null;
-    $userId = $data['user_id'] ?? null;
-    $content = $data['contenido'] ?? '';
-    $tempId = $data['temp_id'] ?? null;
-    
-    if (!$chatId || !$userId) {
-        $this->logToFile("❌ Datos incompletos: chat_id=$chatId, user_id=$userId");
-        return;
-    }
-    
-    $this->logToFile("📝 Chat: {$chatId}, User: {$userId}, Content: " . substr($content, 0, 50));
+    private function handleChatMessage($from, $data)
+    {
+        $this->logToFile("💭 Procesando mensaje de chat");
 
-    // 1. Confirmación inmediata
-    if ($tempId) {
-        $from->send(json_encode([
-            'type' => 'message_ack',
+        $chatId = $data['chat_id'] ?? null;
+        $userId = $data['user_id'] ?? null;
+        $content = $data['contenido'] ?? '';
+        $tempId = $data['temp_id'] ?? null;
+
+        if (!$chatId || !$userId) {
+            $this->logToFile("❌ Datos incompletos: chat_id=$chatId, user_id=$userId");
+            return;
+        }
+
+        $this->logToFile("📝 Chat: {$chatId}, User: {$userId}, Content: " . substr($content, 0, 50));
+
+        // 1. Confirmación inmediata
+        if ($tempId) {
+            $from->send(json_encode([
+                'type' => 'message_ack',
+                'temp_id' => $tempId,
+                'status' => 'received',
+                'timestamp' => time()
+            ]));
+            $this->logToFile("✅ ACK enviado para temp_id: $tempId");
+        }
+
+        // 2. Intentar guardar en BD
+        $messageId = null;
+        try {
+            $this->logToFile("🔄 Intentando crear ChatModel...");
+
+            // Asegúrate de que la clase existe
+            if (!class_exists('App\Models\ChatModel')) {
+                throw new Exception("Clase ChatModel no encontrada");
+            }
+
+            $chatModel = new App\Models\ChatModel();
+            $this->logToFile("✅ ChatModel creado");
+
+            // Verificar si el chat existe
+            if (!$chatModel->chatExists($chatId)) {
+                $this->logToFile("⚠️ Chat $chatId no existe, buscando por usuarios...");
+
+                $otherUserId = $data['other_user_id'] ?? $chatId;
+                $realChatId = $chatModel->findChatBetweenUsers($userId, $otherUserId);
+
+                if (!$realChatId) {
+                    $this->logToFile("🆕 Creando nuevo chat entre $userId y $otherUserId");
+                    $realChatId = $chatModel->createChat([$userId, $otherUserId]);
+                    $this->logToFile("✅ Chat creado: {$realChatId}");
+                }
+
+                $chatId = $realChatId;
+            }
+
+            $this->logToFile("💾 Guardando mensaje en BD...");
+
+            // Guardar mensaje
+            $messageId = $chatModel->sendMessage(
+                $chatId,
+                $userId,
+                $content,
+                $data['tipo'] ?? 'texto'
+            );
+
+            $this->logToFile("✅ Mensaje guardado en BD: ID {$messageId}");
+        } catch (\Exception $e) {
+            $errorMsg = "❌ Error BD: " . $e->getMessage() . " en " . $e->getFile() . ":" . $e->getLine();
+            $this->logToFile($errorMsg);
+            $messageId = 'temp_' . rand(1000, 9999);
+        }
+
+        // 3. Preparar respuesta
+        $response = [
+            'type' => 'chat_message',
+            'message_id' => $messageId,
+            'chat_id' => $chatId,
+            'user_id' => $userId,
+            'contenido' => $content,
+            'tipo' => $data['tipo'] ?? 'texto',
+            'timestamp' => date('c'),
             'temp_id' => $tempId,
-            'status' => 'received',
-            'timestamp' => time()
-        ]));
-        $this->logToFile("✅ ACK enviado para temp_id: $tempId");
-    }
+            'leido' => 0,
+            'user_name' => $data['user_name'] ?? 'Usuario',
+            'status' => 'sent'
+        ];
 
-    // 2. Intentar guardar en BD
-    $messageId = null;
-    try {
-        $this->logToFile("🔄 Intentando crear ChatModel...");
-        
-        // Asegúrate de que la clase existe
-        if (!class_exists('App\Models\ChatModel')) {
-            throw new Exception("Clase ChatModel no encontrada");
-        }
-        
-        $chatModel = new App\Models\ChatModel();
-        $this->logToFile("✅ ChatModel creado");
-
-        // Verificar si el chat existe
-        if (!$chatModel->chatExists($chatId)) {
-            $this->logToFile("⚠️ Chat $chatId no existe, buscando por usuarios...");
-            
-            $otherUserId = $data['other_user_id'] ?? $chatId;
-            $realChatId = $chatModel->findChatBetweenUsers($userId, $otherUserId);
-
-            if (!$realChatId) {
-                $this->logToFile("🆕 Creando nuevo chat entre $userId y $otherUserId");
-                $realChatId = $chatModel->createChat([$userId, $otherUserId]);
-                $this->logToFile("✅ Chat creado: {$realChatId}");
+        // 4. Enviar a todos en el chat (INCLUYENDO al remitente)
+        $sentCount = 0;
+        if (isset($this->sessions[$chatId])) {
+            foreach ($this->sessions[$chatId] as $client) {
+                try {
+                    $client->send(json_encode($response));
+                    $sentCount++;
+                } catch (\Exception $e) {
+                    $this->logToFile("❌ Error enviando a cliente: {$e->getMessage()}");
+                }
             }
-            
-            $chatId = $realChatId;
+        } else {
+            $this->logToFile("⚠️ No hay sesiones activas para chat $chatId");
+
+            // Si no hay sesión, al menos enviar al remitente
+            $from->send(json_encode($response));
+            $sentCount = 1;
         }
 
-        $this->logToFile("💾 Guardando mensaje en BD...");
-        
-        // Guardar mensaje
-        $messageId = $chatModel->sendMessage(
-            $chatId,
-            $userId,
-            $content,
-            $data['tipo'] ?? 'texto'
-        );
+        // 5. ⚠️ REMOVI ESTA LÍNEA - NO la necesitas
+        // $from->send(json_encode($response));
 
-        $this->logToFile("✅ Mensaje guardado en BD: ID {$messageId}");
-        
-    } catch (\Exception $e) {
-        $errorMsg = "❌ Error BD: " . $e->getMessage() . " en " . $e->getFile() . ":" . $e->getLine();
-        $this->logToFile($errorMsg);
-        $messageId = 'temp_' . rand(1000, 9999);
+        $this->logToFile("📤 Mensaje enviado a {$sentCount} cliente(s) en chat {$chatId}");
     }
+    // REEMPLAZA todos los error_log() con esto:
+    private function logToFile($message)
+    {
+        $logFile = __DIR__ . '/websocket_debug.log';
+        $timestamp = date('Y-m-d H:i:s');
+        $formattedMessage = "[$timestamp] " . $message . "\n";
 
-    // 3. Preparar respuesta
-    $response = [
-        'type' => 'chat_message',
-        'message_id' => $messageId,
-        'chat_id' => $chatId,
-        'user_id' => $userId,
-        'contenido' => $content,
-        'tipo' => $data['tipo'] ?? 'texto',
-        'timestamp' => date('c'),
-        'temp_id' => $tempId,
-        'leido' => 0,
-        'user_name' => $data['user_name'] ?? 'Usuario',
-        'status' => 'sent'
-    ];
+        // Escribir directamente en archivo
+        file_put_contents($logFile, $formattedMessage, FILE_APPEND | LOCK_EX);
 
-    // 4. Enviar a todos en el chat (INCLUYENDO al remitente)
-    $sentCount = 0;
-    if (isset($this->sessions[$chatId])) {
-        foreach ($this->sessions[$chatId] as $client) {
-            try {
-                $client->send(json_encode($response));
-                $sentCount++;
-            } catch (\Exception $e) {
-                $this->logToFile("❌ Error enviando a cliente: {$e->getMessage()}");
-            }
+        // También mostrar por consola si está disponible
+        if (php_sapi_name() === 'cli') {
+            echo $formattedMessage;
         }
-    } else {
-        $this->logToFile("⚠️ No hay sesiones activas para chat $chatId");
-        
-        // Si no hay sesión, al menos enviar al remitente
-        $from->send(json_encode($response));
-        $sentCount = 1;
     }
-
-    // 5. ⚠️ REMOVI ESTA LÍNEA - NO la necesitas
-    // $from->send(json_encode($response));
-
-    $this->logToFile("📤 Mensaje enviado a {$sentCount} cliente(s) en chat {$chatId}");
-}
-// REEMPLAZA todos los error_log() con esto:
-private function logToFile($message)
-{
-    $logFile = __DIR__ . '/websocket_debug.log';
-    $timestamp = date('Y-m-d H:i:s');
-    $formattedMessage = "[$timestamp] " . $message . "\n";
-    
-    // Escribir directamente en archivo
-    file_put_contents($logFile, $formattedMessage, FILE_APPEND | LOCK_EX);
-    
-    // También mostrar por consola si está disponible
-    if (php_sapi_name() === 'cli') {
-        echo $formattedMessage;
-    }
-}
     private function handleTest($from, $data)
     {
         echo "🧪 Test recibido\n";
@@ -565,7 +568,7 @@ try {
         new \Ratchet\Http\HttpServer(
             new \Ratchet\WebSocket\WsServer($app)
         ),
-       9090, // Puerto
+        9090, // Puerto
         '0.0.0.0' // Escuchar en todas las interfaces
     );
 
