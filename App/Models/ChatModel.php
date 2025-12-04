@@ -123,7 +123,27 @@ class ChatModel
             throw $e;
         }
     }
-
+    public function query($sql, $params = [])
+    {
+        try {
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute($params);
+            
+            // Determinar si es SELECT, INSERT, UPDATE, DELETE
+            $firstWord = strtoupper(strtok(trim($sql), " "));
+            
+            if ($firstWord === 'SELECT') {
+                return $stmt->fetchAll(PDO::FETCH_ASSOC);
+            } else {
+                return $stmt->rowCount();
+            }
+        } catch (PDOException $e) {
+            error_log("❌ Error en query: " . $e->getMessage());
+            error_log("📋 SQL: " . $sql);
+            error_log("📋 Params: " . json_encode($params));
+            return false;
+        }
+    }
     public function addMessage($messageData)
     {
         try {
