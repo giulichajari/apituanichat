@@ -39,11 +39,11 @@ class FileUploadService
             }
 
             $chatModel = new ChatModel();
-            
+
             // ✅ PASO 1: DETERMINAR EL CHAT (igual que mensajes de texto)
             // Esto automáticamente crea el chat si no existe
             $chatId = $this->determineChatId($chatModel, $userId, $otherUserId);
-            
+
             if (!$chatId) {
                 throw new Exception('No se pudo crear o encontrar el chat');
             }
@@ -52,7 +52,7 @@ class FileUploadService
 
             // ✅ PASO 2: SUBIR EL ARCHIVO FÍSICO
             $fileInfo = $this->uploadPhysicalFile($file, $chatId, $userId);
-            
+
             // ✅ PASO 3: GUARDAR EN BD (file_id)
             $fileId = $chatModel->saveFile([
                 'name' => $fileInfo['fileName'],
@@ -75,7 +75,7 @@ class FileUploadService
 
             // ✅ PASO 4: CREAR MENSAJE (igual que mensajes de texto)
             $tipo = strpos($file['type'], 'image/') === 0 ? 'imagen' : 'archivo';
-            
+
             $messageId = $chatModel->sendMessage(
                 $chatId,      // chat_id
                 $userId,      // user_id
@@ -106,16 +106,48 @@ class FileUploadService
                 'file_size' => $file['size'],
                 'file_mime_type' => $file['type']
             ];
-
         } catch (Exception $e) {
             error_log("❌ Error en uploadToConversation: " . $e->getMessage());
             return [
-                'success' => false, 
+                'success' => false,
                 'message' => $e->getMessage()
             ];
         }
     }
+// En FileUploadService.php, agrega estos métodos:
 
+    /**
+     * ✅ OBTENER RUTA COMPLETA DEL ARCHIVO
+     */
+    public function getFullPath($relativePath)
+    {
+        return $this->uploadPath . ltrim($relativePath, '/');
+    }
+
+    /**
+     * ✅ OBTENER URL PÚBLICA
+     */
+    public function getPublicUrl($relativePath)
+    {
+        // Ajustar según tu configuración
+        return '/uploads/' . ltrim($relativePath, '/');
+    }
+
+    /**
+     * ✅ VERIFICAR SI EL USUARIO TIENE ACCESO AL ARCHIVO
+     */
+    public function userHasAccessToFile($fileId, $userId)
+    {
+        try {
+            // Esto depende de tu estructura de BD
+            // Asumiendo que tienes una tabla de archivos con relación a chats
+            $chatModel = new ChatModel();
+            return $chatModel->userHasAccessToFile($fileId, $userId);
+        } catch (Exception $e) {
+            error_log("Error verificando acceso a archivo: " . $e->getMessage());
+            return false;
+        }
+    }
     /**
      * ✅ DETERMINAR CHAT ID - Misma lógica que mensajes de texto
      */
@@ -124,7 +156,7 @@ class FileUploadService
         try {
             // Buscar chat existente entre estos usuarios
             $existingChatId = $chatModel->findChatBetweenUsers($userId, $otherUserId);
-            
+
             if ($existingChatId) {
                 error_log("✅ Chat existente encontrado: {$existingChatId}");
                 return $existingChatId;
@@ -134,10 +166,9 @@ class FileUploadService
             error_log("🆕 Creando nuevo chat entre {$userId} y {$otherUserId}");
             $userIds = [$userId, $otherUserId];
             $newChatId = $chatModel->createChat($userIds);
-            
+
             error_log("✅ Nuevo chat creado: {$newChatId}");
             return $newChatId;
-
         } catch (Exception $e) {
             error_log("❌ Error determinando chat: " . $e->getMessage());
             return null;
@@ -198,7 +229,7 @@ class FileUploadService
             }
 
             $chatModel = new ChatModel();
-            
+
             // Verificar que el chat existe
             if (!$chatModel->chatExists($chatId)) {
                 return ['success' => false, 'message' => 'El chat no existe'];
@@ -206,7 +237,7 @@ class FileUploadService
 
             // Subir archivo físico
             $fileInfo = $this->uploadPhysicalFile($file, $chatId, $userId);
-            
+
             // Guardar en BD
             $fileId = $chatModel->saveFile([
                 'name' => $fileInfo['fileName'],
@@ -246,7 +277,6 @@ class FileUploadService
                 'file_size' => $file['size'],
                 'file_mime_type' => $file['type']
             ];
-
         } catch (Exception $e) {
             error_log("Error en uploadFileSimple: " . $e->getMessage());
             return ['success' => false, 'message' => 'Error durante la subida: ' . $e->getMessage()];
@@ -289,19 +319,7 @@ class FileUploadService
 
         return ['success' => true];
     }
-     private function updateMessageFileId($messageId, $fileId): bool
-    {
-        try {
-            $chatModel = new ChatModel();
-            $stmt = $chatModel->getDb()->prepare("
-                UPDATE mensajes SET file_id = ? WHERE id = ?
-            ");
-            return $stmt->execute([$fileId, $messageId]);
-        } catch (\Exception $e) {
-            error_log("Error actualizando file_id del mensaje: " . $e->getMessage());
-            return false;
-        }
-    }
+ 
     public function uploadProductFile($file, $userId, $productId = null)
     {
         try {

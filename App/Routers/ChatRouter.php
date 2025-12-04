@@ -59,5 +59,32 @@ class ChatRouter
             fn() => $tokenMiddleware->strict(),
             fn() => $chatController->markChatAsRead()
         );
+
+           $router->post('/chats/upload-file', function ($req, $res) use ($tokenMiddleware) {
+            $user = $tokenMiddleware->strict();
+            $controller = new \App\Controllers\ChatController();
+            $controller->uploadChatFile($user['id']);
+        });
+
+        // ✅ ENDPOINT ESPECÍFICO PARA IMÁGENES
+        $router->post('/chats/upload-image', function ($req, $res) use ($tokenMiddleware) {
+            $user = $tokenMiddleware->strict();
+            $controller = new \App\Controllers\ChatController();
+            $controller->uploadChatImage($user['id']);
+        });
+
+        // ✅ ENDPOINT PARA OBTENER INFO DE ARCHIVO
+        $router->get('/files/{file_id}', function ($req, $res) use ($tokenMiddleware) {
+            $tokenMiddleware->strict(); // Solo verificar token
+            $controller = new \App\Controllers\ChatController();
+            $controller->getFileInfo($req->params->file_id);
+        });
+
+        // ✅ ENDPOINT PARA DESCARGAR ARCHIVO
+        $router->get('/files/{file_id}/download', function ($req, $res) use ($tokenMiddleware) {
+            $tokenMiddleware->strict(); // Solo verificar token
+            $controller = new \App\Controllers\ChatController();
+            $controller->downloadFile($req->params->file_id);
+        });
     }
 }

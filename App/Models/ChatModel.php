@@ -835,7 +835,21 @@ class ChatModel
             return 'Grupo (' . count($userIds) . ' personas)';
         }
     }
+// En tu ChatModel.php, agrega:
 
+public function userHasAccessToFile($fileId, $userId)
+{
+    $stmt = $this->db->prepare("
+        SELECT 1 
+        FROM archivos f
+        JOIN mensajes m ON f.id = m.file_id
+        JOIN chat_usuarios cu ON m.chat_id = cu.chat_id
+        WHERE f.id = ? AND cu.user_id = ?
+    ");
+    
+    $stmt->execute([$fileId, $userId]);
+    return $stmt->fetch() !== false;
+}
     /**
      * Obtener nombre de usuario
      */

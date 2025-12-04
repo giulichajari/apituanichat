@@ -76,87 +76,460 @@ class ChatController
             ]);
         }
     }
+    /**
+     * ✅ SUBIR ARCHIVO DE CHAT VÍA HTTP (para archivos grandes)
+     */
+    public function uploadChatFile($userId)
+    {
+        try {
+            // Verificar que se recibió archivo
+            if (empty($_FILES) || !isset($_FILES['file'])) {
+                return Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "No se recibió ningún archivo"
+                ]);
+            }
 
-    // Los demás métodos permanecen igual...
-   public function createChat()
-{
-    try {
-        // DEBUG: Ver qué está llegando
-        error_log("📥 BODY recibido: " . print_r(Router::$request->body, true));
-        
-        $body = Router::$request->body;
-        $currentUser = Router::$request->user;
-        $currentUserId = $currentUser->id ?? null;
-        
-        // Obtener other_user_id del body
-        $otherUserId = $body->other_user_id ?? null;
-        
-        // Validaciones
-        if (!$currentUserId) {
-            Router::$response->status(401)->send([
-                "success" => false,
-                "message" => "Usuario no autenticado"
-            ]);
-            return;
-        }
-        
-        if (!$otherUserId) {
-            Router::$response->status(400)->send([
-                "success" => false,
-                "message" => "Falta el parámetro 'other_user_id'"
-            ]);
-            return;
-        }
-        
-        // Validar que no sea el mismo usuario
-        if ($otherUserId == $currentUserId) {
-            Router::$response->status(400)->send([
-                "success" => false,
-                "message" => "No puedes crear un chat contigo mismo"
-            ]);
-            return;
-        }
-        
-        error_log("🔍 Creando chat entre usuario {$currentUserId} y {$otherUserId}");
-        
-        // Verificar si ya existe un chat entre estos usuarios
-        $chatModel = new ChatModel();
-        $existingChatId = $chatModel->findChatBetweenUsers($currentUserId, $otherUserId);
-        
-        if ($existingChatId) {
-            error_log("✅ Chat ya existe: {$existingChatId}");
-            Router::$response->status(200)->send([
+            $uploadedFile = $_FILES['file'];
+            $body = Router::$request->body;
+
+            // Obtener datos adicionales
+            $otherUserId = $body->other_user_id ?? null;
+            $chatId = $body->chat_id ?? null;
+            $contenido = $body->contenido ?? $uploadedFile['name'];
+            $wsToken = $body->ws_token ?? '';
+
+            // Validar que tenemos suficiente información
+            if (!$chatId && !$otherUserId) {
+                return Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "Se requiere chat_id o other_user_id"
+                ]);
+            }
+
+            // ✅ USAR EL SERVICIO DE UPLOAD CORRECTO
+            $uploadResult = null;
+
+            if ($chatId) {
+                // Chat existente - usar uploadFileSimple
+                $uploadResult = $this->fileUploadService->uploadFileSimple(
+                    $uploadedFile,
+                    $chatId,
+                    $userId
+                );
+            } else {
+                // Nuevo chat - usar uploadToConversation
+                $uploadResult = $this->fileUploadService->uploadToConversation(
+                    $uploadedFile,
+                    $userId,
+                    $otherUserId
+                );
+
+                // Actualizar chatId con el resultado
+                $chatId = $uploadResult['chat_id'] ?? $chatId;
+            }
+
+            if (!$uploadResult['success']) {
+                return Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => $uploadResult['message']
+                ]);
+            }
+
+            // ✅ PREPARAR DATOS PARA NOTIFICACIÓN WEBSOCKET
+            $isImage = strpos($uploadResult['file_mime_type'] ?? '', 'image/') === 0;
+
+            $wsMessage = [
+                'type' => $isImage ? 'image_uploaded' : 'file_uploaded',
+                'chat_id' => $chatId,
+                'user_id' => $userId,
+                'message_id' => $uploadResult['message_id'],
+                'file_info' => [
+                    'file_url' => $uploadResult['file_url'],
+                    'file_name' => $uploadResult['file_original_name'] ?? $uploadedFile['name'],
+                    'file_size' => $uploadResult['file_size'] ?? $uploadedFile['size'],
+                    'file_type' => $uploadResult['file_mime_type'] ?? $uploadedFile['type'],
+                    'tipo' => $uploadResult['tipo'] ?? ($isImage ? 'imagen' : 'archivo'),
+                    'is_image' => $isImage
+                ],
+                'contenido' => $contenido,
+                'timestamp' => date('c'),
+                'user_name' => $body->user_name ?? 'Usuario',
+                'ws_token' => $wsToken
+            ];
+
+            // ✅ INTENTAR NOTIFICAR VÍA WEBSOCKET
+            $this->notifyWebSocket($chatId, $wsMessage);
+
+            // ✅ RESPONDER AL CLIENTE
+            return Router::$response->status(201)->send([
                 "success" => true,
-                "chat_id" => $existingChatId,
-                "message" => "El chat ya existe",
-                "already_exists" => true
+                "message" => $isImage ? "Imagen subida exitosamente" : "Archivo subido exitosamente",
+                "data" => $uploadResult,
+                "ws_notification" => $wsMessage // Para debug
             ]);
-            return;
+        } catch (Exception $e) {
+            error_log("❌ Error en uploadChatFile: " . $e->getMessage());
+            return Router::$response->status(500)->send([
+                "success" => false,
+                "message" => "Error al subir archivo: " . $e->getMessage()
+            ]);
         }
-        
-        // Crear nuevo chat
-        $userIds = [$currentUserId, (int)$otherUserId];
-        error_log("🆕 Creando nuevo chat con usuarios: " . implode(', ', $userIds));
-        
-        $chatId = $chatModel->createChat($userIds);
-        
-        error_log("✅ Chat creado exitosamente: {$chatId}");
-        
-        Router::$response->status(201)->send([
-            "success" => true,
-            "chat_id" => $chatId,
-            "message" => "Chat creado exitosamente",
-            "already_exists" => false
-        ]);
-        
-    } catch (Exception $e) {
-        error_log("❌ Error creating chat: " . $e->getMessage());
-        Router::$response->status(500)->send([
-            "success" => false,
-            "message" => "Error creando chat: " . $e->getMessage()
-        ]);
     }
-}
+
+    /**
+     * ✅ SUBIR IMAGEN ESPECÍFICA CON PROCESAMIENTO
+     */
+    public function uploadChatImage($userId)
+    {
+        try {
+            if (empty($_FILES) || !isset($_FILES['image'])) {
+                return Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "No se recibió ninguna imagen"
+                ]);
+            }
+
+            $uploadedFile = $_FILES['image'];
+            $body = Router::$request->body;
+
+            // Verificar que sea una imagen real
+            $imageInfo = @getimagesize($uploadedFile['tmp_name']);
+            if (!$imageInfo) {
+                return Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "El archivo no es una imagen válida"
+                ]);
+            }
+
+            $otherUserId = $body->other_user_id ?? null;
+            $chatId = $body->chat_id ?? null;
+            $wsToken = $body->ws_token ?? '';
+
+            // Usar el servicio
+            $uploadResult = null;
+
+            if ($chatId) {
+                $uploadResult = $this->fileUploadService->uploadFileSimple(
+                    $uploadedFile,
+                    $chatId,
+                    $userId
+                );
+            } else {
+                $uploadResult = $this->fileUploadService->uploadToConversation(
+                    $uploadedFile,
+                    $userId,
+                    $otherUserId
+                );
+                $chatId = $uploadResult['chat_id'] ?? $chatId;
+            }
+
+            if (!$uploadResult['success']) {
+                return Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => $uploadResult['message']
+                ]);
+            }
+
+            // ✅ GENERAR PREVIEW HTML PARA IMÁGENES
+            $previewHtml = $this->generateImagePreviewHtml($uploadResult, $uploadedFile);
+
+            // ✅ PREPARAR PARA WEBSOCKET
+            $wsMessage = [
+                'type' => 'image_uploaded',
+                'chat_id' => $chatId,
+                'user_id' => $userId,
+                'message_id' => $uploadResult['message_id'],
+                'file_info' => [
+                    'file_url' => $uploadResult['file_url'],
+                    'file_name' => $uploadResult['file_original_name'] ?? $uploadedFile['name'],
+                    'file_size' => $uploadResult['file_size'] ?? $uploadedFile['size'],
+                    'file_type' => $uploadResult['file_mime_type'] ?? $uploadedFile['type'],
+                    'width' => $imageInfo[0] ?? null,
+                    'height' => $imageInfo[1] ?? null,
+                    'tipo' => 'imagen',
+                    'thumbnail_url' => $uploadResult['thumbnail_url'] ?? $uploadResult['file_url']
+                ],
+                'preview_html' => $previewHtml,
+                'contenido' => $body->contenido ?? '📷 Imagen',
+                'timestamp' => date('c'),
+                'user_name' => $body->user_name ?? 'Usuario',
+                'ws_token' => $wsToken
+            ];
+
+            // ✅ NOTIFICAR WEBSOCKET
+            $this->notifyWebSocket($chatId, $wsMessage);
+
+            return Router::$response->status(201)->send([
+                "success" => true,
+                "message" => "Imagen subida exitosamente",
+                "data" => $uploadResult
+            ]);
+        } catch (Exception $e) {
+            error_log("❌ Error en uploadChatImage: " . $e->getMessage());
+            return Router::$response->status(500)->send([
+                "success" => false,
+                "message" => "Error al subir imagen: " . $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * ✅ OBTENER INFORMACIÓN DE UN ARCHIVO
+     */
+    public function getFileInfo($fileId)
+    {
+        try {
+            // Buscar archivo en BD
+            $fileModel = new \App\Models\File(); // Asumiendo que tienes un modelo File
+            $fileInfo = $fileModel->getFileById($fileId);
+
+            if (!$fileInfo) {
+                return Router::$response->status(404)->send([
+                    "success" => false,
+                    "message" => "Archivo no encontrado"
+                ]);
+            }
+
+            // Verificar permisos (solo usuarios del chat pueden ver)
+            $user = Router::$request->user;
+            $userId = $user->id ?? null;
+
+            $hasAccess = $this->chatModel->userHasAccessToFile($fileId, $userId);
+
+            if (!$hasAccess) {
+                return Router::$response->status(403)->send([
+                    "success" => false,
+                    "message" => "No tienes permiso para ver este archivo"
+                ]);
+            }
+
+            return Router::$response->status(200)->send([
+                "success" => true,
+                "data" => $fileInfo
+            ]);
+        } catch (Exception $e) {
+            error_log("❌ Error en getFileInfo: " . $e->getMessage());
+            return Router::$response->status(500)->send([
+                "success" => false,
+                "message" => "Error obteniendo información del archivo"
+            ]);
+        }
+    }
+
+    /**
+     * ✅ DESCARGAR ARCHIVO
+     */
+    public function downloadFile($fileId)
+    {
+        try {
+            // Buscar archivo en BD
+            $fileModel = new \App\Models\File();
+            $fileInfo = $fileModel->getFileById($fileId);
+
+            if (!$fileInfo) {
+                Router::$response->status(404)->send("Archivo no encontrado");
+                return;
+            }
+
+            // Verificar permisos
+            $user = Router::$request->user;
+            $userId = $user->id ?? null;
+
+            $hasAccess = $this->chatModel->userHasAccessToFile($fileId, $userId);
+
+            if (!$hasAccess) {
+                Router::$response->status(403)->send("Acceso denegado");
+                return;
+            }
+
+            // Verificar que el archivo existe físicamente
+            $filePath = $this->fileUploadService->getFullPath($fileInfo['path']);
+
+            if (!file_exists($filePath)) {
+                Router::$response->status(404)->send("El archivo físico no se encuentra");
+                return;
+            }
+
+            // Enviar archivo para descarga
+            header('Content-Description: File Transfer');
+            header('Content-Type: ' . $fileInfo['mime_type']);
+            header('Content-Disposition: attachment; filename="' . basename($fileInfo['original_name']) . '"');
+            header('Expires: 0');
+            header('Cache-Control: must-revalidate');
+            header('Pragma: public');
+            header('Content-Length: ' . filesize($filePath));
+
+            readfile($filePath);
+            exit;
+        } catch (Exception $e) {
+            error_log("❌ Error en downloadFile: " . $e->getMessage());
+            Router::$response->status(500)->send("Error descargando archivo");
+        }
+    }
+
+    /**
+     * ✅ NOTIFICAR WEBSOCKET (método auxiliar)
+     */
+    private function notifyWebSocket($chatId, $message)
+    {
+        try {
+            // Guardar en cola para WebSocket
+            $queueDir = __DIR__ . '/../storage/ws_queue/';
+            if (!is_dir($queueDir)) {
+                mkdir($queueDir, 0755, true);
+            }
+
+            $queueFile = $queueDir . 'chat_' . $chatId . '.json';
+
+            // Leer cola existente
+            $queue = [];
+            if (file_exists($queueFile)) {
+                $queue = json_decode(file_get_contents($queueFile), true) ?: [];
+            }
+
+            // Agregar nuevo mensaje
+            $queue[] = [
+                'id' => uniqid(),
+                'timestamp' => time(),
+                'message' => $message
+            ];
+
+            // Mantener solo últimos 50 mensajes por chat
+            if (count($queue) > 50) {
+                $queue = array_slice($queue, -50);
+            }
+
+            // Guardar
+            file_put_contents($queueFile, json_encode($queue, JSON_PRETTY_PRINT));
+
+            error_log("✅ Mensaje encolado para WebSocket (Chat: $chatId)");
+            return true;
+        } catch (Exception $e) {
+            error_log("❌ Error notificando WebSocket: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * ✅ GENERAR PREVIEW HTML PARA IMÁGENES
+     */
+    private function generateImagePreviewHtml($fileData, $originalFile)
+    {
+        $fileName = htmlspecialchars($fileData['file_original_name'] ?? $originalFile['name']);
+        $fileUrl = $fileData['file_url'] ?? '';
+        $fileSize = $this->formatFileSize($fileData['file_size'] ?? $originalFile['size']);
+        $thumbnailUrl = $fileData['thumbnail_url'] ?? $fileUrl;
+
+        return '
+    <div class="chat-image-preview">
+        <a href="' . $fileUrl . '" target="_blank" class="image-link" data-lightbox="chat-images">
+            <img src="' . $thumbnailUrl . '" 
+                 alt="' . $fileName . '" 
+                 class="img-thumbnail chat-img"
+                 loading="lazy"
+                 style="max-width: 300px; max-height: 300px; cursor: pointer;">
+        </a>
+        <div class="image-info">
+            <small>' . $fileName . ' (' . $fileSize . ')</small>
+            <a href="' . $fileUrl . '" target="_blank" class="download-link">
+                <small>📥 Descargar</small>
+            </a>
+        </div>
+    </div>';
+    }
+
+    /**
+     * ✅ FORMATEAR TAMAÑO DE ARCHIVO
+     */
+    private function formatFileSize($bytes)
+    {
+        if ($bytes == 0) return '0 B';
+
+        $units = ['B', 'KB', 'MB', 'GB'];
+        $i = floor(log($bytes, 1024));
+
+        return round($bytes / pow(1024, $i), 2) . ' ' . $units[$i];
+    }
+    // Los demás métodos permanecen igual...
+    public function createChat()
+    {
+        try {
+            // DEBUG: Ver qué está llegando
+            error_log("📥 BODY recibido: " . print_r(Router::$request->body, true));
+
+            $body = Router::$request->body;
+            $currentUser = Router::$request->user;
+            $currentUserId = $currentUser->id ?? null;
+
+            // Obtener other_user_id del body
+            $otherUserId = $body->other_user_id ?? null;
+
+            // Validaciones
+            if (!$currentUserId) {
+                Router::$response->status(401)->send([
+                    "success" => false,
+                    "message" => "Usuario no autenticado"
+                ]);
+                return;
+            }
+
+            if (!$otherUserId) {
+                Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "Falta el parámetro 'other_user_id'"
+                ]);
+                return;
+            }
+
+            // Validar que no sea el mismo usuario
+            if ($otherUserId == $currentUserId) {
+                Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "No puedes crear un chat contigo mismo"
+                ]);
+                return;
+            }
+
+            error_log("🔍 Creando chat entre usuario {$currentUserId} y {$otherUserId}");
+
+            // Verificar si ya existe un chat entre estos usuarios
+            $chatModel = new ChatModel();
+            $existingChatId = $chatModel->findChatBetweenUsers($currentUserId, $otherUserId);
+
+            if ($existingChatId) {
+                error_log("✅ Chat ya existe: {$existingChatId}");
+                Router::$response->status(200)->send([
+                    "success" => true,
+                    "chat_id" => $existingChatId,
+                    "message" => "El chat ya existe",
+                    "already_exists" => true
+                ]);
+                return;
+            }
+
+            // Crear nuevo chat
+            $userIds = [$currentUserId, (int)$otherUserId];
+            error_log("🆕 Creando nuevo chat con usuarios: " . implode(', ', $userIds));
+
+            $chatId = $chatModel->createChat($userIds);
+
+            error_log("✅ Chat creado exitosamente: {$chatId}");
+
+            Router::$response->status(201)->send([
+                "success" => true,
+                "chat_id" => $chatId,
+                "message" => "Chat creado exitosamente",
+                "already_exists" => false
+            ]);
+        } catch (Exception $e) {
+            error_log("❌ Error creating chat: " . $e->getMessage());
+            Router::$response->status(500)->send([
+                "success" => false,
+                "message" => "Error creando chat: " . $e->getMessage()
+            ]);
+        }
+    }
 
     public function sendMessage()
     {
@@ -221,96 +594,95 @@ class ChatController
             ]);
         }
     }
-public function getMessages()
-{
-    try {
-        // 1. Obtener parámetros - CORREGIDO: Acceder como objeto
-        $query = Router::$request->query ?? (object)$_GET;
-        
-        // Acceder a la propiedad chat_id del objeto
-        $chatId = $query->chat_id ?? null;
+    public function getMessages()
+    {
+        try {
+            // 1. Obtener parámetros - CORREGIDO: Acceder como objeto
+            $query = Router::$request->query ?? (object)$_GET;
 
-        // 2. Obtener usuario autenticado
-        $user = Router::$request->user;
-        $userId = $user->id ?? null;
+            // Acceder a la propiedad chat_id del objeto
+            $chatId = $query->chat_id ?? null;
 
-        // 3. Validaciones básicas
-        if (!$chatId) {
-            return Router::$response->status(400)->send([
+            // 2. Obtener usuario autenticado
+            $user = Router::$request->user;
+            $userId = $user->id ?? null;
+
+            // 3. Validaciones básicas
+            if (!$chatId) {
+                return Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "El parámetro 'chat_id' es requerido"
+                ]);
+            }
+
+            // Asegurar que sea numérico
+            if (!is_numeric($chatId)) {
+                return Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "El 'chat_id' debe ser numérico"
+                ]);
+            }
+
+            $chatId = (int)$chatId;
+            $userId = (int)$userId;
+
+            // 4. Instanciar modelo
+            $chatModel = new ChatModel();
+
+            // 5. Verificar si el chat existe - IMPORTANTE añadir esta validación
+            $chatExists = $chatModel->chatExists($chatId);
+
+            if (!$chatExists) {
+                // El chat no existe, retornar error
+                return Router::$response->status(404)->send([
+                    "success" => false,
+                    "message" => "Chat no encontrado",
+                    "chat_id" => $chatId
+                ]);
+            }
+
+            // 6. Verificar que el usuario tiene acceso al chat
+            $userInChat = $chatModel->userInChat($chatId, $userId);
+
+            if (!$userInChat) {
+                return Router::$response->status(403)->send([
+                    "success" => false,
+                    "message" => "No tienes acceso a este chat"
+                ]);
+            }
+
+            // 7. Obtener mensajes del chat
+            $messages = $chatModel->getMessages($chatId, $userId);
+
+            // 8. Marcar mensajes como leídos (solo si hay mensajes)
+            if (count($messages) > 0) {
+                $chatModel->markMessagesAsRead($chatId, $userId);
+            }
+
+            // 9. Obtener info del otro usuario
+            $otherUserId = $chatModel->getOtherUserFromChat($chatId, $userId);
+
+            // 10. Retornar respuesta - ELIMINAR $isNewChat ya que el chat siempre existe aquí
+            return Router::$response->status(200)->send([
+                "success" => true,
+                "data" => $messages,
+                "chat_id" => $chatId,
+                "other_user_id" => $otherUserId,
+                "total_messages" => count($messages),
+                "message" => count($messages) > 0
+                    ? "Mensajes obtenidos exitosamente"
+                    : "No hay mensajes en este chat"
+            ]);
+        } catch (Exception $e) {
+            error_log("❌ Error en ChatController::getMessages: " . $e->getMessage());
+
+            return Router::$response->status(500)->send([
                 "success" => false,
-                "message" => "El parámetro 'chat_id' es requerido"
+                "message" => "Error interno del servidor",
+                "error" => $e->getMessage()
             ]);
         }
-
-        // Asegurar que sea numérico
-        if (!is_numeric($chatId)) {
-            return Router::$response->status(400)->send([
-                "success" => false,
-                "message" => "El 'chat_id' debe ser numérico"
-            ]);
-        }
-
-        $chatId = (int)$chatId;
-        $userId = (int)$userId;
-
-        // 4. Instanciar modelo
-        $chatModel = new ChatModel();
-
-        // 5. Verificar si el chat existe - IMPORTANTE añadir esta validación
-        $chatExists = $chatModel->chatExists($chatId);
-        
-        if (!$chatExists) {
-            // El chat no existe, retornar error
-            return Router::$response->status(404)->send([
-                "success" => false,
-                "message" => "Chat no encontrado",
-                "chat_id" => $chatId
-            ]);
-        }
-
-        // 6. Verificar que el usuario tiene acceso al chat
-        $userInChat = $chatModel->userInChat($chatId, $userId);
-        
-        if (!$userInChat) {
-            return Router::$response->status(403)->send([
-                "success" => false,
-                "message" => "No tienes acceso a este chat"
-            ]);
-        }
-
-        // 7. Obtener mensajes del chat
-        $messages = $chatModel->getMessages($chatId, $userId);
-
-        // 8. Marcar mensajes como leídos (solo si hay mensajes)
-        if (count($messages) > 0) {
-            $chatModel->markMessagesAsRead($chatId, $userId);
-        }
-
-        // 9. Obtener info del otro usuario
-        $otherUserId = $chatModel->getOtherUserFromChat($chatId, $userId);
-
-        // 10. Retornar respuesta - ELIMINAR $isNewChat ya que el chat siempre existe aquí
-        return Router::$response->status(200)->send([
-            "success" => true,
-            "data" => $messages,
-            "chat_id" => $chatId,
-            "other_user_id" => $otherUserId,
-            "total_messages" => count($messages),
-            "message" => count($messages) > 0
-                ? "Mensajes obtenidos exitosamente"
-                : "No hay mensajes en este chat"
-        ]);
-        
-    } catch (Exception $e) {
-        error_log("❌ Error en ChatController::getMessages: " . $e->getMessage());
-
-        return Router::$response->status(500)->send([
-            "success" => false,
-            "message" => "Error interno del servidor",
-            "error" => $e->getMessage()
-        ]);
     }
-}
 
     public function getChatsByUser()
     {
