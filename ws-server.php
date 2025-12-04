@@ -188,156 +188,83 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     // ===================== HANDLERS =====================
 
 
-    private function handleFileUpload($from, $data)
-    {
-        $this->logToFile("📁 Procesando subida de archivo/imagen");
-
-        $chatId = $data['chat_id'] ?? null;
-        $userId = $data['user_id'] ?? null;
-        $fileName = $data['file_name'] ?? null;
-        $fileSize = $data['file_size'] ?? 0;
-        $fileType = $data['file_type'] ?? 'application/octet-stream';
-        $fileData = $data['file_data'] ?? null; // Base64 o datos del archivo
-        $tempId = $data['temp_id'] ?? null;
-
-        if (!$chatId || !$userId || !$fileName || !$fileData) {
-            $this->logToFile("❌ Datos incompletos para subida de archivo");
-            $from->send(json_encode([
-                'type' => 'upload_error',
-                'message' => 'Datos incompletos',
-                'temp_id' => $tempId
-            ]));
-            return;
-        }
-
-        // Verificar tamaño máximo (ej: 10MB)
-        $maxSize = 10 * 1024 * 1024; // 10MB
-        if ($fileSize > $maxSize) {
-            $this->logToFile("❌ Archivo demasiado grande: {$fileSize} bytes");
-            $from->send(json_encode([
-                'type' => 'upload_error',
-                'message' => 'Archivo demasiado grande. Máximo: 10MB',
-                'temp_id' => $tempId
-            ]));
-            return;
-        }
-
-        // Confirmación inmediata
-        if ($tempId) {
-            $from->send(json_encode([
-                'type' => 'upload_started',
-                'temp_id' => $tempId,
-                'status' => 'uploading',
-                'timestamp' => time()
-            ]));
-            $this->logToFile("✅ Confirmación de subida enviada para temp_id: $tempId");
-        }
-
-        // Determinar tipo de mensaje (archivo o imagen)
-        $isImage = (strpos($fileType, 'image/') === 0) || ($data['type'] === 'image_upload');
-        $tipo = $isImage ? 'imagen' : 'archivo';
-
-        $this->logToFile("📂 {$tipo}: {$fileName}, Tipo: {$fileType}, Tamaño: {$fileSize} bytes");
-
-        // Guardar en sistema de archivos
-        $savedFilePath = $this->saveUploadedFile($fileName, $fileData, $isImage);
-
-        if (!$savedFilePath) {
-            $this->logToFile("❌ Error guardando archivo");
-            $from->send(json_encode([
-                'type' => 'upload_error',
-                'message' => 'Error guardando archivo',
-                'temp_id' => $tempId
-            ]));
-            return;
-        }
-
-        $this->logToFile("✅ Archivo guardado en: {$savedFilePath}");
-
-        // Guardar en base de datos
-        $messageId = null;
-        try {
-            if (!class_exists('App\Models\ChatModel')) {
-                throw new Exception("Clase ChatModel no encontrada");
-            }
-
-            $chatModel = new App\Models\ChatModel();
-
-            // Verificar/crear chat (similar a handleChatMessage)
-            if (!$chatModel->chatExists($chatId)) {
-                $otherUserId = $data['other_user_id'] ?? $chatId;
-                $realChatId = $chatModel->findChatBetweenUsers($userId, $otherUserId);
-
-                if (!$realChatId) {
-                    $realChatId = $chatModel->createChat([$userId, $otherUserId]);
-                }
-
-                $chatId = $realChatId;
-            }
-
-            // Contenido del mensaje (puede ser descripción o el nombre del archivo)
-            $content = $data['contenido'] ?? $fileName;
-
-            // Guardar mensaje como archivo/imagen
-            $messageId = $chatModel->sendMessage(
-                $chatId,
-                $userId,
-                $content,
-                $tipo, // Tipo 'imagen' o 'archivo'
-                $savedFilePath, // Ruta del archivo
-                $fileName // Nombre original
-            );
-
-            $this->logToFile("✅ {$tipo} guardado en BD: ID {$messageId}");
-        } catch (\Exception $e) {
-            $errorMsg = "❌ Error BD al guardar archivo: " . $e->getMessage();
-            $this->logToFile($errorMsg);
-            $messageId = 'temp_file_' . rand(1000, 9999);
-        }
-
-        // Preparar respuesta para difundir
-        $response = [
-            'type' => $isImage ? 'image_message' : 'file_message',
-            'message_id' => $messageId,
-            'chat_id' => $chatId,
-            'user_id' => $userId,
-            'contenido' => $data['contenido'] ?? ($isImage ? '📷 Imagen enviada' : '📎 Archivo enviado'),
-            'file_name' => $fileName,
-            'file_size' => $fileSize,
-            'file_type' => $fileType,
-            'file_url' => $this->getFileUrl($savedFilePath), // URL pública para acceder al archivo
-            'tipo' => $tipo,
-            'timestamp' => date('c'),
-            'temp_id' => $tempId,
-            'leido' => 0,
-            'user_name' => $data['user_name'] ?? 'Usuario',
-            'status' => 'sent'
-        ];
-
-        // Enviar a todos en el chat
-        $sentCount = 0;
-        if (isset($this->sessions[$chatId])) {
-            foreach ($this->sessions[$chatId] as $client) {
-                try {
-                    $client->send(json_encode($response));
-                    $sentCount++;
-                } catch (\Exception $e) {
-                    $this->logToFile("❌ Error enviando archivo a cliente: {$e->getMessage()}");
-                }
-            }
-        }
-
-        // Confirmación final al remitente
-        $from->send(json_encode([
-            'type' => 'upload_complete',
-            'temp_id' => $tempId,
-            'message_id' => $messageId,
-            'file_url' => $response['file_url'],
-            'status' => 'complete'
-        ]));
-
-        $this->logToFile("📤 {$tipo} enviado a {$sentCount} cliente(s) en chat {$chatId}");
+ private function handleFileUpload($from, $data)
+{
+    $this->logToFile("📁 Procesando notificación de archivo subido");
+    
+    $chatId = $data['chat_id'] ?? null;
+    $userId = $data['user_id'] ?? null;
+    
+    if (!$chatId || !$userId) {
+        $this->logToFile("❌ Datos incompletos");
+        return;
     }
+    
+    $this->logToFile("✅ Notificación válida - Chat: $chatId, User: $userId");
+    
+    // ⭐⭐ PREPARAR MENSAJE PARA BROADCAST (A TODOS INCLUYENDO REMITENTE)
+    $broadcastMessage = [
+        'type' => $data['type'], // 'image_upload' o 'file_upload'
+        'message_id' => $data['message_id'] ?? uniqid(),
+        'chat_id' => $chatId,
+        'user_id' => $userId,
+        'contenido' => $data['contenido'] ?? 'Archivo',
+        'tipo' => $data['tipo'] ?? 'archivo',
+        'timestamp' => $data['timestamp'] ?? date('c'),
+        'leido' => 0,
+        'status' => 'delivered'
+    ];
+    
+    // Agregar TODOS los datos del archivo
+    if (isset($data['file_url'])) {
+        $broadcastMessage['file_url'] = $data['file_url'];
+    }
+    
+    if (isset($data['url'])) {
+        $broadcastMessage['url'] = $data['url'];
+    }
+    
+    if (isset($data['file_info'])) {
+        $broadcastMessage['file_info'] = $data['file_info'];
+    }
+    
+    if (isset($data['file_original_name'])) {
+        $broadcastMessage['file_original_name'] = $data['file_original_name'];
+    }
+    
+    if (isset($data['file_size'])) {
+        $broadcastMessage['file_size'] = $data['file_size'];
+    }
+    
+    if (isset($data['file_type'])) {
+        $broadcastMessage['file_type'] = $data['file_type'];
+    }
+    
+    if (isset($data['mime_type'])) {
+        $broadcastMessage['mime_type'] = $data['mime_type'];
+    }
+    
+    // ⭐⭐ ENVIAR A TODOS EN EL CHAT (INCLUYENDO AL REMITENTE)
+    $sentCount = 0;
+    if (isset($this->sessions[$chatId])) {
+        foreach ($this->sessions[$chatId] as $client) {
+            try {
+                $client->send(json_encode($broadcastMessage));
+                $sentCount++;
+                $this->logToFile("✅ Enviado a cliente");
+            } catch (\Exception $e) {
+                $this->logToFile("❌ Error enviando: {$e->getMessage()}");
+            }
+        }
+    } else {
+        $this->logToFile("⚠️ No hay sesiones activas para chat $chatId");
+        // Enviar solo al remitente
+        $from->send(json_encode($broadcastMessage));
+        $sentCount = 1;
+    }
+    
+    $this->logToFile("📤 Mensaje de archivo enviado a {$sentCount} cliente(s) en chat {$chatId}");
+}
 
     private function handlePing($from)
     {
