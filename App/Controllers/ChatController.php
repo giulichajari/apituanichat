@@ -18,18 +18,16 @@ class ChatController
         $this->fileUploadService = new FileUploadService();
     }
 
-  public function uploadFile()
+public function uploadFile()
 {
     try {
         $body = Router::$request->body;
         $user = Router::$request->user ?? null;
         
-        // ✅ OBTENER CHAT_ID DE LA RUTA (en lugar de other_user_id)
         $chatId = Router::$request->params->chat_id ?? null;
         
         error_log("📋 uploadFile called - User ID: " . ($user->id ?? 'null'));
         error_log("📋 Chat ID from route: " . ($chatId ?? 'null'));
-        error_log("📋 FILES: " . json_encode($_FILES));
 
         if (!$user) {
             return Router::$response->status(401)->send([
@@ -47,12 +45,12 @@ class ChatController
 
         $uploadedFile = $_FILES['file'];
 
-        // ✅ PASAR DIRECTAMENTE EL CHAT_ID (no necesitas determinar chat)
+        // Subir archivo
         $uploadResult = $this->fileUploadService->uploadToConversation(
             $uploadedFile,
             $user->id,
-            null, // No necesitas other_user_id
-            $chatId // Pasar el chat_id directamente
+            null,
+            $chatId
         );
 
         if (!$uploadResult['success']) {
@@ -62,10 +60,13 @@ class ChatController
             ]);
         }
 
+        // ✅ AGREGAR: NOTIFICAR AL WEBSOCKET
+        $this->notifyWebSocketAfterUpload($uploadResult, $user->id, $chatId, $uploadedFile);
+
         return Router::$response->status(201)->send([
             "success" => true,
             "message" => "File uploaded successfully",
-            "data" => [ // ⭐ IMPORTANTE: Añadir 'data' wrapper
+            "data" => [
                 "file_id" => $uploadResult['file_id'],
                 "file_url" => $uploadResult['file_url'],
                 "message_id" => $uploadResult['message_id'],
@@ -84,6 +85,46 @@ class ChatController
             "success" => false,
             "message" => "Internal server error: " . $e->getMessage()
         ]);
+    }
+}
+
+/**
+ * ✅ NOTIFICAR WEBSOCKET DESPUÉS DE SUBIR ARCHIVO
+ */
+private function notifyWebSocketAfterUpload($uploadResult, $userId, $chatId, $uploadedFile)
+{
+    try {
+        // Determinar si es imagen
+        $isImage = strpos($uploadResult['file_mime_type'] ?? '', 'image/') === 0;
+        
+        // Preparar mensaje para WebSocket
+        $wsData = [
+            'type' => $isImage ? 'image_uploaded' : 'file_uploaded',
+            'chat_id' => $chatId,
+            'user_id' => $userId,
+            'message_id' => $uploadResult['message_id'],
+            'contenido' => $uploadResult['file_original_name'] ?? $uploadedFile['name'],
+            'tipo' => $uploadResult['tipo'] ?? ($isImage ? 'imagen' : 'archivo'),
+            'timestamp' => date('c'),
+            'leido' => 0,
+            'file_info' => [
+                'file_url' => $uploadResult['file_url'],
+                'file_name' => $uploadResult['file_name'],
+                'file_original_name' => $uploadResult['file_original_name'],
+                'file_size' => $uploadResult['file_size'],
+                'file_mime_type' => $uploadResult['file_mime_type'],
+                'is_image' => $isImage
+            ]
+        ];
+        
+        // Enviar al WebSocket usando curl o conexión directa
+        $this->sendToWebSocket($wsData);
+        
+        error_log("✅ WebSocket notificado sobre archivo subido: " . $uploadResult['message_id']);
+        
+    } catch (Exception $e) {
+        error_log("❌ Error notificando WebSocket: " . $e->getMessage());
+        // No fallar la subida si falla la notificación
     }
 }
     /**
