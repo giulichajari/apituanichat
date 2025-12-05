@@ -128,10 +128,10 @@ class ChatModel
         try {
             $stmt = $this->db->prepare($sql);
             $stmt->execute($params);
-            
+
             // Determinar si es SELECT, INSERT, UPDATE, DELETE
             $firstWord = strtoupper(strtok(trim($sql), " "));
-            
+
             if ($firstWord === 'SELECT') {
                 return $stmt->fetchAll(PDO::FETCH_ASSOC);
             } else {
@@ -855,31 +855,76 @@ class ChatModel
             return 'Grupo (' . count($userIds) . ' personas)';
         }
     }
-// En tu ChatModel.php, agrega:
-public function getOtherUserIdInChat($chatId, $currentUserId)
-{
-    $sql = "SELECT user_id 
+
+    // En ChatModel.php, agrega:
+    public function createWebSocketNotification($data)
+    {
+        try {
+            $sql = "INSERT INTO websocket_notifications 
+                (chat_id, user_id, message_type, message_data, status) 
+                VALUES (:chat_id, :user_id, :message_type, :message_data, :status)";
+
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute([
+                ':chat_id' => $data['chat_id'],
+                ':user_id' => $data['user_id'],
+                ':message_type' => $data['message_type'],
+                ':message_data' => $data['message_data'],
+                ':status' => $data['status'] ?? 'pending'
+            ]);
+
+            return (int)$this->db->lastInsertId();
+        } catch (Exception $e) {
+            error_log("❌ Error en createWebSocketNotification: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function getPendingNotifications($limit = 10)
+    {
+        try {
+            $sql = "SELECT * FROM websocket_notifications 
+                WHERE status = 'pending' 
+                ORDER BY created_at ASC 
+                LIMIT :limit";
+
+            $stmt = $this->db->prepare($sql);
+            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $stmt->execute();
+
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Exception $e) {
+            error_log("❌ Error en getPendingNotifications: " . $e->getMessage());
+            return [];
+        }
+    }
+
+
+    // En tu ChatModel.php, agrega:
+    public function getOtherUserIdInChat($chatId, $currentUserId)
+    {
+        $sql = "SELECT user_id 
             FROM chat_usuarios
             WHERE chat_id = ? AND user_id != ?
             LIMIT 1";
-    
-    $result = $this->query($sql, [$chatId, $currentUserId]);
-    
-    return !empty($result) ? $result[0]['user_id'] : null;
-}
-public function userHasAccessToFile($fileId, $userId)
-{
-    $stmt = $this->db->prepare("
+
+        $result = $this->query($sql, [$chatId, $currentUserId]);
+
+        return !empty($result) ? $result[0]['user_id'] : null;
+    }
+    public function userHasAccessToFile($fileId, $userId)
+    {
+        $stmt = $this->db->prepare("
         SELECT 1 
         FROM archivos f
         JOIN mensajes m ON f.id = m.file_id
         JOIN chat_usuarios cu ON m.chat_id = cu.chat_id
         WHERE f.id = ? AND cu.user_id = ?
     ");
-    
-    $stmt->execute([$fileId, $userId]);
-    return $stmt->fetch() !== false;
-}
+
+        $stmt->execute([$fileId, $userId]);
+        return $stmt->fetch() !== false;
+    }
     /**
      * Obtener nombre de usuario
      */

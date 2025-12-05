@@ -20,62 +20,67 @@ class FileUploadService
     private $maxFileSize = 10 * 1024 * 1024;
     private $uploadPath = '/var/www/apituanichat/public/uploads/';
     // private $uploadPath = 'D:/pruebaschat/';
-
-    private function sendMessageToWebSocket($messageData)
-    {
-        try {
-            // ⭐⭐ IMPORTANTE: El WebSocket server ya está corriendo en el mismo proceso
-            // Accedemos a la instancia del SignalServer directamente
-
-            // Determinar tipo WebSocket
-            $wsType = ($messageData['tipo'] === 'imagen') ? 'image_upload' : 'file_upload';
-
-            // Preparar mensaje para WebSocket
-            $wsMessage = [
+private function sendMessageToWebSocket($messageData)
+{
+    try {
+        $chatModel = new ChatModel();
+        
+        // Determinar tipo
+        $wsType = ($messageData['tipo'] === 'imagen') ? 'image_upload' : 'file_upload';
+        
+        // Guardar notificación en BD
+        $notificationId = $chatModel->createWebSocketNotification([
+            'chat_id' => $messageData['chat_id'],
+            'user_id' => $messageData['user_id'],
+            'message_type' => $wsType,
+            'message_data' => json_encode([
                 'type' => $wsType,
                 'chat_id' => $messageData['chat_id'],
                 'user_id' => $messageData['user_id'],
                 'contenido' => $messageData['contenido'],
                 'tipo' => $messageData['tipo'],
                 'timestamp' => $messageData['timestamp'],
-                'leido' => $messageData['leido'] ?? 0,
-                'file_name' => $messageData['file_name'],
+                'message_id' => $messageData['message_id'],
+                'file_id' => $messageData['file_id'],
                 'file_url' => $messageData['file_url'],
+                'file_name' => $messageData['file_name'],
                 'file_original_name' => $messageData['file_original_name'],
                 'file_size' => $messageData['file_size'],
                 'file_mime_type' => $messageData['file_mime_type'],
-                'file_id' => $messageData['file_id'],
-                'message_id' => $messageData['message_id'],
                 'status' => 'delivered'
-            ];
-
-            // ⭐⭐ Aquí viene la magia: Obtener la instancia del SignalServer
-            // Como FileUploadService y SignalServer están en el MISMO proceso (PHP),
-            // podemos acceder directamente
-
-            // Opción A: Si todo corre en el mismo proceso/cli
-            if (class_exists('SignalServer') && method_exists('SignalServer', 'getInstance')) {
-                $signalServer = SignalServer::getInstance();
-
-                if ($signalServer) {
-                    $sentCount = $signalServer->broadcastToChat($messageData['chat_id'], $wsMessage);
-                    error_log("✅ Broadcast enviado via Ratchet a {$sentCount} clientes");
-                    return $sentCount > 0;
-                }
-            }
-
-            // Opción B: Si FileUploadService se ejecuta en proceso diferente (web),
-            // necesitamos otra estrategia
-
-            error_log("⚠️ No se pudo acceder a SignalServer directamente");
-
-            // ⭐⭐ ALTERNATIVA: Guardar en memoria compartida o archivo
-            return $this->broadcastViaSharedMemory($messageData['chat_id'], $wsMessage);
-        } catch (Exception $e) {
-            error_log("❌ Error en sendMessageToWebSocket: " . $e->getMessage());
-            return false;
-        }
+            ]),
+            'status' => 'pending'
+        ]);
+        
+        error_log("✅ Notificación guardada en BD - ID: {$notificationId}");
+        
+        // ⭐ OPCIONAL: Despertar el WebSocket server
+        $this->wakeUpWebSocketServer();
+        
+        return true;
+        
+    } catch (Exception $e) {
+        error_log("❌ Error en sendMessageToWebSocket: " . $e->getMessage());
+        return false;
     }
+}
+
+private function wakeUpWebSocketServer()
+{
+    // Enviar señal simple al WebSocket server
+    // Puede ser un archivo flag, una llamada HTTP, etc.
+    try {
+        // Opción 1: Archivo flag
+        touch('/tmp/websocket_wakeup.flag');
+        
+        // Opción 2: Llamada HTTP ligera (si el WS server tiene endpoint)
+        // file_get_contents('http://localhost:8081/wakeup');
+        
+        error_log("🔔 Señal enviada a WebSocket server");
+    } catch (Exception $e) {
+        // No es crítico si falla
+    }
+}
 
     private function broadcastViaSharedMemory($chatId, $message)
     {

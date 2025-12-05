@@ -265,6 +265,75 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     
     $this->logToFile("📤 Mensaje de archivo enviado a {$sentCount} cliente(s) en chat {$chatId}");
 }
+
+// En la clase SignalServer, agrega:
+private function checkDatabaseNotifications()
+{
+    try {
+        // Conectar a BD (usa la misma configuración que tu app)
+        $pdo = new \PDO(
+            'mysql:host=localhost;dbname=tu_bd;charset=utf8mb4',
+            'usuario',
+            'password'
+        );
+        
+        // Buscar notificaciones pendientes
+        $stmt = $pdo->prepare("
+            SELECT id, chat_id, message_data 
+            FROM websocket_notifications 
+            WHERE status = 'pending' 
+            ORDER BY created_at ASC 
+            LIMIT 10
+        ");
+        
+        $stmt->execute();
+        $notifications = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+        
+        foreach ($notifications as $notification) {
+            $messageData = json_decode($notification['message_data'], true);
+            
+            if ($messageData && isset($messageData['chat_id'])) {
+                // Marcar como procesando
+                $updateStmt = $pdo->prepare(
+                    "UPDATE websocket_notifications 
+                     SET status = 'processing', processed_at = NOW() 
+                     WHERE id = ?"
+                );
+                $updateStmt->execute([$notification['id']]);
+                
+                // Enviar a los clientes
+                $this->broadcastToChat($messageData['chat_id'], $messageData);
+                
+                // Marcar como enviado
+                $updateStmt = $pdo->prepare(
+                    "UPDATE websocket_notifications SET status = 'sent' WHERE id = ?"
+                );
+                $updateStmt->execute([$notification['id']]);
+                
+                $this->logToFile("✅ Notificación {$notification['id']} procesada");
+            }
+        }
+        
+        $pdo = null; // Cerrar conexión
+        
+    } catch (\Exception $e) {
+        $this->logToFile("❌ Error checkDatabaseNotifications: " . $e->getMessage());
+    }
+}
+
+// En el loop principal del servidor:
+private function startBroadcastChecker()
+{
+    $loop = \React\EventLoop\Factory::create();
+    
+    // Verificar BD cada 2 segundos
+    $loop->addPeriodicTimer(2, function () {
+        $this->checkDatabaseNotifications();
+        $this->checkBroadcastFiles(); // Por si mantienes archivos también
+    });
+    
+    $loop->run();
+}
  public function broadcastToChat($chatId, $messageData)
     {
         $this->logToFile("📢 Broadcast externo a chat {$chatId}");
