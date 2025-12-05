@@ -19,11 +19,84 @@ class FileUploadService
 
     private $maxFileSize = 10 * 1024 * 1024;
     private $uploadPath = '/var/www/apituanichat/public/uploads/';
-   // private $uploadPath = 'D:/pruebaschat/';
+    // private $uploadPath = 'D:/pruebaschat/';
 
-    /**
-     * ✅ MÉTODO PRINCIPAL - Usa EXACTAMENTE la misma lógica que mensajes de texto
-     */
+    private function sendMessageToWebSocket($messageData)
+    {
+        try {
+            // ⭐⭐ IMPORTANTE: El WebSocket server ya está corriendo en el mismo proceso
+            // Accedemos a la instancia del SignalServer directamente
+
+            // Determinar tipo WebSocket
+            $wsType = ($messageData['tipo'] === 'imagen') ? 'image_upload' : 'file_upload';
+
+            // Preparar mensaje para WebSocket
+            $wsMessage = [
+                'type' => $wsType,
+                'chat_id' => $messageData['chat_id'],
+                'user_id' => $messageData['user_id'],
+                'contenido' => $messageData['contenido'],
+                'tipo' => $messageData['tipo'],
+                'timestamp' => $messageData['timestamp'],
+                'leido' => $messageData['leido'] ?? 0,
+                'file_name' => $messageData['file_name'],
+                'file_url' => $messageData['file_url'],
+                'file_original_name' => $messageData['file_original_name'],
+                'file_size' => $messageData['file_size'],
+                'file_mime_type' => $messageData['file_mime_type'],
+                'file_id' => $messageData['file_id'],
+                'message_id' => $messageData['message_id'],
+                'status' => 'delivered'
+            ];
+
+            // ⭐⭐ Aquí viene la magia: Obtener la instancia del SignalServer
+            // Como FileUploadService y SignalServer están en el MISMO proceso (PHP),
+            // podemos acceder directamente
+
+            // Opción A: Si todo corre en el mismo proceso/cli
+            if (class_exists('SignalServer') && method_exists('SignalServer', 'getInstance')) {
+                $signalServer = SignalServer::getInstance();
+
+                if ($signalServer) {
+                    $sentCount = $signalServer->broadcastToChat($messageData['chat_id'], $wsMessage);
+                    error_log("✅ Broadcast enviado via Ratchet a {$sentCount} clientes");
+                    return $sentCount > 0;
+                }
+            }
+
+            // Opción B: Si FileUploadService se ejecuta en proceso diferente (web),
+            // necesitamos otra estrategia
+
+            error_log("⚠️ No se pudo acceder a SignalServer directamente");
+
+            // ⭐⭐ ALTERNATIVA: Guardar en memoria compartida o archivo
+            return $this->broadcastViaSharedMemory($messageData['chat_id'], $wsMessage);
+        } catch (Exception $e) {
+            error_log("❌ Error en sendMessageToWebSocket: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    private function broadcastViaSharedMemory($chatId, $message)
+    {
+        try {
+            // Guardar mensaje en un archivo que el WebSocket puede leer
+            $messageFile = '/tmp/websocket_broadcast_' . uniqid() . '.json';
+            $data = [
+                'chat_id' => $chatId,
+                'message' => $message,
+                'timestamp' => time()
+            ];
+
+            file_put_contents($messageFile, json_encode($data));
+            error_log("✅ Mensaje guardado en {$messageFile} para WebSocket");
+
+            return true;
+        } catch (Exception $e) {
+            error_log("❌ Error en broadcastViaSharedMemory: " . $e->getMessage());
+            return false;
+        }
+    }
     public function uploadToConversation($file, $userId, $otherUserId = null, $chatId = null)
     {
         try {
@@ -104,24 +177,34 @@ class FileUploadService
                 $chatModel->deleteFile($fileId);
                 throw new Exception('Error al crear el mensaje en el chat');
             }
-            // ⭐⭐ IMPORTANTE: ENVIAR MENSAJE COMPLETO VIA WEBSOCKET
-            $this->sendMessageToWebSocket([
-                'type' => 'chat_message',
+
+            // ⭐⭐ PREPARAR DATOS COMPLETOS PARA EL WEBSOCKET
+            $fullMessageData = [
+                'type' => 'chat_message', // Este tipo es para referencia interna, el WebSocket lo cambiará
                 'message_id' => $messageId,
                 'chat_id' => $chatId,
                 'user_id' => $userId,
                 'contenido' => $file['name'],
-                'tipo' => $tipo,
+                'tipo' => $tipo, // 'imagen' o 'archivo'
                 'timestamp' => date('Y-m-d H:i:s'),
                 'leido' => 0,
-                // ⭐ CAMPOS DEL ARCHIVO CRÍTICOS
+                // Campos de archivo
                 'file_name' => $fileInfo['fileName'],
                 'file_url' => $fileInfo['fileUrl'],
                 'file_original_name' => $file['name'],
                 'file_size' => $file['size'],
                 'file_mime_type' => $file['type'],
                 'file_id' => $fileId
-            ]);
+            ];
+
+            // ⭐⭐ ENVIAR AL WEBSOCKET
+            $this->sendMessageToWebSocket($fullMessageData);
+
+            error_log("✅ Mensaje completo preparado para WebSocket: " . json_encode([
+                'message_id' => $messageId,
+                'file_id' => $fileId,
+                'tipo' => $tipo
+            ]));
 
             return [
                 'success' => true,
@@ -133,7 +216,9 @@ class FileUploadService
                 'file_name' => $fileInfo['fileName'],
                 'file_original_name' => $file['name'],
                 'file_size' => $file['size'],
-                'file_mime_type' => $file['type']
+                'file_mime_type' => $file['type'],
+                // ⭐ AGREGAR MENSAJE COMPLETO PARA EL FRONTEND
+                'message' => $fullMessageData
             ];
         } catch (Exception $e) {
             error_log("❌ Error en uploadToConversation: " . $e->getMessage());
@@ -143,52 +228,7 @@ class FileUploadService
             ];
         }
     }
-    private function sendMessageToWebSocket($messageData)
-    {
-        try {
-            // Configurar opciones para el contexto de stream
-            $context = stream_context_create([
-                'ssl' => [
-                    'verify_peer' => false,
-                    'verify_peer_name' => false,
-                    'allow_self_signed' => true
-                ]
-            ]);
 
-            // Conectar al servidor WebSocket
-            $socket = stream_socket_client(
-                'ssl://tuanichat.com:8080',
-                $errno,
-                $errstr,
-                10,
-                STREAM_CLIENT_CONNECT,
-                $context
-            );
-
-            if (!$socket) {
-                error_log("❌ Error conectando al WebSocket: $errstr ($errno)");
-                return false;
-            }
-
-            // Preparar mensaje WebSocket
-            $wsMessage = json_encode([
-                'type' => 'chat_message',
-                'data' => $messageData,
-                'action' => 'broadcast_to_chat',
-                'chat_id' => $messageData['chat_id']
-            ]);
-
-            // Enviar mensaje al WebSocket
-            fwrite($socket, $wsMessage);
-            fclose($socket);
-
-            error_log("✅ Mensaje enviado al WebSocket: " . json_encode($messageData, JSON_UNESCAPED_SLASHES));
-            return true;
-        } catch (Exception $e) {
-            error_log("❌ Error enviando mensaje al WebSocket: " . $e->getMessage());
-            return false;
-        }
-    }
 
     /**
      * ⭐ MÉTODO ALTERNATIVO usando tu WebSocket server existente
@@ -209,8 +249,7 @@ class FileUploadService
                 }
             }
 
-            // Opción 2: Guardar en BD para que el WebSocket lo procese
-            $this->saveMessageForWebSocket($chatId, $messageData);
+
 
             error_log("✅ Mensaje broadcast a chat {$chatId}");
         } catch (Exception $e) {

@@ -265,7 +265,28 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     
     $this->logToFile("📤 Mensaje de archivo enviado a {$sentCount} cliente(s) en chat {$chatId}");
 }
-
+ public function broadcastToChat($chatId, $messageData)
+    {
+        $this->logToFile("📢 Broadcast externo a chat {$chatId}");
+        
+        if (!isset($this->sessions[$chatId])) {
+            $this->logToFile("⚠️ No hay sesiones activas para chat {$chatId}");
+            return 0;
+        }
+        
+        $sentCount = 0;
+        foreach ($this->sessions[$chatId] as $client) {
+            try {
+                $client->send(json_encode($messageData));
+                $sentCount++;
+            } catch (\Exception $e) {
+                $this->logToFile("❌ Error en broadcast: " . $e->getMessage());
+            }
+        }
+        
+        $this->logToFile("✅ Broadcast enviado a {$sentCount} cliente(s)");
+        return $sentCount;
+    }
     private function handlePing($from)
     {
         $from->send(json_encode([
