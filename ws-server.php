@@ -188,161 +188,204 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     // ===================== HANDLERS =====================
 
 
- private function handleFileUpload($from, $data)
-{
-    $this->logToFile("📁 Procesando notificación de archivo subido");
-    
-    $chatId = $data['chat_id'] ?? null;
-    $userId = $data['user_id'] ?? null;
-    
-    if (!$chatId || !$userId) {
-        $this->logToFile("❌ Datos incompletos");
-        return;
-    }
-    
-    $this->logToFile("✅ Notificación válida - Chat: $chatId, User: $userId");
-    
-    // ⭐⭐ PREPARAR MENSAJE PARA BROADCAST (A TODOS INCLUYENDO REMITENTE)
-    $broadcastMessage = [
-        'type' => $data['type'], // 'image_upload' o 'file_upload'
-        'message_id' => $data['message_id'] ?? uniqid(),
-        'chat_id' => $chatId,
-        'user_id' => $userId,
-        'contenido' => $data['contenido'] ?? 'Archivo',
-        'tipo' => $data['tipo'] ?? 'archivo',
-        'timestamp' => $data['timestamp'] ?? date('c'),
-        'leido' => 0,
-        'status' => 'delivered'
-    ];
-    
-    // Agregar TODOS los datos del archivo
-    if (isset($data['file_url'])) {
-        $broadcastMessage['file_url'] = $data['file_url'];
-    }
-    
-    if (isset($data['url'])) {
-        $broadcastMessage['url'] = $data['url'];
-    }
-    
-    if (isset($data['file_info'])) {
-        $broadcastMessage['file_info'] = $data['file_info'];
-    }
-    
-    if (isset($data['file_original_name'])) {
-        $broadcastMessage['file_original_name'] = $data['file_original_name'];
-    }
-    
-    if (isset($data['file_size'])) {
-        $broadcastMessage['file_size'] = $data['file_size'];
-    }
-    
-    if (isset($data['file_type'])) {
-        $broadcastMessage['file_type'] = $data['file_type'];
-    }
-    
-    if (isset($data['mime_type'])) {
-        $broadcastMessage['mime_type'] = $data['mime_type'];
-    }
-    
-    // ⭐⭐ ENVIAR A TODOS EN EL CHAT (INCLUYENDO AL REMITENTE)
-    $sentCount = 0;
-    if (isset($this->sessions[$chatId])) {
-        foreach ($this->sessions[$chatId] as $client) {
-            try {
-                $client->send(json_encode($broadcastMessage));
-                $sentCount++;
-                $this->logToFile("✅ Enviado a cliente");
-            } catch (\Exception $e) {
-                $this->logToFile("❌ Error enviando: {$e->getMessage()}");
-            }
-        }
-    } else {
-        $this->logToFile("⚠️ No hay sesiones activas para chat $chatId");
-        // Enviar solo al remitente
-        $from->send(json_encode($broadcastMessage));
-        $sentCount = 1;
-    }
-    
-    $this->logToFile("📤 Mensaje de archivo enviado a {$sentCount} cliente(s) en chat {$chatId}");
-}
+    private function handleFileUpload($from, $data)
+    {
+        $this->logToFile("📁 Procesando notificación de archivo subido");
 
-// En la clase SignalServer, agrega:
-private function checkDatabaseNotifications()
-{
-    try {
-        // Conectar a BD (usa la misma configuración que tu app)
-        $pdo = new \PDO(
-            'mysql:host=localhost;dbname=tu_bd;charset=utf8mb4',
-            'usuario',
-            'password'
-        );
-        
-        // Buscar notificaciones pendientes
-        $stmt = $pdo->prepare("
+        $chatId = $data['chat_id'] ?? null;
+        $userId = $data['user_id'] ?? null;
+
+        if (!$chatId || !$userId) {
+            $this->logToFile("❌ Datos incompletos");
+            return;
+        }
+
+        $this->logToFile("✅ Notificación válida - Chat: $chatId, User: $userId");
+
+        // ⭐⭐ PREPARAR MENSAJE PARA BROADCAST (A TODOS INCLUYENDO REMITENTE)
+        $broadcastMessage = [
+            'type' => $data['type'], // 'image_upload' o 'file_upload'
+            'message_id' => $data['message_id'] ?? uniqid(),
+            'chat_id' => $chatId,
+            'user_id' => $userId,
+            'contenido' => $data['contenido'] ?? 'Archivo',
+            'tipo' => $data['tipo'] ?? 'archivo',
+            'timestamp' => $data['timestamp'] ?? date('c'),
+            'leido' => 0,
+            'status' => 'delivered'
+        ];
+
+        // Agregar TODOS los datos del archivo
+        if (isset($data['file_url'])) {
+            $broadcastMessage['file_url'] = $data['file_url'];
+        }
+
+        if (isset($data['url'])) {
+            $broadcastMessage['url'] = $data['url'];
+        }
+
+        if (isset($data['file_info'])) {
+            $broadcastMessage['file_info'] = $data['file_info'];
+        }
+
+        if (isset($data['file_original_name'])) {
+            $broadcastMessage['file_original_name'] = $data['file_original_name'];
+        }
+
+        if (isset($data['file_size'])) {
+            $broadcastMessage['file_size'] = $data['file_size'];
+        }
+
+        if (isset($data['file_type'])) {
+            $broadcastMessage['file_type'] = $data['file_type'];
+        }
+
+        if (isset($data['mime_type'])) {
+            $broadcastMessage['mime_type'] = $data['mime_type'];
+        }
+
+        // ⭐⭐ ENVIAR A TODOS EN EL CHAT (INCLUYENDO AL REMITENTE)
+        $sentCount = 0;
+        if (isset($this->sessions[$chatId])) {
+            foreach ($this->sessions[$chatId] as $client) {
+                try {
+                    $client->send(json_encode($broadcastMessage));
+                    $sentCount++;
+                    $this->logToFile("✅ Enviado a cliente");
+                } catch (\Exception $e) {
+                    $this->logToFile("❌ Error enviando: {$e->getMessage()}");
+                }
+            }
+        } else {
+            $this->logToFile("⚠️ No hay sesiones activas para chat $chatId");
+            // Enviar solo al remitente
+            $from->send(json_encode($broadcastMessage));
+            $sentCount = 1;
+        }
+
+        $this->logToFile("📤 Mensaje de archivo enviado a {$sentCount} cliente(s) en chat {$chatId}");
+    }
+
+    // En la clase SignalServer, agrega:
+    public function checkDatabaseNotifications()
+    {
+        try {
+            $this->logToFile("🔍 Verificando notificaciones en BD...");
+
+            // ⭐⭐ USAR TUS CREDENCIALES REALES DE Database.php
+            $host = "localhost";
+            $dbname = "tuanichatbd";
+            $username = "tuanichat";
+            $password = "Argentina1991!";
+
+            // Conectar a BD usando las mismas credenciales que tu app
+            $pdo = new \PDO(
+                "mysql:host=$host;dbname=$dbname;charset=utf8",
+                $username,
+                $password,
+                [
+                    \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+                    \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+                    \PDO::ATTR_EMULATE_PREPARES => false
+                ]
+            );
+
+            $this->logToFile("✅ Conectado a BD: $dbname");
+
+            // Contar notificaciones pendientes
+            $countStmt = $pdo->prepare("SELECT COUNT(*) as count FROM websocket_notifications WHERE status = 'pending'");
+            $countStmt->execute();
+            $count = $countStmt->fetch()['count'];
+
+            $this->logToFile("📊 Notificaciones pendientes: $count");
+
+            if ($count == 0) {
+                $this->logToFile("ℹ️ No hay notificaciones pendientes");
+                return;
+            }
+
+            // Obtener notificaciones (limit 10 para no saturar)
+            $stmt = $pdo->prepare("
             SELECT id, chat_id, message_data 
             FROM websocket_notifications 
             WHERE status = 'pending' 
             ORDER BY created_at ASC 
             LIMIT 10
         ");
-        
-        $stmt->execute();
-        $notifications = $stmt->fetchAll(\PDO::FETCH_ASSOC);
-        
-        foreach ($notifications as $notification) {
-            $messageData = json_decode($notification['message_data'], true);
-            
-            if ($messageData && isset($messageData['chat_id'])) {
+
+            $stmt->execute();
+            $notifications = $stmt->fetchAll();
+
+            $this->logToFile("📦 Encontradas " . count($notifications) . " notificaciones");
+
+            $processedCount = 0;
+            foreach ($notifications as $notification) {
+                $this->logToFile("🔄 Procesando notificación ID: {$notification['id']}, Chat: {$notification['chat_id']}");
+
+                // Decodificar JSON
+                $messageData = json_decode($notification['message_data'], true);
+
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    $this->logToFile("❌ JSON inválido en notificación {$notification['id']}");
+
+                    // Marcar como fallida
+                    $updateStmt = $pdo->prepare("UPDATE websocket_notifications SET status = 'failed' WHERE id = ?");
+                    $updateStmt->execute([$notification['id']]);
+                    continue;
+                }
+
+                if (!$messageData || !isset($messageData['chat_id'])) {
+                    $this->logToFile("❌ Datos inválidos en notificación {$notification['id']}");
+                    continue;
+                }
+
                 // Marcar como procesando
                 $updateStmt = $pdo->prepare(
                     "UPDATE websocket_notifications 
-                     SET status = 'processing', processed_at = NOW() 
-                     WHERE id = ?"
+                 SET status = 'processing', processed_at = NOW() 
+                 WHERE id = ?"
                 );
                 $updateStmt->execute([$notification['id']]);
-                
-                // Enviar a los clientes
-                $this->broadcastToChat($messageData['chat_id'], $messageData);
-                
+
+                // ⭐⭐ ENVIAR A CLIENTES CONECTADOS
+                $sentCount = $this->broadcastToChat($messageData['chat_id'], $messageData);
+
                 // Marcar como enviado
                 $updateStmt = $pdo->prepare(
                     "UPDATE websocket_notifications SET status = 'sent' WHERE id = ?"
                 );
                 $updateStmt->execute([$notification['id']]);
-                
-                $this->logToFile("✅ Notificación {$notification['id']} procesada");
-            }
-        }
-        
-        $pdo = null; // Cerrar conexión
-        
-    } catch (\Exception $e) {
-        $this->logToFile("❌ Error checkDatabaseNotifications: " . $e->getMessage());
-    }
-}
 
-// En el loop principal del servidor:
-private function startBroadcastChecker()
-{
-    $loop = \React\EventLoop\Factory::create();
-    
-    // Verificar BD cada 2 segundos
-    $loop->addPeriodicTimer(2, function () {
-        $this->checkDatabaseNotifications();
-        $this->checkBroadcastFiles(); // Por si mantienes archivos también
-    });
-    
-    $loop->run();
-}
- public function broadcastToChat($chatId, $messageData)
+                $this->logToFile("✅ Notificación {$notification['id']} enviada a {$sentCount} cliente(s)");
+                $processedCount++;
+            }
+
+            if ($processedCount > 0) {
+                $this->logToFile("📊 Total procesadas: {$processedCount} notificaciones");
+                echo date('H:i:s') . " 📊 Procesadas {$processedCount} notificaciones\n";
+            }
+
+            $pdo = null; // Cerrar conexión
+
+        } catch (\PDOException $e) {
+            $this->logToFile("❌ Error PDO: " . $e->getMessage() . " (Code: " . $e->getCode() . ")");
+            echo date('H:i:s') . " ❌ Error BD: " . $e->getMessage() . "\n";
+        } catch (\Exception $e) {
+            $this->logToFile("❌ Error general: " . $e->getMessage());
+            echo date('H:i:s') . " ❌ Error: " . $e->getMessage() . "\n";
+        }
+    }
+
+
+    public function broadcastToChat($chatId, $messageData)
     {
         $this->logToFile("📢 Broadcast externo a chat {$chatId}");
-        
+
         if (!isset($this->sessions[$chatId])) {
             $this->logToFile("⚠️ No hay sesiones activas para chat {$chatId}");
             return 0;
         }
-        
+
         $sentCount = 0;
         foreach ($this->sessions[$chatId] as $client) {
             try {
@@ -352,7 +395,7 @@ private function startBroadcastChecker()
                 $this->logToFile("❌ Error en broadcast: " . $e->getMessage());
             }
         }
-        
+
         $this->logToFile("✅ Broadcast enviado a {$sentCount} cliente(s)");
         return $sentCount;
     }
@@ -576,30 +619,54 @@ echo "========================================\n";
 echo "🚀 INICIANDO SERVIDOR WEBSOCKET\n";
 echo "========================================\n\n";
 
+// ===================== INICIAR SERVIDOR =====================
+echo "\n";
+echo "========================================\n";
+echo "🚀 INICIANDO SERVIDOR WEBSOCKET CON DATABASE CHECKER\n";
+echo "========================================\n\n";
+
 try {
     // Crear instancia del servidor
     $app = new SignalServer();
 
-    // Configurar servidor WebSocket
-    $server = \Ratchet\Server\IoServer::factory(
-        new \Ratchet\Http\HttpServer(
-            new \Ratchet\WebSocket\WsServer($app)
-        ),
-        9090, // Puerto
-        '0.0.0.0' // Escuchar en todas las interfaces
-    );
+    // ⭐⭐ IMPORTANTE: Usar ReactPHP Event Loop
+    $loop = \React\EventLoop\Factory::create();
 
-    echo "✅ Servidor WebSocket configurado\n";
-    echo "📡 Escuchando en: ws://0.0.0.0:8080\n";
-    echo "📡 También en: ws://localhost:8080\n";
-    echo "📡 También en: ws://" . gethostbyname(gethostname()) . ":8080\n";
+    // Crear socket WebSocket
+    $webSock = new \React\Socket\Server('0.0.0.0:9090', $loop);
+
+    // Crear servidor WebSocket con Ratchet
+    $wsServer = new \Ratchet\WebSocket\WsServer($app);
+    $httpServer = new \Ratchet\Http\HttpServer($wsServer);
+
+    // Crear IoServer con el loop
+    $server = new \Ratchet\Server\IoServer($httpServer, $webSock, $loop);
+
+    // ⭐⭐ AGREGAR TIMER PARA VERIFICAR BD CADA 2 SEGUNDOS
+    $loop->addPeriodicTimer(2, function () use ($app) {
+        echo date('H:i:s') . " 🔍 Verificando notificaciones en BD...\n";
+        $app->checkDatabaseNotifications();
+    });
+
+    // ⭐⭐ AGREGAR TIMER PARA LIMPIAR LOGS CADA 30 SEGUNDOS
+    $loop->addPeriodicTimer(30, function () {
+        $logFile = __DIR__ . '/websocket_debug.log';
+        if (file_exists($logFile) && filesize($logFile) > 10 * 1024 * 1024) { // 10MB
+            file_put_contents($logFile, "=== LOG ROTATED AT " . date('Y-m-d H:i:s') . " ===\n");
+            echo date('H:i:s') . " 🔄 Log rotado (demasiado grande)\n";
+        }
+    });
+
+    echo "✅ Servidor WebSocket configurado con ReactPHP Loop\n";
+    echo "📡 Escuchando en: ws://0.0.0.0:9090\n";
+    echo "⏰ Timer de BD activado: cada 2 segundos\n";
     echo "⏰ Iniciado: " . date('Y-m-d H:i:s') . "\n";
     echo "========================================\n";
     echo "🟢 Servidor en ejecución (Ctrl+C para detener)\n";
     echo "========================================\n\n";
 
-    // Iniciar servidor
-    $server->run();
+    // Iniciar el loop (esto mantiene el servidor corriendo)
+    $loop->run();
 } catch (\Exception $e) {
     echo "\n❌❌❌ ERROR CRÍTICO ❌❌❌\n";
     echo "Mensaje: " . $e->getMessage() . "\n";
