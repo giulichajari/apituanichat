@@ -10,6 +10,7 @@ use App\Routers\DriversRouter;
 use App\Routers\PaymentsRouter;
 use App\Routers\RestaurantsRouter;
 use App\Routers\ProductsRouter;
+use App\Routers\StatusRouter;
 use EasyProjects\SimpleRouter\Router;
 
 
@@ -50,6 +51,7 @@ try {
     new PaymentsRouter($router);
     new RestaurantsRouter($router);
     new ProductsRouter($router);
+    new StatusRouter($router);
     // Ejecutamos router
     // Cargar variables de entorno desde la raíz del proyecto
 
