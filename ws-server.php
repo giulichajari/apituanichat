@@ -862,7 +862,7 @@ try {
     $loop = \React\EventLoop\Factory::create();
 
     // Crear socket WebSocket
-    $webSock = new \React\Socket\Server('0.0.0.0:8081', $loop);
+    $webSock = new \React\Socket\Server('0.0.0.0:9090', $loop);
 
     // Crear servidor WebSocket con Ratchet
     $wsServer = new \Ratchet\WebSocket\WsServer($app);
