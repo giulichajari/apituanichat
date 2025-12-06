@@ -772,43 +772,195 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     
     // ===================== MÉTODOS EXISTENTES (sin cambios importantes) =====================
     
-    private function handleFileUpload($from, $data) {
-        // Tu código existente...
+ private function handleFileUpload($from, $data)
+    {
+        $this->logToFile("📁 Procesando notificación de archivo subido");
+
         $chatId = $data['chat_id'] ?? null;
         $userId = $data['user_id'] ?? null;
-        
-        if (!$chatId || !$userId) return;
-        
+
+        if (!$chatId || !$userId) {
+            $this->logToFile("❌ Datos incompletos");
+            return;
+        }
+
+        $this->logToFile("✅ Notificación válida - Chat: $chatId, User: $userId");
+
+        // ⭐⭐ PREPARAR MENSAJE PARA BROADCAST (A TODOS INCLUYENDO REMITENTE)
         $broadcastMessage = [
-            'type' => $data['type'],
+            'type' => $data['type'], // 'image_upload' o 'file_upload'
+            'message_id' => $data['message_id'] ?? uniqid(),
             'chat_id' => $chatId,
             'user_id' => $userId,
-            'timestamp' => time()
+            'contenido' => $data['contenido'] ?? 'Archivo',
+            'tipo' => $data['tipo'] ?? 'archivo',
+            'timestamp' => $data['timestamp'] ?? date('c'),
+            'leido' => 0,
+            'status' => 'delivered'
         ];
-        
-        // Agregar datos del archivo...
-        
-        // Enviar a todos en el chat
-        $this->broadcastToChat($chatId, $broadcastMessage, $from->resourceId);
+
+        // Agregar TODOS los datos del archivo
+        if (isset($data['file_url'])) {
+            $broadcastMessage['file_url'] = $data['file_url'];
+        }
+
+        if (isset($data['url'])) {
+            $broadcastMessage['url'] = $data['url'];
+        }
+
+        if (isset($data['file_info'])) {
+            $broadcastMessage['file_info'] = $data['file_info'];
+        }
+
+        if (isset($data['file_original_name'])) {
+            $broadcastMessage['file_original_name'] = $data['file_original_name'];
+        }
+
+        if (isset($data['file_size'])) {
+            $broadcastMessage['file_size'] = $data['file_size'];
+        }
+
+        if (isset($data['file_type'])) {
+            $broadcastMessage['file_type'] = $data['file_type'];
+        }
+
+        if (isset($data['mime_type'])) {
+            $broadcastMessage['mime_type'] = $data['mime_type'];
+        }
+
+        // ⭐⭐ ENVIAR A TODOS EN EL CHAT (INCLUYENDO AL REMITENTE)
+        $sentCount = 0;
+        if (isset($this->sessions[$chatId])) {
+            foreach ($this->sessions[$chatId] as $client) {
+                try {
+                    $client->send(json_encode($broadcastMessage));
+                    $sentCount++;
+                    $this->logToFile("✅ Enviado a cliente");
+                } catch (\Exception $e) {
+                    $this->logToFile("❌ Error enviando: {$e->getMessage()}");
+                }
+            }
+        } else {
+            $this->logToFile("⚠️ No hay sesiones activas para chat $chatId");
+            // Enviar solo al remitente
+            $from->send(json_encode($broadcastMessage));
+            $sentCount = 1;
+        }
+
+        $this->logToFile("📤 Mensaje de archivo enviado a {$sentCount} cliente(s) en chat {$chatId}");
     }
-    
-    private function handleChatMessage($from, $data) {
-        // Tu código existente...
+
+    private function handleChatMessage($from, $data)
+    {
+        $this->logToFile("💭 Procesando mensaje de chat");
+
         $chatId = $data['chat_id'] ?? null;
         $userId = $data['user_id'] ?? null;
-        
-        if (!$chatId || !$userId) return;
-        
-        // ... resto del código
-        
-        $message = [
+        $content = $data['contenido'] ?? '';
+        $tempId = $data['temp_id'] ?? null;
+
+        if (!$chatId || !$userId) {
+            $this->logToFile("❌ Datos incompletos: chat_id=$chatId, user_id=$userId");
+            return;
+        }
+
+        $this->logToFile("📝 Chat: {$chatId}, User: {$userId}, Content: " . substr($content, 0, 50));
+
+        // 1. Confirmación inmediata
+        if ($tempId) {
+            $from->send(json_encode([
+                'type' => 'message_ack',
+                'temp_id' => $tempId,
+                'status' => 'received',
+                'timestamp' => time()
+            ]));
+            $this->logToFile("✅ ACK enviado para temp_id: $tempId");
+        }
+
+        // 2. Intentar guardar en BD
+        $messageId = null;
+        try {
+            $this->logToFile("🔄 Intentando crear ChatModel...");
+
+            // Asegúrate de que la clase existe
+            if (!class_exists('App\Models\ChatModel')) {
+                throw new Exception("Clase ChatModel no encontrada");
+            }
+
+            $chatModel = new App\Models\ChatModel();
+            $this->logToFile("✅ ChatModel creado");
+
+            // Verificar si el chat existe
+            if (!$chatModel->chatExists($chatId)) {
+                $this->logToFile("⚠️ Chat $chatId no existe, buscando por usuarios...");
+
+                $otherUserId = $data['other_user_id'] ?? $chatId;
+                $realChatId = $chatModel->findChatBetweenUsers($userId, $otherUserId);
+
+                if (!$realChatId) {
+                    $this->logToFile("🆕 Creando nuevo chat entre $userId y $otherUserId");
+                    $realChatId = $chatModel->createChat([$userId, $otherUserId]);
+                    $this->logToFile("✅ Chat creado: {$realChatId}");
+                }
+
+                $chatId = $realChatId;
+            }
+
+            $this->logToFile("💾 Guardando mensaje en BD...");
+
+            // Guardar mensaje
+            $messageId = $chatModel->sendMessage(
+                $chatId,
+                $userId,
+                $content,
+                $data['tipo'] ?? 'texto'
+            );
+
+            $this->logToFile("✅ Mensaje guardado en BD: ID {$messageId}");
+        } catch (\Exception $e) {
+            $errorMsg = "❌ Error BD: " . $e->getMessage() . " en " . $e->getFile() . ":" . $e->getLine();
+            $this->logToFile($errorMsg);
+            $messageId = 'temp_' . rand(1000, 9999);
+        }
+
+        // 3. Preparar respuesta
+        $response = [
             'type' => 'chat_message',
+            'message_id' => $messageId,
             'chat_id' => $chatId,
             'user_id' => $userId,
-            'timestamp' => time()
+            'contenido' => $content,
+            'tipo' => $data['tipo'] ?? 'texto',
+            'timestamp' => date('c'),
+            'temp_id' => $tempId,
+            'leido' => 0,
+            'user_name' => $data['user_name'] ?? 'Usuario',
+            'status' => 'sent'
         ];
-        
-        $this->broadcastToChat($chatId, $message, $from->resourceId);
+
+        // 4. Enviar a todos en el chat (INCLUYENDO al remitente)
+        $sentCount = 0;
+        if (isset($this->sessions[$chatId])) {
+            foreach ($this->sessions[$chatId] as $client) {
+                try {
+                    $client->send(json_encode($response));
+                    $sentCount++;
+                } catch (\Exception $e) {
+                    $this->logToFile("❌ Error enviando a cliente: {$e->getMessage()}");
+                }
+            }
+        } else {
+            $this->logToFile("⚠️ No hay sesiones activas para chat $chatId");
+
+            // Si no hay sesión, al menos enviar al remitente
+            $from->send(json_encode($response));
+            $sentCount = 1;
+        }
+
+        // 5. ⚠️ REMOVI ESTA LÍNEA - NO la necesitas
+        // $from->send(json_encode($response));
+
+        $this->logToFile("📤 Mensaje enviado a {$sentCount} cliente(s) en chat {$chatId}");
     }
     
     private function broadcastToChat($chatId, $message, $excludeConnectionId = null) {
