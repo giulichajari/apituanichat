@@ -1,11 +1,11 @@
 <?php
-// ws-server.php - VERSIÓN CON ESTADOS EN TIEMPO REAL
+// ws-server.php - VERSIÓN CORREGIDA CON CHATMODEL INTEGRADO
 
 // ===================== CONFIGURACIÓN DEBUG =====================
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 ini_set('log_errors', 1);
-ini_set('error_log', __DIR__ . '/php-error-nuevo.log');
+ini_set('error_log', __DIR__ . '/php-error.log');
 
 echo "🔧 DEBUG activado\n";
 echo "📂 Directorio actual: " . __DIR__ . "\n";
@@ -20,26 +20,64 @@ if (!file_exists($autoloadPath)) {
 require $autoloadPath;
 echo "✅ Vendor autoload cargado\n";
 
+// ===================== CARGAR CHATMODEL =====================
+// Asegúrate de que esta ruta sea correcta
+$chatModelPath = __DIR__ . '/app/Models/ChatModel.php';
+if (!file_exists($chatModelPath)) {
+    echo "⚠️ ChatModel.php no encontrado en: $chatModelPath\n";
+    echo "📂 Buscando en otras ubicaciones...\n";
+
+    // Intentar otras ubicaciones comunes
+    $possiblePaths = [
+        __DIR__ . '/../app/Models/ChatModel.php',
+        __DIR__ . '/../../app/Models/ChatModel.php',
+        __DIR__ . '/../../../app/Models/ChatModel.php',
+        getcwd() . '/app/Models/ChatModel.php'
+    ];
+
+    $found = false;
+    foreach ($possiblePaths as $path) {
+        if (file_exists($path)) {
+            $chatModelPath = $path;
+            $found = true;
+            break;
+        }
+    }
+
+    if (!$found) {
+        echo "❌ ChatModel.php no encontrado en ninguna ubicación\n";
+    } else {
+        echo "✅ ChatModel encontrado en: $chatModelPath\n";
+    }
+}
+
+if (file_exists($chatModelPath)) {
+    require_once $chatModelPath;
+    echo "✅ ChatModel cargado\n";
+} else {
+    echo "⚠️ Continuando sin ChatModel\n";
+}
+
 // ===================== CONFIGURACIÓN REDIS =====================
 use Predis\Client as RedisClient;
 
-class UserStatusManager {
+class UserStatusManager
+{
     private $redis;
-    private $expireTime = 60; // Segundos de inactividad antes de marcar como offline
-    private $cleanupInterval = 300; // Cada 5 minutos limpiar conexiones antiguas
-    
-    public function __construct() {
+    private $expireTime = 60;
+
+    public function __construct()
+    {
         try {
             $this->redis = new RedisClient([
                 'scheme' => 'tcp',
                 'host'   => '127.0.0.1',
                 'port'   => 6379,
-                'password' => null, // Cambia si configuraste contraseña
+                'password' => null,
                 'database' => 0,
                 'timeout' => 2.5
             ]);
-            
-            // Test de conexión
+
             $this->redis->ping();
             echo "✅ Redis conectado exitosamente\n";
         } catch (Exception $e) {
@@ -47,19 +85,27 @@ class UserStatusManager {
             $this->redis = null;
         }
     }
-    
-    // ===================== ESTADOS DE USUARIO =====================
-    
+// En la clase UserStatusManager, agrega este método:
     /**
-     * Marcar usuario como online
+     * Obtener estado de múltiples usuarios
      */
-    public function setOnline($userId, $connectionId, $userData = []) {
+    public function getUsersStatus($userIds)
+    {
+        if (!$this->redis) return [];
+
+        $results = [];
+        foreach ($userIds as $userId) {
+            $results[$userId] = $this->getUserStatus($userId);
+        }
+        return $results;
+    }
+    public function setOnline($userId, $connectionId, $userData = [])
+    {
         if (!$this->redis) return false;
-        
+
         $key = "user:online:{$userId}";
         $connectionKey = "user:connection:{$connectionId}";
-        
-        // Guardar datos del usuario
+
         $userData = array_merge([
             'user_id' => $userId,
             'connection_id' => $connectionId,
@@ -67,70 +113,51 @@ class UserStatusManager {
             'status' => 'online',
             'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown'
         ], $userData);
-        
-        // Guardar usuario con expiración
+
         $this->redis->hmset($key, $userData);
         $this->redis->expire($key, $this->expireTime);
-        
-        // Guardar relación conexión -> usuario
         $this->redis->set($connectionKey, $userId);
         $this->redis->expire($connectionKey, $this->expireTime);
-        
-        // Agregar a lista global de online
         $this->redis->zadd('users:online', time(), $userId);
-        
-        echo "✅ Usuario {$userId} marcado como ONLINE (conexión: {$connectionId})\n";
+
+        echo "✅ Usuario {$userId} marcado como ONLINE\n";
         return true;
     }
-    
-    /**
-     * Actualizar tiempo de actividad
-     */
-    public function updateActivity($userId) {
+
+    public function updateActivity($userId)
+    {
         if (!$this->redis) return false;
-        
+
         $key = "user:online:{$userId}";
         if ($this->redis->exists($key)) {
             $this->redis->hset($key, 'last_seen', time());
             $this->redis->expire($key, $this->expireTime);
-            
-            // Actualizar en lista global
             $this->redis->zadd('users:online', time(), $userId);
-            
             return true;
         }
         return false;
     }
-    
-    /**
-     * Marcar usuario como offline
-     */
-    public function setOffline($connectionId, $notify = true) {
+
+    public function setOffline($connectionId, $notify = true)
+    {
         if (!$this->redis) return false;
-        
+
         $connectionKey = "user:connection:{$connectionId}";
         $userId = $this->redis->get($connectionKey);
-        
-        if (!$userId) {
-            return false;
-        }
-        
-        // Obtener datos antes de eliminar
+
+        if (!$userId) return false;
+
         $userKey = "user:online:{$userId}";
         $userData = $this->redis->hgetall($userKey);
-        
-        // Eliminar registros
+
         $this->redis->del($userKey);
         $this->redis->del($connectionKey);
-        
-        // Remover de lista global (pero mantener historial por 1 hora)
         $this->redis->zrem('users:online', $userId);
         $this->redis->zadd('users:offline:history', time(), $userId);
-        $this->redis->expire('users:offline:history', 3600); // 1 hora
-        
-        echo "✅ Usuario {$userId} marcado como OFFLINE (conexión: {$connectionId})\n";
-        
-        // Retornar datos para notificación
+        $this->redis->expire('users:offline:history', 3600);
+
+        echo "✅ Usuario {$userId} marcado como OFFLINE\n";
+
         if ($notify && !empty($userData)) {
             return [
                 'user_id' => $userId,
@@ -139,28 +166,23 @@ class UserStatusManager {
                 'notified_at' => time()
             ];
         }
-        
+
         return ['user_id' => $userId];
     }
-    
-    /**
-     * Verificar si usuario está online
-     */
-    public function isOnline($userId) {
+
+    public function isOnline($userId)
+    {
         if (!$this->redis) return false;
-        
         return $this->redis->exists("user:online:{$userId}");
     }
-    
-    /**
-     * Obtener lista de usuarios online
-     */
-    public function getOnlineUsers($limit = 100) {
+
+    public function getOnlineUsers($limit = 100)
+    {
         if (!$this->redis) return [];
-        
+
         $userIds = $this->redis->zrevrange('users:online', 0, $limit - 1);
         $users = [];
-        
+
         foreach ($userIds as $userId) {
             $key = "user:online:{$userId}";
             $userData = $this->redis->hgetall($key);
@@ -168,16 +190,14 @@ class UserStatusManager {
                 $users[] = $userData;
             }
         }
-        
+
         return $users;
     }
-    
-    /**
-     * Obtener datos de usuario específico
-     */
-    public function getUserStatus($userId) {
+
+    public function getUserStatus($userId)
+    {
         if (!$this->redis) return ['status' => 'offline'];
-        
+
         $key = "user:online:{$userId}";
         if ($this->redis->exists($key)) {
             $data = $this->redis->hgetall($key);
@@ -185,8 +205,7 @@ class UserStatusManager {
             $data['online_since'] = $data['last_seen'] ?? time();
             return $data;
         }
-        
-        // Verificar si estuvo online recientemente
+
         $history = $this->redis->zscore('users:offline:history', $userId);
         if ($history) {
             return [
@@ -195,81 +214,146 @@ class UserStatusManager {
                 'user_id' => $userId
             ];
         }
-        
+
         return ['status' => 'offline', 'user_id' => $userId];
     }
-    
-    /**
-     * Obtener estado de múltiples usuarios
-     */
-    public function getUsersStatus($userIds) {
-        if (!$this->redis) return [];
-        
-        $results = [];
-        foreach ($userIds as $userId) {
-            $results[$userId] = $this->getUserStatus($userId);
-        }
-        return $results;
-    }
-    
-    /**
-     * Limpiar conexiones antiguas
-     */
-    public function cleanupStaleConnections() {
+
+    public function cleanupStaleConnections()
+    {
         if (!$this->redis) return 0;
-        
+
         $cleaned = 0;
         $onlineUsers = $this->getOnlineUsers(1000);
         $now = time();
-        
+
         foreach ($onlineUsers as $user) {
             $lastSeen = $user['last_seen'] ?? 0;
             if (($now - $lastSeen) > $this->expireTime) {
-                // Usuario inactivo por mucho tiempo
                 $this->setOffline($user['connection_id'] ?? '', false);
                 $cleaned++;
             }
         }
-        
+
         if ($cleaned > 0) {
             echo "🧹 Limpiadas {$cleaned} conexiones inactivas\n";
         }
-        
+
         return $cleaned;
     }
-    
-    /**
-     * Obtener estadísticas
-     */
-    public function getStats() {
+
+    public function getStats()
+    {
         if (!$this->redis) return [];
-        
-        $onlineCount = $this->redis->zcard('users:online');
-        $connections = count($this->redis->keys("user:connection:*"));
-        
+
         return [
-            'online_users' => $onlineCount,
-            'active_connections' => $connections,
-            'memory_used' => $this->redis->info('memory')['used_memory_human'] ?? '0',
-            'uptime' => $this->redis->info('server')['uptime_in_seconds'] ?? 0
+            'online_users' => $this->redis->zcard('users:online'),
+            'active_connections' => count($this->redis->keys("user:connection:*"))
         ];
     }
 }
 
-// ===================== CLASE DEL SERVIDOR ACTUALIZADA =====================
+// ===================== CLASE DEL SERVIDOR MEJORADA =====================
 class SignalServer implements \Ratchet\MessageComponentInterface
 {
     protected $clients;
-    protected $sessions = []; // chat_id => [conexiones]
-    protected $userConnections = []; // user_id => [conexiones]
+    protected $sessions = [];
+    protected $userConnections = [];
     protected $statusManager;
-    protected $userTimers = []; // Timers por conexión para heartbeat
+    protected $userTimers = [];
+    protected $chatModel; // ⭐⭐ NUEVO: Instancia de ChatModel
 
     public function __construct()
     {
         $this->clients = new \SplObjectStorage();
         $this->statusManager = new UserStatusManager();
-        echo "🚀 SignalServer inicializado con Gestor de Estados\n";
+
+        // ⭐⭐ INICIALIZAR CHATMODEL
+        $this->initializeChatModel();
+
+        echo "🚀 SignalServer inicializado\n";
+    }
+    // En SignalServer class
+    private function notifyNewMessage($chatId, $messageData, $senderId = null)
+    {
+        $message = [
+            'type' => 'new_message',
+            'chat_id' => $chatId,
+            'message' => $messageData,
+            'sender_id' => $senderId,
+            'timestamp' => time(),
+            'action' => 'message_received'
+        ];
+
+        // Enviar a todos en el chat
+        $this->broadcastToChat($chatId, $message);
+
+        // También enviar notificación de actualización de lista de chats
+        $this->notifyChatListUpdate($chatId, $messageData);
+    }
+
+    private function notifyChatListUpdate($chatId, $messageData)
+    {
+        // Preparar datos de actualización del chat
+        $updateData = [
+            'type' => 'chat_updated',
+            'chat_id' => $chatId,
+            'last_message' => $messageData['contenido'] ?? '',
+            'last_message_time' => date('c'),
+            'unread_count' => 1, // Se incrementará en el cliente
+            'sender_id' => $messageData['user_id'] ?? null,
+            'action' => 'bump_to_top'
+        ];
+
+        // Enviar a todos los usuarios que estén en este chat
+        if (isset($this->sessions[$chatId])) {
+            foreach ($this->sessions[$chatId] as $client) {
+                try {
+                    $client->send(json_encode($updateData));
+                } catch (\Exception $e) {
+                    echo "❌ Error enviando actualización de chat: {$e->getMessage()}\n";
+                }
+            }
+        }
+    }
+
+    private function notifyUnreadCount($chatId, $userId, $count)
+    {
+        $message = [
+            'type' => 'unread_count_update',
+            'chat_id' => $chatId,
+            'user_id' => $userId,
+            'unread_count' => $count,
+            'timestamp' => time()
+        ];
+
+        // Enviar al usuario específico
+        if (isset($this->userConnections[$userId])) {
+            foreach ($this->userConnections[$userId] as $client) {
+                try {
+                    $client->send(json_encode($message));
+                } catch (\Exception $e) {
+                    echo "❌ Error enviando conteo no leído: {$e->getMessage()}\n";
+                }
+            }
+        }
+    }
+    private function initializeChatModel()
+    {
+        try {
+            // Verificar si la clase existe
+            if (!class_exists('App\Models\ChatModel')) {
+                echo "❌ Clase ChatModel no encontrada\n";
+                $this->chatModel = null;
+                return;
+            }
+
+            // Intentar crear instancia
+            $this->chatModel = new \App\Models\ChatModel();
+            echo "✅ ChatModel inicializado correctamente\n";
+        } catch (Exception $e) {
+            echo "❌ Error inicializando ChatModel: " . $e->getMessage() . "\n";
+            $this->chatModel = null;
+        }
     }
 
     public function onOpen(\Ratchet\ConnectionInterface $conn)
@@ -277,19 +361,17 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $this->clients->attach($conn);
         echo date('H:i:s') . " 🔗 Conexión #{$conn->resourceId} abierta\n";
 
-        // Enviar test de conexión
         $conn->send(json_encode([
             'type' => 'welcome',
             'message' => 'WebSocket conectado',
             'connection_id' => $conn->resourceId,
-            'server_time' => date('Y-m-d H:i:s'),
-            'server_version' => '2.0-con-estados'
+            'server_time' => date('Y-m-d H:i:s')
         ]));
     }
 
     public function onClose(\Ratchet\ConnectionInterface $conn)
     {
-        // Detener timer de heartbeat si existe
+        // Limpiar timers
         if (isset($this->userTimers[$conn->resourceId])) {
             $timer = $this->userTimers[$conn->resourceId];
             if ($timer && $timer instanceof \React\EventLoop\TimerInterface) {
@@ -297,45 +379,39 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             }
             unset($this->userTimers[$conn->resourceId]);
         }
-        
-        // Remover de sesiones de chat
+
+        // Remover de sesiones
         foreach ($this->sessions as $chatId => $connections) {
             if (isset($connections[$conn->resourceId])) {
                 unset($this->sessions[$chatId][$conn->resourceId]);
-                
-                // Notificar a otros en el chat que este usuario se fue
+
                 if (isset($conn->userId)) {
                     $this->notifyUserLeftChat($chatId, $conn->userId);
                 }
-                
+
                 echo "👋 Removido de chat {$chatId}\n";
             }
         }
 
-        // Remover de conexiones de usuario y marcar como offline
+        // Marcar como offline
         if (isset($conn->userId)) {
             $userId = $conn->userId;
-            
-            // Remover de lista local
+
             if (isset($this->userConnections[$userId])) {
                 unset($this->userConnections[$userId][$conn->resourceId]);
-                
-                // Si no hay más conexiones para este usuario, marcarlo como offline
+
                 if (empty($this->userConnections[$userId])) {
                     unset($this->userConnections[$userId]);
-                    echo "👋 Usuario {$userId} sin conexiones activas\n";
                 }
             }
-            
-            // Marcar como offline en Redis y obtener datos para notificar
+
             $offlineData = $this->statusManager->setOffline($conn->resourceId, true);
-            
+
             if ($offlineData) {
-                // Notificar a todos los chats donde esté este usuario
                 $this->notifyUserStatusChange($offlineData['user_id'], 'offline', $offlineData);
             }
-            
-            echo "❌ Usuario {$userId} desconectado (conexión #{$conn->resourceId})\n";
+
+            echo "❌ Usuario {$userId} desconectado\n";
         }
 
         $this->clients->detach($conn);
@@ -345,8 +421,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     public function onError(\Ratchet\ConnectionInterface $conn, \Exception $e)
     {
         echo date('H:i:s') . " ⚠️ Error #{$conn->resourceId}: {$e->getMessage()}\n";
-        
-        // Limpiar estado
+
         if (isset($this->userTimers[$conn->resourceId])) {
             $timer = $this->userTimers[$conn->resourceId];
             if ($timer && $timer instanceof \React\EventLoop\TimerInterface) {
@@ -354,90 +429,91 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             }
             unset($this->userTimers[$conn->resourceId]);
         }
-        
+
         $conn->close();
     }
- 
+
     private function logToFile($message)
     {
         $logFile = __DIR__ . '/websocket_debug.log';
         $timestamp = date('Y-m-d H:i:s');
         $formattedMessage = "[$timestamp] " . $message . "\n";
-
-        // Escribir directamente en archivo
         file_put_contents($logFile, $formattedMessage, FILE_APPEND | LOCK_EX);
 
-        // También mostrar por consola si está disponible
         if (php_sapi_name() === 'cli') {
             echo $formattedMessage;
         }
     }
-  public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
+
+    public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
     {
         echo date('H:i:s') . " 📨 #{$from->resourceId} → " . substr($msg, 0, 200) . "\n";
-
-        // ⭐⭐ GUARDAR LOG COMPLETO DEL MENSAJE RECIBIDO ⭐⭐
-        $this->logToFile("📨 Mensaje RAW recibido: " . $msg);
+        $this->logToFile("📨 Mensaje recibido: " . $msg);
 
         try {
             $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
 
-            // ⭐⭐ GUARDAR LOG DEL DATA DECODIFICADO ⭐⭐
-            $this->logToFile("📋 Data decodificado: " . json_encode($data, JSON_PRETTY_PRINT));
-
             if (!isset($data['type'])) {
                 echo "❌ Sin tipo de mensaje\n";
-                $this->logToFile("❌ ERROR: Mensaje sin tipo");
                 return;
             }
 
-            // ⭐⭐ GUARDAR LOG DEL TIPO RECIBIDO ⭐⭐
             $this->logToFile("🎯 Tipo recibido: " . $data['type']);
 
             switch ($data['type']) {
                 case 'ping':
-                    $this->logToFile("🔄 Caso: ping");
                     $this->handlePing($from);
                     break;
 
                 case 'auth':
-                    $this->logToFile("🔄 Caso: auth");
                     $this->handleAuth($from, $data);
                     break;
 
                 case 'join_chat':
-                    $this->logToFile("🔄 Caso: join_chat");
                     $this->handleJoinChat($from, $data);
                     break;
 
                 case 'chat_message':
-                    $this->logToFile("🔄 Caso: chat_message");
                     $this->handleChatMessage($from, $data);
                     break;
 
                 case 'file_upload':
-                    $this->logToFile("🔄 Caso: " . $data['type'] . " (manejado como file_upload)");
-                    $this->handleFileUpload($from, $data);
-                    break;
-                case 'image_upload':
-                    $this->logToFile("🔄 Caso: " . $data['type'] . " (manejado como file_upload)");
                     $this->handleFileUpload($from, $data);
                     break;
 
-                case 'file_uploaded': // ⭐⭐ NUEVO: Agregar este caso
-                case 'image_uploaded': // ⭐⭐ NUEVO: Agregar este caso
-                    $this->logToFile("🔄 Caso: " . $data['type'] . " (manejado como file_upload)");
+                case 'image_upload':
                     $this->handleFileUpload($from, $data);
                     break;
+
+                case 'file_uploaded':
+                case 'image_uploaded':
+                    $this->handleFileUploadNotification($from, $data);
+                    break;
+
+                case 'mark_as_read':
+                    $this->handleMarkAsRead($from, $data);
+                    break;
+
+             
 
                 case 'test':
-                    $this->logToFile("🔄 Caso: test");
                     $this->handleTest($from, $data);
+                    break;
+
+                case 'heartbeat':
+                    $this->handleHeartbeat($from, $data);
+                    break;
+
+                case 'get_online_users':
+                    $this->handleGetOnlineUsers($from, $data);
+                    break;
+
+                case 'get_user_status':
+                    $this->handleGetUserStatus($from, $data);
                     break;
 
                 default:
                     echo "⚠️ Tipo desconocido: {$data['type']}\n";
-                    $this->logToFile("⚠️ Tipo desconocido: " . $data['type']);
                     $from->send(json_encode([
                         'type' => 'error',
                         'message' => 'Tipo no soportado: ' . $data['type']
@@ -445,56 +521,36 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             }
         } catch (\JsonException $e) {
             echo "❌ JSON inválido: {$e->getMessage()}\n";
-            $this->logToFile("❌ JSON inválido: " . $e->getMessage());
-            $from->send(json_encode([
-                'type' => 'error',
-                'message' => 'JSON inválido'
-            ]));
         } catch (\Exception $e) {
             echo "❌ Error: {$e->getMessage()}\n";
-            $this->logToFile("❌ Error general: " . $e->getMessage());
-            $from->send(json_encode([
-                'type' => 'error',
-                'message' => 'Error interno'
-            ]));
         }
     }
 
+    // ===================== HANDLERS PRINCIPALES =====================
 
-    // ===================== NUEVOS HANDLERS PARA ESTADOS =====================
-    
     private function handleAuth($from, $data)
     {
         if (!isset($data['user_id'])) {
-            $from->send(json_encode([
-                'type' => 'auth_error',
-                'message' => 'Falta user_id'
-            ]));
+            $from->send(json_encode(['type' => 'auth_error', 'message' => 'Falta user_id']));
             return;
         }
 
         $userId = $data['user_id'];
         $userData = $data['user_data'] ?? [];
-        
-        // Guardar user_id en conexión
+
         $from->userId = $userId;
         $from->userData = $userData;
 
-        // Registrar conexión de usuario localmente
         if (!isset($this->userConnections[$userId])) {
             $this->userConnections[$userId] = [];
         }
         $this->userConnections[$userId][$from->resourceId] = $from;
 
-        // Marcar como online en Redis
         $this->statusManager->setOnline($userId, $from->resourceId, $userData);
-        
-        // Iniciar timer de heartbeat para esta conexión
         $this->startHeartbeatTimer($from);
 
-        echo "🔐 Usuario {$userId} autenticado en conexión #{$from->resourceId}\n";
+        echo "🔐 Usuario {$userId} autenticado\n";
 
-        // Enviar confirmación
         $from->send(json_encode([
             'type' => 'auth_success',
             'user_id' => $userId,
@@ -502,27 +558,21 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'connection_id' => $from->resourceId,
             'online_since' => time()
         ]));
-        
-        // Notificar a todos que este usuario está online
+
         $this->notifyUserStatusChange($userId, 'online', [
             'user_id' => $userId,
             'connection_id' => $from->resourceId,
             'user_data' => $userData
         ]);
     }
-    
+
     private function handleHeartbeat($from, $data)
     {
-        if (!isset($from->userId)) {
-            return;
-        }
-        
+        if (!isset($from->userId)) return;
+
         $userId = $from->userId;
-        
-        // Actualizar actividad en Redis
         $this->statusManager->updateActivity($userId);
-        
-        // Responder con pong y estadísticas
+
         $from->send(json_encode([
             'type' => 'heartbeat_response',
             'timestamp' => time(),
@@ -530,12 +580,12 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'online' => true
         ]));
     }
-    
+
     private function handleGetOnlineUsers($from, $data)
     {
         $onlineUsers = $this->statusManager->getOnlineUsers($data['limit'] ?? 100);
         $stats = $this->statusManager->getStats();
-        
+
         $from->send(json_encode([
             'type' => 'online_users_list',
             'users' => $onlineUsers,
@@ -544,29 +594,24 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'timestamp' => time()
         ]));
     }
-    
+
     private function handleGetUserStatus($from, $data)
     {
         if (!isset($data['user_id'])) {
-            $from->send(json_encode([
-                'type' => 'error',
-                'message' => 'Falta user_id'
-            ]));
+            $from->send(json_encode(['type' => 'error', 'message' => 'Falta user_id']));
             return;
         }
-        
+
         $userIds = is_array($data['user_id']) ? $data['user_id'] : [$data['user_id']];
         $statuses = $this->statusManager->getUsersStatus($userIds);
-        
+
         $from->send(json_encode([
             'type' => 'users_status',
             'statuses' => $statuses,
             'timestamp' => time()
         ]));
     }
-    
-    // ===================== HANDLERS EXISTENTES ACTUALIZADOS =====================
-    
+
     private function handleJoinChat($from, $data)
     {
         if (!isset($data['chat_id'], $data['user_id'])) {
@@ -577,21 +622,18 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $chatId = $data['chat_id'];
         $userId = $data['user_id'];
 
-        // Inicializar sesión de chat si no existe
         if (!isset($this->sessions[$chatId])) {
             $this->sessions[$chatId] = [];
             echo "💬 Nueva sesión chat {$chatId}\n";
         }
 
-        // Agregar conexión al chat
         $this->sessions[$chatId][$from->resourceId] = $from;
         $from->currentChat = $chatId;
 
         echo "➕ Usuario {$userId} unido al chat {$chatId}\n";
 
-        // Enviar lista de usuarios online en este chat
         $onlineInChat = $this->getOnlineUsersInChat($chatId);
-        
+
         $from->send(json_encode([
             'type' => 'joined_chat',
             'chat_id' => $chatId,
@@ -600,11 +642,10 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'online_users' => $onlineInChat,
             'timestamp' => time()
         ]));
-        
-        // Notificar a otros en el chat que este usuario se unió
+
         $this->notifyUserJoinedChat($chatId, $userId);
     }
-    
+
     private function handlePing($from)
     {
         $from->send(json_encode([
@@ -615,29 +656,24 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         ]));
         echo "🏓 Ping respondido\n";
     }
-    
-    // ===================== MÉTODOS AUXILIARES PARA ESTADOS =====================
-    
+
+    // ===================== MÉTODOS AUXILIARES =====================
+
     private function startHeartbeatTimer($conn)
     {
-        if (!isset($conn->userId)) {
-            return;
-        }
-        
-        // Cancelar timer anterior si existe
+        if (!isset($conn->userId)) return;
+
         if (isset($this->userTimers[$conn->resourceId])) {
             $timer = $this->userTimers[$conn->resourceId];
             if ($timer && $timer instanceof \React\EventLoop\TimerInterface) {
                 \React\EventLoop\Loop::cancelTimer($timer);
             }
         }
-        
-        // Crear nuevo timer que envía heartbeat cada 30 segundos
-        $timer = \React\EventLoop\Loop::addPeriodicTimer(30, function() use ($conn) {
+
+        $timer = \React\EventLoop\Loop::addPeriodicTimer(30, function () use ($conn) {
             if ($conn->userId) {
                 $this->statusManager->updateActivity($conn->userId);
-                
-                // Opcional: Enviar heartbeat al cliente
+
                 $conn->send(json_encode([
                     'type' => 'server_heartbeat',
                     'timestamp' => time(),
@@ -645,14 +681,14 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 ]));
             }
         });
-        
+
         $this->userTimers[$conn->resourceId] = $timer;
     }
-    
+
     private function getOnlineUsersInChat($chatId)
     {
         $onlineUsers = [];
-        
+
         if (isset($this->sessions[$chatId])) {
             foreach ($this->sessions[$chatId] as $conn) {
                 if (isset($conn->userId)) {
@@ -664,10 +700,10 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 }
             }
         }
-        
+
         return array_values($onlineUsers);
     }
-    
+
     private function notifyUserStatusChange($userId, $status, $data = [])
     {
         $message = [
@@ -677,8 +713,8 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'timestamp' => time(),
             'data' => $data
         ];
-        
-        // 1. Enviar a todas las conexiones del usuario (sus otros dispositivos)
+
+        // Enviar a conexiones del usuario
         if (isset($this->userConnections[$userId])) {
             foreach ($this->userConnections[$userId] as $conn) {
                 try {
@@ -688,10 +724,9 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 }
             }
         }
-        
-        // 2. Enviar a todos los chats donde está el usuario
+
+        // Enviar a chats donde está el usuario
         foreach ($this->sessions as $chatId => $connections) {
-            // Verificar si el usuario está en este chat
             $userInChat = false;
             foreach ($connections as $conn) {
                 if (isset($conn->userId) && $conn->userId == $userId) {
@@ -699,9 +734,8 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                     break;
                 }
             }
-            
+
             if ($userInChat) {
-                // Enviar a todos en el chat excepto al usuario mismo
                 foreach ($connections as $conn) {
                     if (isset($conn->userId) && $conn->userId != $userId) {
                         try {
@@ -713,18 +747,16 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 }
             }
         }
-        
+
         echo "📢 Notificado cambio de estado: {$userId} -> {$status}\n";
     }
-    
+
     private function notifyUserJoinedChat($chatId, $userId)
     {
-        if (!isset($this->sessions[$chatId])) {
-            return;
-        }
-        
+        if (!isset($this->sessions[$chatId])) return;
+
         $userStatus = $this->statusManager->getUserStatus($userId);
-        
+
         $message = [
             'type' => 'user_joined_chat',
             'chat_id' => $chatId,
@@ -732,8 +764,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'status' => $userStatus,
             'timestamp' => time()
         ];
-        
-        // Enviar a todos en el chat excepto al que se unió
+
         foreach ($this->sessions[$chatId] as $conn) {
             if (isset($conn->userId) && $conn->userId != $userId) {
                 try {
@@ -744,21 +775,18 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             }
         }
     }
-    
+
     private function notifyUserLeftChat($chatId, $userId)
     {
-        if (!isset($this->sessions[$chatId])) {
-            return;
-        }
-        
+        if (!isset($this->sessions[$chatId])) return;
+
         $message = [
             'type' => 'user_left_chat',
             'chat_id' => $chatId,
             'user_id' => $userId,
             'timestamp' => time()
         ];
-        
-        // Enviar a todos en el chat excepto al que se fue (ya se fue)
+
         foreach ($this->sessions[$chatId] as $conn) {
             if (isset($conn->userId) && $conn->userId != $userId) {
                 try {
@@ -769,10 +797,10 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             }
         }
     }
-    
-    // ===================== MÉTODOS EXISTENTES (sin cambios importantes) =====================
-    
- private function handleFileUpload($from, $data)
+
+    // ===================== MANEJO DE MENSAJES Y ARCHIVOS =====================
+
+    private function handleFileUpload($from, $data)
     {
         $this->logToFile("📁 Procesando notificación de archivo subido");
 
@@ -786,17 +814,76 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
         $this->logToFile("✅ Notificación válida - Chat: $chatId, User: $userId");
 
-        // ⭐⭐ PREPARAR MENSAJE PARA BROADCAST (A TODOS INCLUYENDO REMITENTE)
+        // ⭐⭐ GUARDAR ARCHIVO EN BD SI TENEMOS DATOS COMPLETOS
+        $fileId = null;
+        $realChatId = $chatId;
+
+        if ($this->chatModel && isset($data['file_info'])) {
+            try {
+                // Verificar si el chat existe
+                if (!$this->chatModel->chatExists($chatId)) {
+                    $otherUserId = $data['other_user_id'] ?? $chatId;
+                    $realChatId = $this->chatModel->findChatBetweenUsers($userId, $otherUserId);
+
+                    if (!$realChatId) {
+                        $realChatId = $this->chatModel->createChat([$userId, $otherUserId]);
+                        $this->logToFile("🆕 Chat creado para archivo: {$realChatId}");
+                    }
+
+                    $chatId = $realChatId;
+                }
+
+                // Preparar datos del archivo
+                $fileData = [
+                    'name' => $data['file_info']['name'] ?? basename($data['file_url'] ?? 'archivo'),
+                    'original_name' => $data['file_original_name'] ?? $data['contenido'] ?? 'archivo',
+                    'path' => $data['file_info']['path'] ?? '',
+                    'url' => $data['file_url'] ?? $data['url'] ?? '',
+                    'size' => $data['file_size'] ?? $data['file_info']['size'] ?? 0,
+                    'mime_type' => $data['file_mime_type'] ?? $data['file_info']['mime_type'] ?? 'application/octet-stream',
+                    'chat_id' => $chatId,
+                    'user_id' => $userId
+                ];
+
+                // Guardar archivo en BD
+                $fileId = $this->chatModel->saveFile($fileData);
+                $this->logToFile("💾 Archivo guardado en BD con ID: {$fileId}");
+
+                // Guardar mensaje referenciando el archivo
+                $contenido = $data['contenido'] ?? $data['file_original_name'] ?? 'Archivo';
+                $tipo = strpos($fileData['mime_type'], 'image/') === 0 ? 'imagen' : 'archivo';
+
+                $messageId = $this->chatModel->sendMessage(
+                    $chatId,
+                    $userId,
+                    $contenido,
+                    $tipo,
+                    $fileId
+                );
+
+                $this->logToFile("✅ Mensaje de archivo guardado: ID {$messageId}");
+
+                // Actualizar conteos no leídos
+                $this->updateUnreadCounts($chatId, $userId);
+            } catch (\Exception $e) {
+                $this->logToFile("❌ Error guardando archivo en BD: " . $e->getMessage());
+                $fileId = null;
+            }
+        }
+
+        // ⭐⭐ PREPARAR MENSAJE PARA BROADCAST
         $broadcastMessage = [
             'type' => $data['type'], // 'image_upload' o 'file_upload'
-            'message_id' => $data['message_id'] ?? uniqid(),
+            'message_id' => $data['message_id'] ?? $messageId ?? uniqid(),
             'chat_id' => $chatId,
             'user_id' => $userId,
-            'contenido' => $data['contenido'] ?? 'Archivo',
-            'tipo' => $data['tipo'] ?? 'archivo',
+            'contenido' => $data['contenido'] ?? $data['file_original_name'] ?? 'Archivo',
+            'tipo' => $data['tipo'] ?? ($data['type'] == 'image_upload' ? 'imagen' : 'archivo'),
             'timestamp' => $data['timestamp'] ?? date('c'),
             'leido' => 0,
-            'status' => 'delivered'
+            'status' => 'delivered',
+            'file_id' => $fileId,
+            'action' => 'file_uploaded'
         ];
 
         // Agregar TODOS los datos del archivo
@@ -828,6 +915,10 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             $broadcastMessage['mime_type'] = $data['mime_type'];
         }
 
+        if (isset($data['file_mime_type'])) {
+            $broadcastMessage['file_mime_type'] = $data['file_mime_type'];
+        }
+
         // ⭐⭐ ENVIAR A TODOS EN EL CHAT (INCLUYENDO AL REMITENTE)
         $sentCount = 0;
         if (isset($this->sessions[$chatId])) {
@@ -835,7 +926,11 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 try {
                     $client->send(json_encode($broadcastMessage));
                     $sentCount++;
-                    $this->logToFile("✅ Enviado a cliente");
+
+                    // ⭐⭐ NOTIFICAR ACTUALIZACIÓN DE CHAT A OTROS USUARIOS
+                    if (isset($client->userId) && $client->userId != $userId) {
+                        $this->notifyNewFile($chatId, $broadcastMessage, $userId);
+                    }
                 } catch (\Exception $e) {
                     $this->logToFile("❌ Error enviando: {$e->getMessage()}");
                 }
@@ -847,9 +942,118 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             $sentCount = 1;
         }
 
+        // ⭐⭐ NOTIFICAR ACTUALIZACIÓN EN LISTA DE CHATS
+        $this->notifyChatListUpdate($chatId, [
+            'contenido' => $broadcastMessage['contenido'],
+            'user_id' => $userId,
+            'tipo' => $broadcastMessage['tipo'],
+            'timestamp' => $broadcastMessage['timestamp']
+        ]);
+
         $this->logToFile("📤 Mensaje de archivo enviado a {$sentCount} cliente(s) en chat {$chatId}");
     }
 
+    // ⭐⭐ NUEVO MÉTODO PARA NOTIFICAR ARCHIVOS
+    private function notifyNewFile($chatId, $fileData, $senderId)
+    {
+        $message = [
+            'type' => 'new_file',
+            'chat_id' => $chatId,
+            'file_data' => $fileData,
+            'sender_id' => $senderId,
+            'timestamp' => time(),
+            'action' => 'file_received'
+        ];
+
+        // Enviar notificación especial para archivos
+        $this->broadcastToChat($chatId, $message);
+
+        // También actualizar lista de chats
+        $this->notifyChatListUpdate($chatId, [
+            'contenido' => $fileData['tipo'] == 'imagen' ? '📷 Imagen' : '📎 Archivo',
+            'user_id' => $senderId,
+            'tipo' => $fileData['tipo'],
+            'timestamp' => $fileData['timestamp'],
+            'is_file' => true
+        ]);
+    }
+    // Agrega este método a la clase SignalServer
+    private function handleFileUploadNotification($from, $data)
+    {
+        // Este es un handler específico para notificaciones de subida de archivos
+        $this->logToFile("📁 Procesando notificación de archivo completo");
+
+        $chatId = $data['chat_id'] ?? null;
+        $userId = $data['user_id'] ?? null;
+
+        if (!$chatId || !$userId) {
+            return;
+        }
+
+        // Preparar datos para guardar
+        $fileData = [
+            'name' => $data['file_name'] ?? 'archivo',
+            'original_name' => $data['file_original_name'] ?? 'archivo',
+            'path' => $data['file_path'] ?? '',
+            'url' => $data['file_url'] ?? $data['url'] ?? '',
+            'size' => $data['file_size'] ?? 0,
+            'mime_type' => $data['file_mime_type'] ?? 'application/octet-stream',
+            'chat_id' => $chatId,
+            'user_id' => $userId
+        ];
+
+        // Guardar en BD
+        $fileId = null;
+        if ($this->chatModel) {
+            try {
+                $fileId = $this->chatModel->saveFile($fileData);
+                $this->logToFile("💾 Archivo guardado con ID: {$fileId}");
+
+                // Crear mensaje asociado
+                $contenido = $data['contenido'] ?? $data['file_original_name'] ?? 'Archivo';
+                $tipo = strpos($fileData['mime_type'], 'image/') === 0 ? 'imagen' : 'archivo';
+
+                $messageId = $this->chatModel->sendMessage(
+                    $chatId,
+                    $userId,
+                    $contenido,
+                    $tipo,
+                    $fileId
+                );
+
+                // Preparar respuesta
+                $response = [
+                    'type' => 'file_upload_complete',
+                    'message_id' => $messageId,
+                    'file_id' => $fileId,
+                    'chat_id' => $chatId,
+                    'user_id' => $userId,
+                    'file_url' => $fileData['url'],
+                    'file_name' => $fileData['original_name'],
+                    'file_size' => $fileData['size'],
+                    'mime_type' => $fileData['mime_type'],
+                    'timestamp' => date('c'),
+                    'status' => 'uploaded'
+                ];
+
+                // Enviar confirmación
+                $from->send(json_encode($response));
+
+                // Notificar a otros en el chat
+                $this->notifyNewFile($chatId, array_merge($response, [
+                    'contenido' => $contenido,
+                    'tipo' => $tipo
+                ]), $userId);
+            } catch (\Exception $e) {
+                $this->logToFile("❌ Error procesando archivo: " . $e->getMessage());
+
+                $from->send(json_encode([
+                    'type' => 'file_upload_error',
+                    'error' => $e->getMessage()
+                ]));
+            }
+        }
+    }
     private function handleChatMessage($from, $data)
     {
         $this->logToFile("💭 Procesando mensaje de chat");
@@ -860,11 +1064,9 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $tempId = $data['temp_id'] ?? null;
 
         if (!$chatId || !$userId) {
-            $this->logToFile("❌ Datos incompletos: chat_id=$chatId, user_id=$userId");
+            $this->logToFile("❌ Datos incompletos");
             return;
         }
-
-        $this->logToFile("📝 Chat: {$chatId}, User: {$userId}, Content: " . substr($content, 0, 50));
 
         // 1. Confirmación inmediata
         if ($tempId) {
@@ -874,52 +1076,44 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 'status' => 'received',
                 'timestamp' => time()
             ]));
-            $this->logToFile("✅ ACK enviado para temp_id: $tempId");
         }
 
-        // 2. Intentar guardar en BD
+        // 2. Guardar en BD
         $messageId = null;
-        try {
-            $this->logToFile("🔄 Intentando crear ChatModel...");
+        $realChatId = $chatId;
 
-            // Asegúrate de que la clase existe
-            if (!class_exists('App\Models\ChatModel')) {
-                throw new Exception("Clase ChatModel no encontrada");
-            }
+        if ($this->chatModel) {
+            try {
+                // Verificar y/o crear chat
+                if (!$this->chatModel->chatExists($chatId)) {
+                    $otherUserId = $data['other_user_id'] ?? $chatId;
+                    $realChatId = $this->chatModel->findChatBetweenUsers($userId, $otherUserId);
 
-            $chatModel = new App\Models\ChatModel();
-            $this->logToFile("✅ ChatModel creado");
+                    if (!$realChatId) {
+                        $realChatId = $this->chatModel->createChat([$userId, $otherUserId]);
+                        $this->logToFile("🆕 Chat creado: {$realChatId}");
+                    }
 
-            // Verificar si el chat existe
-            if (!$chatModel->chatExists($chatId)) {
-                $this->logToFile("⚠️ Chat $chatId no existe, buscando por usuarios...");
-
-                $otherUserId = $data['other_user_id'] ?? $chatId;
-                $realChatId = $chatModel->findChatBetweenUsers($userId, $otherUserId);
-
-                if (!$realChatId) {
-                    $this->logToFile("🆕 Creando nuevo chat entre $userId y $otherUserId");
-                    $realChatId = $chatModel->createChat([$userId, $otherUserId]);
-                    $this->logToFile("✅ Chat creado: {$realChatId}");
+                    $chatId = $realChatId;
                 }
 
-                $chatId = $realChatId;
+                // Guardar mensaje
+                $messageId = $this->chatModel->sendMessage(
+                    $chatId,
+                    $userId,
+                    $content,
+                    $data['tipo'] ?? 'texto'
+                );
+
+                $this->logToFile("✅ Mensaje guardado en BD: ID {$messageId}");
+
+                // Obtener conteo de mensajes no leídos para cada usuario
+                $this->updateUnreadCounts($chatId, $userId);
+            } catch (\Exception $e) {
+                $this->logToFile("❌ Error BD: " . $e->getMessage());
+                $messageId = 'temp_' . rand(1000, 9999);
             }
-
-            $this->logToFile("💾 Guardando mensaje en BD...");
-
-            // Guardar mensaje
-            $messageId = $chatModel->sendMessage(
-                $chatId,
-                $userId,
-                $content,
-                $data['tipo'] ?? 'texto'
-            );
-
-            $this->logToFile("✅ Mensaje guardado en BD: ID {$messageId}");
-        } catch (\Exception $e) {
-            $errorMsg = "❌ Error BD: " . $e->getMessage() . " en " . $e->getFile() . ":" . $e->getLine();
-            $this->logToFile($errorMsg);
+        } else {
             $messageId = 'temp_' . rand(1000, 9999);
         }
 
@@ -935,45 +1129,132 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'temp_id' => $tempId,
             'leido' => 0,
             'user_name' => $data['user_name'] ?? 'Usuario',
-            'status' => 'sent'
+            'status' => 'sent',
+            'action' => 'new_message'
         ];
 
-        // 4. Enviar a todos en el chat (INCLUYENDO al remitente)
+        // 4. Enviar a todos en el chat
         $sentCount = 0;
         if (isset($this->sessions[$chatId])) {
             foreach ($this->sessions[$chatId] as $client) {
                 try {
                     $client->send(json_encode($response));
                     $sentCount++;
+
+                    // Si no es el remitente, notificar nueva actualización
+                    if (isset($client->userId) && $client->userId != $userId) {
+                        $this->notifyNewMessage($chatId, $response, $userId);
+                    }
                 } catch (\Exception $e) {
                     $this->logToFile("❌ Error enviando a cliente: {$e->getMessage()}");
                 }
             }
         } else {
-            $this->logToFile("⚠️ No hay sesiones activas para chat $chatId");
-
-            // Si no hay sesión, al menos enviar al remitente
             $from->send(json_encode($response));
             $sentCount = 1;
         }
 
-        // 5. ⚠️ REMOVI ESTA LÍNEA - NO la necesitas
-        // $from->send(json_encode($response));
-
-        $this->logToFile("📤 Mensaje enviado a {$sentCount} cliente(s) en chat {$chatId}");
+        $this->logToFile("📤 Mensaje enviado a {$sentCount} cliente(s)");
     }
-    
-    private function broadcastToChat($chatId, $message, $excludeConnectionId = null) {
-        if (!isset($this->sessions[$chatId])) {
-            return 0;
+    private function handleMarkAsRead($from, $data)
+    {
+        $chatId = $data['chat_id'] ?? null;
+        $userId = $data['user_id'] ?? null;
+
+        if (!$chatId || !$userId) {
+            $from->send(json_encode(['type' => 'error', 'message' => 'Datos incompletos']));
+            return;
         }
-        
+
+        $this->logToFile("📖 Marcando mensajes como leídos - Chat: {$chatId}, User: {$userId}");
+
+        if ($this->chatModel) {
+            try {
+                // Marcar como leído en BD
+                $markedCount = $this->chatModel->markMessagesAsRead($chatId, $userId);
+
+                // Notificar que los mensajes fueron leídos
+                $this->notifyMessagesRead($chatId, $userId, $markedCount);
+
+                // Resetear conteo no leído
+                $this->notifyUnreadCount($chatId, $userId, 0);
+
+                $this->logToFile("✅ {$markedCount} mensajes marcados como leídos");
+
+                $from->send(json_encode([
+                    'type' => 'messages_read_ack',
+                    'chat_id' => $chatId,
+                    'user_id' => $userId,
+                    'count' => $markedCount,
+                    'timestamp' => time()
+                ]));
+            } catch (\Exception $e) {
+                $this->logToFile("❌ Error marcando como leído: " . $e->getMessage());
+            }
+        }
+    }
+
+    private function notifyMessagesRead($chatId, $userId, $count)
+    {
+        $message = [
+            'type' => 'messages_read',
+            'chat_id' => $chatId,
+            'user_id' => $userId,
+            'count' => $count,
+            'timestamp' => time()
+        ];
+
+        // Notificar al remitente original que sus mensajes fueron leídos
+        if (isset($this->sessions[$chatId])) {
+            foreach ($this->sessions[$chatId] as $client) {
+                if (isset($client->userId) && $client->userId != $userId) {
+                    try {
+                        $client->send(json_encode($message));
+                    } catch (\Exception $e) {
+                        $this->logToFile("❌ Error notificando mensajes leídos: {$e->getMessage()}");
+                    }
+                }
+            }
+        }
+    }
+    private function updateUnreadCounts($chatId, $senderId)
+    {
+        if (!$this->chatModel) return;
+
+        try {
+            // Obtener todos los usuarios en el chat excepto el remitente
+            $sql = "SELECT user_id FROM chat_usuarios WHERE chat_id = ? AND user_id != ?";
+            $results = $this->chatModel->query($sql, [$chatId, $senderId]);
+
+            foreach ($results as $row) {
+                $userId = $row['user_id'];
+
+                // Obtener conteo actual de mensajes no leídos
+                $countSql = "SELECT COUNT(*) as unread_count 
+                        FROM mensajes 
+                        WHERE chat_id = ? 
+                        AND user_id != ? 
+                        AND leido = 0";
+                $countResult = $this->chatModel->query($countSql, [$chatId, $userId]);
+
+                $unreadCount = $countResult[0]['unread_count'] ?? 0;
+
+                // Notificar al usuario
+                $this->notifyUnreadCount($chatId, $userId, $unreadCount);
+            }
+        } catch (\Exception $e) {
+            $this->logToFile("❌ Error actualizando conteos no leídos: " . $e->getMessage());
+        }
+    }
+
+    private function broadcastToChat($chatId, $message, $excludeConnectionId = null)
+    {
+        if (!isset($this->sessions[$chatId])) return 0;
+
         $sentCount = 0;
         foreach ($this->sessions[$chatId] as $conn) {
-            if ($excludeConnectionId && $conn->resourceId == $excludeConnectionId) {
-                continue;
-            }
-            
+            if ($excludeConnectionId && $conn->resourceId == $excludeConnectionId) continue;
+
             try {
                 $conn->send(json_encode($message));
                 $sentCount++;
@@ -981,47 +1262,157 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 echo "❌ Error enviando mensaje: {$e->getMessage()}\n";
             }
         }
-        
+
         return $sentCount;
     }
-    
-    private function handleTest($from, $data) {
+
+    private function handleTest($from, $data)
+    {
         $stats = $this->statusManager->getStats();
-        
+
         $response = [
             'type' => 'test_response',
-            'message' => 'WebSocket funcionando con estados en tiempo real',
+            'message' => 'WebSocket funcionando',
             'server_time' => date('c'),
             'clients_count' => $this->clients->count(),
             'online_users' => $stats['online_users'] ?? 0,
-            'status_manager' => $this->statusManager ? 'active' : 'inactive'
+            'chat_model_status' => $this->chatModel ? 'active' : 'inactive'
         ];
-        
+
         $from->send(json_encode($response));
-        echo "✅ Test respondido con estadísticas\n";
+        echo "✅ Test respondido\n";
     }
-    
-    // ===================== MÉTODO PARA VERIFICACIÓN PERIÓDICA =====================
-    
-    public function checkDatabaseNotifications() {
-        // Tu código existente para verificar notificaciones de BD...
-        // Mantén este método como está
-    }
-    
-    public function periodicCleanup() {
-        // Limpiar conexiones inactivas
-        $cleaned = $this->statusManager->cleanupStaleConnections();
-        
-        // Otras limpiezas periódicas...
-        if ($cleaned > 0) {
-            echo "🧹 Limpieza periódica: {$cleaned} conexiones limpiadas\n";
+
+    // ===================== VERIFICACIÓN DE NOTIFICACIONES PENDIENTES =====================
+
+    public function checkDatabaseNotifications()
+    {
+        try {
+            $this->logToFile("🔍 Verificando notificaciones pendientes");
+
+            if (!$this->chatModel) {
+                $this->logToFile("⚠️ ChatModel no disponible");
+                return;
+            }
+
+            // Usar ChatModel para consultar notificaciones pendientes
+            $sql = "SELECT id, chat_id, user_id, message_type, message_data, created_at 
+                    FROM notifications 
+                    WHERE status = 'pending' 
+                    AND processed_at IS NULL 
+                    ORDER BY created_at ASC 
+                    LIMIT 10";
+
+            $notifications = $this->chatModel->query($sql);
+
+            if (empty($notifications)) {
+                $this->logToFile("✅ No hay notificaciones pendientes");
+                return;
+            }
+
+            $this->logToFile("📦 Encontradas " . count($notifications) . " notificaciones");
+
+            foreach ($notifications as $notification) {
+                $this->processNotification($notification);
+            }
+        } catch (\Exception $e) {
+            $this->logToFile("❌ Error en checkDatabaseNotifications: " . $e->getMessage());
         }
-        
-        // Mostrar estadísticas cada 5 minutos
+    }
+
+    private function processNotification($notification)
+    {
+        try {
+            $messageData = json_decode($notification['message_data'], true);
+
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                $this->logToFile("❌ JSON inválido en notificación ID: " . $notification['id']);
+                $this->markAsProcessed($notification['id'], 'error');
+                return;
+            }
+
+            $this->logToFile("🔄 Procesando notificación ID: {$notification['id']}, tipo: {$notification['message_type']}");
+
+            // Preparar datos para broadcast
+            $broadcastData = [
+                'type' => $notification['message_type'],
+                'chat_id' => $messageData['chat_id'],
+                'user_id' => $messageData['user_id'],
+                'contenido' => $messageData['contenido'] ?? $messageData['file_original_name'] ?? 'Archivo',
+                'tipo' => $messageData['tipo'] ?? ($notification['message_type'] == 'image_upload' ? 'imagen' : 'archivo'),
+                'timestamp' => $notification['created_at'],
+                'message_id' => $notification['id'],
+                'file_url' => $messageData['file_url'] ?? '',
+                'file_original_name' => $messageData['file_original_name'] ?? '',
+                'file_size' => $messageData['file_size'] ?? 0,
+                'file_mime_type' => $messageData['file_mime_type'] ?? '',
+                'status' => 'delivered'
+            ];
+
+            // Enviar a todos en el chat
+            if (isset($this->sessions[$messageData['chat_id']])) {
+                $sentCount = 0;
+                foreach ($this->sessions[$messageData['chat_id']] as $client) {
+                    try {
+                        $client->send(json_encode($broadcastData));
+                        $sentCount++;
+                    } catch (\Exception $e) {
+                        $this->logToFile("❌ Error enviando: {$e->getMessage()}");
+                    }
+                }
+                $this->logToFile("✅ Notificación enviada a {$sentCount} clientes");
+            } else {
+                $this->logToFile("⚠️ No hay usuarios conectados en chat {$messageData['chat_id']}");
+            }
+
+            // Marcar como procesado
+            $this->markAsProcessed($notification['id'], 'processed');
+        } catch (\Exception $e) {
+            $this->logToFile("❌ Error procesando notificación {$notification['id']}: " . $e->getMessage());
+            $this->markAsProcessed($notification['id'], 'error');
+        }
+    }
+
+    private function markAsProcessed($notificationId, $status = 'processed')
+    {
+        try {
+            if (!$this->chatModel) {
+                $this->logToFile("⚠️ ChatModel no disponible para marcar como procesado");
+                return false;
+            }
+
+            $sql = "UPDATE notifications 
+                    SET status = ?, 
+                        processed_at = NOW() 
+                    WHERE id = ?";
+
+            $result = $this->chatModel->query($sql, [$status, $notificationId]);
+
+            if ($result) {
+                $this->logToFile("✅ Notificación {$notificationId} marcada como {$status}");
+                return true;
+            } else {
+                $this->logToFile("❌ Error al marcar notificación {$notificationId}");
+                return false;
+            }
+        } catch (\Exception $e) {
+            $this->logToFile("❌ Error en markAsProcessed: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function periodicCleanup()
+    {
+        $cleaned = $this->statusManager->cleanupStaleConnections();
+
+        if ($cleaned > 0) {
+            echo "🧹 Limpiadas {$cleaned} conexiones inactivas\n";
+        }
+
         static $statsCounter = 0;
         $statsCounter++;
-        
-        if ($statsCounter >= 10) { // 5 minutos (10 * 30 segundos)
+
+        if ($statsCounter >= 10) {
             $stats = $this->statusManager->getStats();
             echo "📊 Estadísticas: " . json_encode($stats) . "\n";
             $statsCounter = 0;
@@ -1032,59 +1423,42 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 // ===================== INICIAR SERVIDOR =====================
 echo "\n";
 echo "========================================\n";
-echo "🚀 INICIANDO SERVIDOR WEBSOCKET CON ESTADOS EN TIEMPO REAL\n";
+echo "🚀 INICIANDO SERVIDOR WEBSOCKET MEJORADO\n";
 echo "========================================\n\n";
 
 try {
-    // Crear instancia del servidor
     $app = new SignalServer();
-
-    // Usar ReactPHP Event Loop
     $loop = \React\EventLoop\Factory::create();
-
-    // Crear socket WebSocket
     $webSock = new \React\Socket\Server('0.0.0.0:9090', $loop);
-
-    // Crear servidor WebSocket con Ratchet
     $wsServer = new \Ratchet\WebSocket\WsServer($app);
     $httpServer = new \Ratchet\Http\HttpServer($wsServer);
-
-    // Crear IoServer con el loop
     $server = new \Ratchet\Server\IoServer($httpServer, $webSock, $loop);
 
-    // ⭐⭐ TIMER PARA VERIFICAR BD CADA 2 SEGUNDOS
+    // Timer para notificaciones
     $loop->addPeriodicTimer(2, function () use ($app) {
-        echo date('H:i:s') . " 🔍 Verificando notificaciones en BD...\n";
+        echo date('H:i:s') . " 🔍 Verificando notificaciones...\n";
         $app->checkDatabaseNotifications();
     });
 
-    // ⭐⭐ TIMER PARA LIMPIAR CONEXIONES INACTIVAS CADA 30 SEGUNDOS
+    // Timer para limpieza
     $loop->addPeriodicTimer(30, function () use ($app) {
         $app->periodicCleanup();
     });
 
-    // ⭐⭐ TIMER PARA HEARTBEAT DEL SERVER CADA 60 SEGUNDOS
-    $loop->addPeriodicTimer(60, function () {
-        echo date('H:i:s') . " 💓 Server heartbeat\n";
-    });
-
-    echo "✅ Servidor WebSocket configurado con ReactPHP Loop\n";
+    echo "✅ Servidor WebSocket configurado\n";
     echo "📡 Escuchando en: ws://0.0.0.0:9090\n";
     echo "🔄 Timer de BD: cada 2 segundos\n";
     echo "🧹 Limpieza: cada 30 segundos\n";
-    echo "💓 Heartbeat: cada 60 segundos\n";
     echo "⏰ Iniciado: " . date('Y-m-d H:i:s') . "\n";
     echo "========================================\n";
     echo "🟢 Servidor en ejecución (Ctrl+C para detener)\n";
     echo "========================================\n\n";
 
-    // Iniciar el loop
     $loop->run();
 } catch (\Exception $e) {
     echo "\n❌❌❌ ERROR CRÍTICO ❌❌❌\n";
     echo "Mensaje: " . $e->getMessage() . "\n";
     echo "Archivo: " . $e->getFile() . "\n";
     echo "Línea: " . $e->getLine() . "\n";
-    echo "Trace:\n" . $e->getTraceAsString() . "\n";
     exit(1);
 }
