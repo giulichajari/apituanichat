@@ -806,16 +806,7 @@ private function getUserName($userId)
 /**
  * Transmite mensaje a todos en un chat
  */
-private function broadcastToChat($chatId, $message, $excludeConnection = null)
-{
-    // Implementa según tu lógica de chat
-    // Esto es un ejemplo básico
-    foreach ($this->clients as $userId => $connection) {
-        if ($connection !== $excludeConnection) {
-            $connection->send(json_encode($message));
-        }
-    }
-}
+
     private function handleAuth($from, $data)
     {
         if (!isset($data['user_id'])) {
