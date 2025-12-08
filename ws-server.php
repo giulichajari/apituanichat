@@ -445,89 +445,377 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
     }
 
-    public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
-    {
-        echo date('H:i:s') . " 📨 #{$from->resourceId} → " . substr($msg, 0, 200) . "\n";
-        $this->logToFile("📨 Mensaje recibido: " . $msg);
+ public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
+{
+    echo date('H:i:s') . " 📨 #{$from->resourceId} → " . substr($msg, 0, 200) . "\n";
+    $this->logToFile("📨 Mensaje recibido: " . $msg);
 
-        try {
-            $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
+    try {
+        $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
 
-            if (!isset($data['type'])) {
-                echo "❌ Sin tipo de mensaje\n";
-                return;
-            }
+        if (!isset($data['type'])) {
+            echo "❌ Sin tipo de mensaje\n";
+            return;
+        }
 
-            $this->logToFile("🎯 Tipo recibido: " . $data['type']);
+        $this->logToFile("🎯 Tipo recibido: " . $data['type']);
 
-            switch ($data['type']) {
-                case 'ping':
-                    $this->handlePing($from);
-                    break;
+        switch ($data['type']) {
+            case 'ping':
+                $this->handlePing($from);
+                break;
 
-                case 'auth':
-                    $this->handleAuth($from, $data);
-                    break;
+            case 'auth':
+                $this->handleAuth($from, $data);
+                break;
 
-                case 'join_chat':
-                    $this->handleJoinChat($from, $data);
-                    break;
+            case 'join_chat':
+                $this->handleJoinChat($from, $data);
+                break;
 
-                case 'chat_message':
-                    $this->handleChatMessage($from, $data);
-                    break;
+            case 'chat_message':
+                $this->handleChatMessage($from, $data);
+                break;
 
-                case 'file_upload':
-                    $this->handleFileUpload($from, $data);
-                    break;
+            case 'file_upload':
+                $this->handleFileUpload($from, $data);
+                break;
 
-                case 'image_upload':
-                    $this->handleFileUpload($from, $data);
-                    break;
+            case 'image_upload':
+                $this->handleFileUpload($from, $data);
+                break;
 
-                case 'file_uploaded':
-                case 'image_uploaded':
-                    $this->handleFileUploadNotification($from, $data);
-                    break;
+            case 'file_uploaded':
+            case 'image_uploaded':
+                $this->handleFileUploadNotification($from, $data);
+                break;
 
-                case 'mark_as_read':
-                    $this->handleMarkAsRead($from, $data);
-                    break;
+            case 'mark_as_read':
+                $this->handleMarkAsRead($from, $data);
+                break;
 
-             
+            // ✅ AÑADIR ESTOS NUEVOS CASOS PARA LLAMADAS
+            case 'init_call':
+                $this->handleInitCall($from, $data);
+                break;
 
-                case 'test':
-                    $this->handleTest($from, $data);
-                    break;
+            case 'call_offer':
+                $this->handleCallOffer($from, $data);
+                break;
 
-                case 'heartbeat':
-                    $this->handleHeartbeat($from, $data);
-                    break;
+            case 'call_answer':
+                $this->handleCallAnswer($from, $data);
+                break;
 
-                case 'get_online_users':
-                    $this->handleGetOnlineUsers($from, $data);
-                    break;
+            case 'call_candidate':
+                $this->handleCallCandidate($from, $data);
+                break;
 
-                case 'get_user_status':
-                    $this->handleGetUserStatus($from, $data);
-                    break;
+            case 'call_ended':
+                $this->handleCallEnded($from, $data);
+                break;
 
-                default:
-                    echo "⚠️ Tipo desconocido: {$data['type']}\n";
-                    $from->send(json_encode([
-                        'type' => 'error',
-                        'message' => 'Tipo no soportado: ' . $data['type']
-                    ]));
-            }
-        } catch (\JsonException $e) {
-            echo "❌ JSON inválido: {$e->getMessage()}\n";
-        } catch (\Exception $e) {
-            echo "❌ Error: {$e->getMessage()}\n";
+            case 'call_reject':
+                $this->handleCallReject($from, $data);
+                break;
+
+            case 'test':
+                $this->handleTest($from, $data);
+                break;
+
+            case 'heartbeat':
+                $this->handleHeartbeat($from, $data);
+                break;
+
+            case 'get_online_users':
+                $this->handleGetOnlineUsers($from, $data);
+                break;
+
+            case 'get_user_status':
+                $this->handleGetUserStatus($from, $data);
+                break;
+
+            default:
+                echo "⚠️ Tipo desconocido: {$data['type']}\n";
+                $from->send(json_encode([
+                    'type' => 'error',
+                    'message' => 'Tipo no soportado: ' . $data['type']
+                ]));
+        }
+    } catch (\JsonException $e) {
+        echo "❌ JSON inválido: {$e->getMessage()}\n";
+    } catch (\Exception $e) {
+        echo "❌ Error: {$e->getMessage()}\n";
+    }
+}
+/**
+ * Maneja inicio de llamada
+ */
+private function handleInitCall($from, $data)
+{
+    echo "📞 Iniciando llamada: " . json_encode($data) . "\n";
+    
+    $userId = $this->getUserIdFromConnection($from);
+    $sessionId = $data['session_id'] ?? uniqid('call_', true);
+    $toUserId = $data['to'] ?? $data['other_user_id'] ?? null;
+    $chatId = $data['chat_id'] ?? null;
+    
+    // Validar datos
+    if (!$userId || !$toUserId || !$chatId) {
+        $from->send(json_encode([
+            'type' => 'call_error',
+            'message' => 'Datos incompletos para iniciar llamada'
+        ]));
+        return;
+    }
+    
+    // Buscar conexión del destinatario
+    $toConnection = $this->findConnectionByUserId($toUserId);
+    
+    if ($toConnection) {
+        // Enviar notificación de llamada entrante
+        $toConnection->send(json_encode([
+            'type' => 'incoming_call',
+            'session_id' => $sessionId,
+            'from' => $userId,
+            'from_name' => $this->getUserName($userId),
+            'to' => $toUserId,
+            'chat_id' => $chatId,
+            'timestamp' => date('Y-m-d H:i:s')
+        ]));
+        
+        echo "📞 Notificación de llamada enviada a usuario {$toUserId}\n";
+        
+        // Confirmar al llamante
+        $from->send(json_encode([
+            'type' => 'call_initiated',
+            'session_id' => $sessionId,
+            'to' => $toUserId,
+            'chat_id' => $chatId,
+            'status' => 'ringing'
+        ]));
+    } else {
+        // Destinatario no conectado
+        $from->send(json_encode([
+            'type' => 'call_error',
+            'session_id' => $sessionId,
+            'message' => 'El usuario no está conectado',
+            'status' => 'user_offline'
+        ]));
+    }
+}
+
+/**
+ * Maneja oferta de WebRTC
+ */
+private function handleCallOffer($from, $data)
+{
+    $userId = $this->getUserIdFromConnection($from);
+    $toUserId = $data['to'] ?? null;
+    $sessionId = $data['session_id'] ?? null;
+    $sdp = $data['sdp'] ?? null;
+    
+    if (!$userId || !$toUserId || !$sessionId || !$sdp) {
+        return;
+    }
+    
+    $toConnection = $this->findConnectionByUserId($toUserId);
+    
+    if ($toConnection) {
+        $toConnection->send(json_encode([
+            'type' => 'call_offer',
+            'session_id' => $sessionId,
+            'from' => $userId,
+            'to' => $toUserId,
+            'sdp' => $sdp,
+            'timestamp' => date('Y-m-d H:i:s')
+        ]));
+        
+        echo "📞 Oferta WebRTC enviada de {$userId} a {$toUserId}\n";
+    }
+}
+
+/**
+ * Maneja respuesta de WebRTC
+ */
+private function handleCallAnswer($from, $data)
+{
+    $userId = $this->getUserIdFromConnection($from);
+    $toUserId = $data['to'] ?? null;
+    $sessionId = $data['session_id'] ?? null;
+    $sdp = $data['sdp'] ?? null;
+    
+    if (!$userId || !$toUserId || !$sessionId || !$sdp) {
+        return;
+    }
+    
+    $toConnection = $this->findConnectionByUserId($toUserId);
+    
+    if ($toConnection) {
+        $toConnection->send(json_encode([
+            'type' => 'call_answer',
+            'session_id' => $sessionId,
+            'from' => $userId,
+            'to' => $toUserId,
+            'sdp' => $sdp,
+            'timestamp' => date('Y-m-d H:i:s')
+        ]));
+        
+        echo "📞 Respuesta WebRTC enviada de {$userId} a {$toUserId}\n";
+    }
+}
+
+/**
+ * Maneja candidatos ICE
+ */
+private function handleCallCandidate($from, $data)
+{
+    $userId = $this->getUserIdFromConnection($from);
+    $toUserId = $data['to'] ?? null;
+    $sessionId = $data['session_id'] ?? null;
+    $candidate = $data['candidate'] ?? null;
+    
+    if (!$userId || !$toUserId || !$sessionId || !$candidate) {
+        return;
+    }
+    
+    $toConnection = $this->findConnectionByUserId($toUserId);
+    
+    if ($toConnection) {
+        $toConnection->send(json_encode([
+            'type' => 'call_candidate',
+            'session_id' => $sessionId,
+            'from' => $userId,
+            'to' => $toUserId,
+            'candidate' => $candidate,
+            'timestamp' => date('Y-m-d H:i:s')
+        ]));
+        
+        echo "📞 Candidato ICE enviado de {$userId} a {$toUserId}\n";
+    }
+}
+
+/**
+ * Maneja fin de llamada
+ */
+private function handleCallEnded($from, $data)
+{
+    $userId = $this->getUserIdFromConnection($from);
+    $toUserId = $data['to'] ?? null;
+    $sessionId = $data['session_id'] ?? null;
+    $reason = $data['reason'] ?? 'ended_by_user';
+    
+    if (!$userId || !$sessionId) {
+        return;
+    }
+    
+    // Si hay destinatario, notificarle
+    if ($toUserId) {
+        $toConnection = $this->findConnectionByUserId($toUserId);
+        if ($toConnection) {
+            $toConnection->send(json_encode([
+                'type' => 'call_ended',
+                'session_id' => $sessionId,
+                'from' => $userId,
+                'reason' => $reason,
+                'timestamp' => date('Y-m-d H:i:s')
+            ]));
         }
     }
+    
+    // También notificar a todos en el chat
+    $chatId = $data['chat_id'] ?? null;
+    if ($chatId) {
+        $this->broadcastToChat($chatId, [
+            'type' => 'call_status',
+            'session_id' => $sessionId,
+            'status' => 'ended',
+            'ended_by' => $userId,
+            'reason' => $reason,
+            'timestamp' => date('Y-m-d H:i:s')
+        ], $from);
+    }
+    
+    echo "📞 Llamada {$sessionId} terminada por {$userId}\n";
+}
+
+/**
+ * Maneja rechazo de llamada
+ */
+private function handleCallReject($from, $data)
+{
+    $userId = $this->getUserIdFromConnection($from);
+    $toUserId = $data['to'] ?? null;
+    $sessionId = $data['session_id'] ?? null;
+    $reason = $data['reason'] ?? 'rejected';
+    
+    if (!$userId || !$toUserId || !$sessionId) {
+        return;
+    }
+    
+    $toConnection = $this->findConnectionByUserId($toUserId);
+    
+    if ($toConnection) {
+        $toConnection->send(json_encode([
+            'type' => 'call_rejected',
+            'session_id' => $sessionId,
+            'from' => $userId,
+            'reason' => $reason,
+            'timestamp' => date('Y-m-d H:i:s')
+        ]));
+        
+        echo "📞 Llamada {$sessionId} rechazada por {$userId}\n";
+    }
+}
+
 
     // ===================== HANDLERS PRINCIPALES =====================
 
+
+    /**
+ * Obtiene el ID de usuario de una conexión
+ */
+private function getUserIdFromConnection($connection)
+{
+    foreach ($this->clients as $userId => $conn) {
+        if ($conn === $connection) {
+            return $userId;
+        }
+    }
+    return null;
+}
+
+/**
+ * Busca conexión por ID de usuario
+ */
+private function findConnectionByUserId($userId)
+{
+    return $this->clients[$userId] ?? null;
+}
+
+/**
+ * Obtiene nombre de usuario (puedes adaptarlo a tu DB)
+ */
+private function getUserName($userId)
+{
+    // Aquí deberías obtener el nombre de tu base de datos
+    // Por ahora devuelve un placeholder
+    return "Usuario {$userId}";
+}
+
+/**
+ * Transmite mensaje a todos en un chat
+ */
+private function broadcastToChat($chatId, $message, $excludeConnection = null)
+{
+    // Implementa según tu lógica de chat
+    // Esto es un ejemplo básico
+    foreach ($this->clients as $userId => $connection) {
+        if ($connection !== $excludeConnection) {
+            $connection->send(json_encode($message));
+        }
+    }
+}
     private function handleAuth($from, $data)
     {
         if (!isset($data['user_id'])) {
