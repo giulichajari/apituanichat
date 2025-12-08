@@ -724,47 +724,93 @@ private function handleCallReject($from, $data)
  */
 private function findConnectionByUserId($userId)
 {
-    echo "🔍 Buscando conexión para userId: " . $userId . "\n";
+    echo "🔍 findConnectionByUserId - Buscando para userId: " . $userId . "\n";
     
-    // Validar que userId sea numérico
+    // Validar
     if (!is_numeric($userId)) {
         echo "❌ userId no es numérico: " . $userId . "\n";
         return null;
     }
     
-    $userId = (int)$userId; // Asegurar que sea entero
+    $userId = (int)$userId;
     
-    // Buscar en el array de clientes
-    foreach ($this->clients as $storedUserId => $connection) {
-        echo "  Comparando: storedUserId={$storedUserId} (tipo: " . gettype($storedUserId) . ")\n";
-        
-        // Comparar como enteros
-        if ((int)$storedUserId === $userId) {
-            echo "✅ Conexión encontrada para userId: {$userId}\n";
-            return $connection;
+    echo "📊 userConnections actuales:\n";
+    foreach ($this->userConnections as $storedUserId => $connections) {
+        echo "  Usuario {$storedUserId}: " . count($connections) . " conexiones\n";
+        foreach ($connections as $connId => $conn) {
+            echo "    - Conexión #{$connId}\n";
         }
     }
     
-
+    // Buscar en userConnections
+    if (isset($this->userConnections[$userId]) && !empty($this->userConnections[$userId])) {
+        $connections = $this->userConnections[$userId];
+        $firstConnection = reset($connections);
+        $connId = key($connections);
+        
+        echo "✅ Conexión encontrada: usuario {$userId}, conexión #{$connId}\n";
+        return $firstConnection;
+    }
+    
+    echo "❌ No se encontró conexión activa para userId: {$userId}\n";
+    
+    // Debug: mostrar todos los usuarios conectados
+    echo "👥 Usuarios actualmente conectados:\n";
+    $connectedUsers = [];
+    foreach ($this->userConnections as $uid => $conns) {
+        if (!empty($conns)) {
+            $connectedUsers[] = $uid;
+        }
+    }
+    
+    if (empty($connectedUsers)) {
+        echo "  (ningún usuario conectado)\n";
+    } else {
+        echo "  " . implode(', ', $connectedUsers) . "\n";
+    }
     
     return null;
 }
-
 /**
  * Maneja inicio de llamada - CORREGIDO
  */
 private function handleInitCall($from, $data)
 {
-    echo "📞 Iniciando llamada: " . json_encode($data) . "\n";
+    echo "📞 ========== INICIANDO LLAMADA ==========\n";
+    echo "📦 Datos recibidos: " . json_encode($data) . "\n";
     
-    // Obtener userId del remitente
-    $userId = $this->getUserIdFromConnection($from);
+    // Obtener userId DEL MENSAJE, no de la conexión (temporalmente)
+    $userIdFromMessage = isset($data['from']) ? (int)$data['from'] : null;
+    $userIdFromConnection = $this->getUserIdFromConnection($from);
+    
+    echo "📊 IDs comparados:\n";
+    echo "  - Del mensaje (from): {$userIdFromMessage}\n";
+    echo "  - De la conexión: " . ($userIdFromConnection ?? 'null') . "\n";
+    
+    // ⭐⭐ USAR EL ID DEL MENSAJE (es más confiable)
+    $userId = $userIdFromMessage ?? $userIdFromConnection;
+    
+    if (!$userId) {
+        echo "❌ ERROR: No se pudo determinar userId\n";
+        $from->send(json_encode([
+            'type' => 'call_error',
+            'message' => 'No se pudo identificar al usuario',
+            'session_id' => $data['session_id'] ?? null
+        ]));
+        return;
+    }
+    
     $sessionId = $data['session_id'] ?? uniqid('call_', true);
     $toUserId = isset($data['to']) ? (int)$data['to'] : null;
     $chatId = $data['chat_id'] ?? null;
     $callerName = $data['caller_name'] ?? 'Usuario';
     
-    echo "📞 Datos de llamada: from={$userId}, to={$toUserId}, chat={$chatId}, session={$sessionId}\n";
+    echo "📞 Datos de llamada:\n";
+    echo "  - De: {$userId}\n";
+    echo "  - Para: {$toUserId}\n";
+    echo "  - Chat: {$chatId}\n";
+    echo "  - Sesión: {$sessionId}\n";
+    echo "  - Nombre: {$callerName}\n";
     
     // Validar datos
     if (!$userId || !$toUserId || !$chatId) {
@@ -772,15 +818,24 @@ private function handleInitCall($from, $data)
         $from->send(json_encode([
             'type' => 'call_error',
             'message' => 'Datos incompletos para iniciar llamada',
-            'session_id' => $sessionId
+            'session_id' => $sessionId,
+            'missing' => [
+                'from' => !$userId,
+                'to' => !$toUserId,
+                'chat_id' => !$chatId
+            ]
         ]));
         return;
     }
     
     // Buscar conexión del destinatario
+    echo "🔍 Buscando conexión para usuario {$toUserId}...\n";
     $toConnection = $this->findConnectionByUserId($toUserId);
     
     if ($toConnection) {
+        // Destinatario CONECTADO
+        echo "✅ Destinatario {$toUserId} encontrado y conectado\n";
+        
         // Enviar notificación de llamada entrante
         $toConnection->send(json_encode([
             'type' => 'incoming_call',
@@ -789,7 +844,8 @@ private function handleInitCall($from, $data)
             'from_name' => $callerName,
             'to' => $toUserId,
             'chat_id' => $chatId,
-            'timestamp' => $data['timestamp'] ?? date('Y-m-d H:i:s')
+            'timestamp' => $data['timestamp'] ?? date('Y-m-d H:i:s'),
+            'caller_name' => $callerName
         ]));
         
         echo "📞 Notificación de llamada enviada a usuario {$toUserId}\n";
@@ -801,48 +857,196 @@ private function handleInitCall($from, $data)
             'to' => $toUserId,
             'chat_id' => $chatId,
             'status' => 'ringing',
-            'timestamp' => date('Y-m-d H:i:s')
+            'timestamp' => date('Y-m-d H:i:s'),
+            'message' => 'Llamando...'
         ]));
-        
-        // También enviar a todos en el chat (opcional)
-        $this->broadcastToChat($chatId, [
-            'type' => 'call_status',
-            'session_id' => $sessionId,
-            'status' => 'ringing',
-            'from' => $userId,
-            'to' => $toUserId,
-            'chat_id' => $chatId,
-            'timestamp' => date('Y-m-d H:i:s')
-        ], $from);
         
     } else {
-        // Destinatario no conectado
+        // Destinatario NO CONECTADO
         echo "❌ Destinatario {$toUserId} no conectado\n";
+        
         $from->send(json_encode([
-            'type' => 'call_error',
+            'type' => 'user_offline',
             'session_id' => $sessionId,
-            'message' => 'El usuario no está conectado',
-            'status' => 'user_offline'
+            'message' => 'El usuario no está disponible',
+            'status' => 'offline',
+            'to' => $toUserId,
+            'suggestions' => [
+                'enviar_notificacion_push' => true,
+                'intentar_mas_tarde' => true
+            ]
         ]));
+        
+        // Opcional: Crear notificación push
+        $this->createCallNotification($userId, $toUserId, $sessionId, $chatId, $callerName);
+    }
+    
+    echo "📞 ========== LLAMADA PROCESADA ==========\n\n";
+}
+/**
+ * Crea notificación push para llamada perdida
+ */
+private function createCallNotification($fromUserId, $toUserId, $sessionId, $chatId, $callerName)
+{
+    echo "📱 Creando notificación de llamada para usuario {$toUserId}\n";
+    
+    try {
+        // Guardar en base de datos para notificación push
+        if ($this->chatModel) {
+            $sql = "INSERT INTO call_notifications 
+                    (session_id, from_user_id, to_user_id, chat_id, caller_name, status, created_at) 
+                    VALUES (?, ?, ?, ?, ?, 'pending', NOW())";
+            
+            $this->chatModel->query($sql, [
+                $sessionId,
+                $fromUserId,
+                $toUserId,
+                $chatId,
+                $callerName
+            ]);
+            
+            echo "💾 Notificación de llamada guardada en DB para usuario {$toUserId}\n";
+            
+            // Aquí podrías integrar con FCM (Firebase Cloud Messaging) para notificaciones push
+            $this->sendPushNotification($toUserId, "📞 Llamada perdida de {$callerName}", [
+                'type' => 'missed_call',
+                'session_id' => $sessionId,
+                'from_user_id' => $fromUserId,
+                'chat_id' => $chatId,
+                'caller_name' => $callerName
+            ]);
+        } else {
+            echo "⚠️ ChatModel no disponible, no se pudo guardar notificación\n";
+        }
+        
+    } catch (\Exception $e) {
+        echo "❌ Error guardando notificación: " . $e->getMessage() . "\n";
     }
 }
 
+/**
+ * Envía notificación push (simulada - integrar con tu sistema real)
+ */
+private function sendPushNotification($toUserId, $message, $data = [])
+{
+    echo "📲 Enviando notificación push a usuario {$toUserId}: {$message}\n";
+    
+    // Aquí deberías integrar con tu sistema de notificaciones push
+    // Ejemplo con Firebase Cloud Messaging:
+    /*
+    $fcmUrl = 'https://fcm.googleapis.com/fcm/send';
+    $serverKey = 'TU_SERVER_KEY_AQUI';
+    
+    $notification = [
+        'to' => '/topics/user_' . $toUserId,
+        'notification' => [
+            'title' => 'Llamada perdida',
+            'body' => $message,
+            'sound' => 'default',
+            'badge' => '1'
+        ],
+        'data' => array_merge($data, [
+            'click_action' => 'FLUTTER_NOTIFICATION_CLICK',
+            'type' => 'missed_call'
+        ])
+    ];
+    
+    $headers = [
+        'Authorization: key=' . $serverKey,
+        'Content-Type: application/json'
+    ];
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $fcmUrl);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($notification));
+    $result = curl_exec($ch);
+    curl_close($ch);
+    
+    echo "✅ Notificación push enviada: " . $result . "\n";
+    */
+    
+    // Por ahora, solo simulamos el envío
+    echo "📱 [SIMULADO] Notificación push para usuario {$toUserId}: {$message}\n";
+    echo "📱 [SIMULADO] Datos: " . json_encode($data) . "\n";
+}
 /**
  * Obtiene el ID de usuario de una conexión - CORREGIDO
  */
 private function getUserIdFromConnection($connection)
 {
-    foreach ($this->clients as $userId => $conn) {
-        if ($conn === $connection) {
-            echo "✅ Usuario encontrado en conexión: {$userId}\n";
-            return (int)$userId; // Asegurar que sea entero
+    echo "🔍 getUserIdFromConnection - Buscando userId para conexión #{$connection->resourceId}\n";
+    
+    // DEBUG: Mostrar todas las propiedades de la conexión
+    echo "📋 Propiedades de la conexión #{$connection->resourceId}:\n";
+    $props = [];
+    foreach ($connection as $key => $value) {
+        if (!is_object($value)) {
+            $props[$key] = $value;
+        }
+    }
+    echo "  " . json_encode($props) . "\n";
+    
+    // OPCIÓN 1: Verificar si ya tiene userId asignado
+    if (isset($connection->userId)) {
+        echo "✅ userId encontrado en propiedad directa: {$connection->userId}\n";
+        return (int)$connection->userId;
+    }
+    
+    // OPCIÓN 2: Buscar en $this->userConnections
+    echo "🔍 Buscando en userConnections...\n";
+    foreach ($this->userConnections as $userId => $connections) {
+        foreach ($connections as $connId => $conn) {
+            if ($connId === $connection->resourceId) {
+                echo "✅ Encontrado en userConnections: usuario {$userId}, conexión #{$connId}\n";
+                // Actualizar propiedad para futuras consultas
+                $connection->userId = (int)$userId;
+                return (int)$userId;
+            }
         }
     }
     
-    echo "❌ No se pudo encontrar userId para la conexión\n";
+    // OPCIÓN 3: Buscar por referencia de objeto
+    echo "🔍 Buscando por referencia de objeto...\n";
+    foreach ($this->userConnections as $userId => $connections) {
+        foreach ($connections as $connId => $conn) {
+            if ($conn === $connection) {
+                echo "✅ Encontrado por referencia: usuario {$userId}, conexión #{$connId}\n";
+                $connection->userId = (int)$userId;
+                return (int)$userId;
+            }
+        }
+    }
+    
+    echo "❌ ERROR: No se pudo encontrar userId para conexión #{$connection->resourceId}\n";
+    echo "⚠️ Esta conexión no está autenticada o hay un bug\n";
+    
+    // DEBUG: Mostrar estado actual
+    $this->debugAllConnections();
+    
     return null;
 }
 
+// Agrega este método para debug
+private function debugAllConnections()
+{
+    echo "=== DEBUG DE TODAS LAS CONEXIONES ===\n";
+    echo "Total clientes: " . count($this->clients) . "\n";
+    echo "UserConnections:\n";
+    foreach ($this->userConnections as $userId => $connections) {
+        echo "  Usuario {$userId}:\n";
+        foreach ($connections as $connId => $conn) {
+            echo "    - Conexión #{$connId}";
+            if (isset($conn->userId)) {
+                echo " (userId en propiedad: {$conn->userId})";
+            }
+            echo "\n";
+        }
+    }
+    echo "===============================\n";
+}
 /**
  * Obtiene nombre de usuario (puedes adaptarlo a tu DB)
  */
@@ -857,43 +1061,58 @@ private function getUserName($userId)
  * Transmite mensaje a todos en un chat
  */
 
-    private function handleAuth($from, $data)
-    {
-        if (!isset($data['user_id'])) {
-            $from->send(json_encode(['type' => 'auth_error', 'message' => 'Falta user_id']));
-            return;
-        }
-
-        $userId = $data['user_id'];
-        $userData = $data['user_data'] ?? [];
-
-        $from->userId = $userId;
-        $from->userData = $userData;
-
-        if (!isset($this->userConnections[$userId])) {
-            $this->userConnections[$userId] = [];
-        }
-        $this->userConnections[$userId][$from->resourceId] = $from;
-
-        $this->statusManager->setOnline($userId, $from->resourceId, $userData);
-        $this->startHeartbeatTimer($from);
-
-        echo "🔐 Usuario {$userId} autenticado\n";
-
-        $from->send(json_encode([
-            'type' => 'auth_success',
-            'user_id' => $userId,
-            'message' => 'Autenticado correctamente',
-            'connection_id' => $from->resourceId,
-            'online_since' => time()
-        ]));
-
-        $this->notifyUserStatusChange($userId, 'online', [
-            'user_id' => $userId,
-            'connection_id' => $from->resourceId,
-            'user_data' => $userData
-        ]);
+   private function handleAuth($from, $data)
+{
+    echo "🔐 ========== AUTENTICACIÓN ==========\n";
+    
+    // VALIDACIÓN MÁS ESTRICTA
+    if (!isset($data['user_id'])) {
+        echo "❌ ERROR: Falta user_id\n";
+        return;
     }
+    
+    $userId = $data['user_id'];
+    
+    // Convertir a número y validar
+    if (!is_numeric($userId)) {
+        echo "❌ ERROR: user_id no es numérico\n";
+        return;
+    }
+    
+    $userId = (int)$userId;
+    
+    // ⭐⭐ VALIDAR QUE NO SEA 0 O 1 (a menos que sean usuarios reales)
+    if ($userId <= 1) {
+        echo "⚠️ ADVERTENCIA: user_id {$userId} puede ser inválido\n";
+        // Continuar pero con advertencia
+    }
+    
+    // Limpiar conexiones anteriores para este userId
+    if (isset($this->userConnections[$userId])) {
+        echo "🧹 Limpiando conexiones anteriores para usuario {$userId}\n";
+        foreach ($this->userConnections[$userId] as $oldConnId => $oldConn) {
+            if ($oldConn !== $from) {
+                echo "  - Removiendo conexión anterior #{$oldConnId}\n";
+                unset($this->userConnections[$userId][$oldConnId]);
+            }
+        }
+    }
+    
+    // Asignar userId
+    $from->userId = $userId;
+    $from->userData = $data['user_data'] ?? [];
+    
+    echo "✅ Usuario {$userId} autenticado en conexión #{$from->resourceId}\n";
+    
+    // Almacenar en userConnections
+    if (!isset($this->userConnections[$userId])) {
+        $this->userConnections[$userId] = [];
+    }
+    $this->userConnections[$userId][$from->resourceId] = $from;
+    
+    // Resto del código...
+    echo "🔐 ========== AUTENTICACIÓN COMPLETADA ==========\n\n";
+}
 
     private function handleHeartbeat($from, $data)
     {
