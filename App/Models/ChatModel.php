@@ -289,7 +289,7 @@ class ChatModel
 
 
     // ✅ Método auxiliar para agregar usuario a chat
-    private function addUserToChat($chatId, $userId): bool
+    public function addUserToChat($chatId, $userId): bool
     {
         try {
             $stmt = $this->db->prepare("
@@ -804,6 +804,15 @@ class ChatModel
             throw $e;
         }
     }
+
+    /**
+ * Agregar usuario a un chat existente
+ * 
+ * @param int $chatId ID del chat
+ * @param int $userId ID del usuario a agregar
+ * @return bool True si se agregó correctamente
+ */
+
     // En ChatModel.php
     public function getMessageById($messageId)
     {

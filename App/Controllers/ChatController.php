@@ -26,9 +26,13 @@ public function uploadFile()
         $body = Router::$request->body;
         $user = Router::$request->user ?? null;
         $chatId = Router::$request->params->chat_id ?? null;
+        $otherUserId = $body->other_user_id ?? null;
         
         error_log("📋 uploadFile called - User ID: " . ($user->id ?? 'null'));
         error_log("📋 Chat ID from route: " . ($chatId ?? 'null'));
+        error_log("📋 Other User ID from body: " . ($otherUserId ?? 'null'));
+        error_log("📋 Body completo: " . json_encode($body));
+        error_log("📋 FILES: " . json_encode($_FILES));
 
         if (!$user) {
             return Router::$response->status(401)->send([
@@ -46,12 +50,58 @@ public function uploadFile()
 
         $uploadedFile = $_FILES['file'];
 
-        // ✅ SUBIR ARCHIVO SOLAMENTE
+        // ✅ VERIFICAR SI EL CHAT_ID EXISTE EN LA BASE DE DATOS
+        $chatModel = new ChatModel();
+        
+        // Si tenemos un chat_id, verificar si existe
+        $chatExists = false;
+        if ($chatId) {
+            $chatExists = $chatModel->chatExists($chatId);
+            error_log("🔍 Verificando chat {$chatId} en BD: " . ($chatExists ? "EXISTE" : "NO EXISTE"));
+        }
+
+        // ✅ CASO 1: El chat_id NO existe en BD
+        if (!$chatExists && $otherUserId) {
+            error_log("🔄 Chat ID {$chatId} no existe. Buscando/creando chat entre {$user->id} y {$otherUserId}");
+            
+            // Buscar chat existente entre estos usuarios
+            $existingChatId = $chatModel->findChatBetweenUsers($user->id, $otherUserId);
+            
+            if ($existingChatId) {
+                $chatId = $existingChatId;
+                error_log("✅ Chat existente encontrado: {$chatId}");
+            } else {
+                // Crear nuevo chat
+                error_log("🆕 Creando nuevo chat entre {$user->id} y {$otherUserId}");
+                $chatId = $chatModel->createChat([$user->id, $otherUserId]);
+                error_log("✅ Nuevo chat creado: {$chatId}");
+            }
+        }
+        // ✅ CASO 2: El chat_id SÍ existe
+        elseif ($chatExists) {
+            error_log("✅ Chat ID {$chatId} existe. Verificando membresía...");
+            
+            // Verificar que el usuario pertenezca al chat
+            if (!$chatModel->userInChat($chatId, $user->id)) {
+                // Agregar usuario al chat si no está
+                error_log("➕ Agregando usuario {$user->id} al chat {$chatId}");
+                $chatModel->addUserToChat($chatId, $user->id);
+            }
+        }
+        // ✅ CASO 3: No tenemos chat_id ni other_user_id → ERROR
+        elseif (!$otherUserId) {
+            return Router::$response->status(400)->send([
+                "success" => false,
+                "message" => "Se necesita chat_id o other_user_id para subir archivo"
+            ]);
+        }
+
+        // ✅ SUBIR ARCHIVO CON EL CHAT_ID CORRECTO
         $uploadResult = $this->fileUploadService->uploadToConversation(
             $uploadedFile,
             $user->id,
-            null,
-            $chatId
+            $otherUserId,
+            $chatId  // Ahora el chatId es correcto
         );
 
         if (!$uploadResult['success']) {
@@ -61,7 +111,7 @@ public function uploadFile()
             ]);
         }
 
-        // ✅ RESPONDER ÉXITO SIN INTENTAR WEBSOCKET
+        // ✅ RESPONDER ÉXITO
         return Router::$response->status(201)->send([
             "success" => true,
             "message" => "File uploaded successfully",
@@ -69,7 +119,7 @@ public function uploadFile()
                 "file_id" => $uploadResult['file_id'],
                 "file_url" => $uploadResult['file_url'],
                 "message_id" => $uploadResult['message_id'],
-                "chat_id" => $uploadResult['chat_id'],
+                "chat_id" => $uploadResult['chat_id'], // Esto es el REAL chat_id
                 "tipo" => $uploadResult['tipo'],
                 "file_name" => $uploadResult['file_name'],
                 "file_original_name" => $uploadResult['file_original_name'],
@@ -78,6 +128,7 @@ public function uploadFile()
                 "timestamp" => date('Y-m-d H:i:s')
             ]
         ]);
+        
     } catch (Exception $e) {
         error_log("❌ Error in uploadFile: " . $e->getMessage());
         return Router::$response->status(500)->send([

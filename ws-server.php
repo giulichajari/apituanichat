@@ -1054,108 +1054,363 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             }
         }
     }
-    private function handleChatMessage($from, $data)
-    {
-        $this->logToFile("💭 Procesando mensaje de chat");
+  private function handleChatMessage($from, $data)
+{
+    $this->logToFile("💭 Procesando mensaje de chat");
 
-        $chatId = $data['chat_id'] ?? null;
-        $userId = $data['user_id'] ?? null;
-        $content = $data['contenido'] ?? '';
-        $tempId = $data['temp_id'] ?? null;
+    $chatId = $data['chat_id'] ?? null;
+    $userId = $data['user_id'] ?? null;
+    $content = $data['contenido'] ?? '';
+    $tempId = $data['temp_id'] ?? null;
 
-        if (!$chatId || !$userId) {
-            $this->logToFile("❌ Datos incompletos");
-            return;
-        }
+    if (!$chatId || !$userId) {
+        $this->logToFile("❌ Datos incompletos");
+        return;
+    }
 
-        // 1. Confirmación inmediata
-        if ($tempId) {
-            $from->send(json_encode([
-                'type' => 'message_ack',
-                'temp_id' => $tempId,
-                'status' => 'received',
-                'timestamp' => time()
-            ]));
-        }
+    // 1. Confirmación inmediata
+    if ($tempId) {
+        $from->send(json_encode([
+            'type' => 'message_ack',
+            'temp_id' => $tempId,
+            'status' => 'received',
+            'timestamp' => time()
+        ]));
+    }
 
-        // 2. Guardar en BD
-        $messageId = null;
-        $realChatId = $chatId;
+    // 2. Guardar en BD
+    $messageId = null;
+    $realChatId = $chatId;
+    $otherUserId = null;
 
-        if ($this->chatModel) {
-            try {
-                // Verificar y/o crear chat
-                if (!$this->chatModel->chatExists($chatId)) {
-                    $otherUserId = $data['other_user_id'] ?? $chatId;
-                    $realChatId = $this->chatModel->findChatBetweenUsers($userId, $otherUserId);
+    if ($this->chatModel) {
+        try {
+            // Verificar y/o crear chat
+            if (!$this->chatModel->chatExists($chatId)) {
+                $otherUserId = $data['other_user_id'] ?? $chatId;
+                $realChatId = $this->chatModel->findChatBetweenUsers($userId, $otherUserId);
 
-                    if (!$realChatId) {
-                        $realChatId = $this->chatModel->createChat([$userId, $otherUserId]);
-                        $this->logToFile("🆕 Chat creado: {$realChatId}");
-                    }
-
-                    $chatId = $realChatId;
+                if (!$realChatId) {
+                    $realChatId = $this->chatModel->createChat([$userId, $otherUserId]);
+                    $this->logToFile("🆕 Chat creado: {$realChatId}");
                 }
 
-                // Guardar mensaje
-                $messageId = $this->chatModel->sendMessage(
-                    $chatId,
-                    $userId,
-                    $content,
-                    $data['tipo'] ?? 'texto'
-                );
-
-                $this->logToFile("✅ Mensaje guardado en BD: ID {$messageId}");
-
-                // Obtener conteo de mensajes no leídos para cada usuario
-                $this->updateUnreadCounts($chatId, $userId);
-            } catch (\Exception $e) {
-                $this->logToFile("❌ Error BD: " . $e->getMessage());
-                $messageId = 'temp_' . rand(1000, 9999);
+                $chatId = $realChatId;
             }
-        } else {
+
+            // Guardar mensaje
+            $messageId = $this->chatModel->sendMessage(
+                $chatId,
+                $userId,
+                $content,
+                $data['tipo'] ?? 'texto'
+            );
+
+            $this->logToFile("✅ Mensaje guardado en BD: ID {$messageId}");
+
+            // Obtener conteo de mensajes no leídos para cada usuario
+            $this->updateUnreadCounts($chatId, $userId);
+        } catch (\Exception $e) {
+            $this->logToFile("❌ Error BD: " . $e->getMessage());
             $messageId = 'temp_' . rand(1000, 9999);
         }
+    } else {
+        $messageId = 'temp_' . rand(1000, 9999);
+    }
 
-        // 3. Preparar respuesta
-        $response = [
-            'type' => 'chat_message',
-            'message_id' => $messageId,
-            'chat_id' => $chatId,
-            'user_id' => $userId,
-            'contenido' => $content,
-            'tipo' => $data['tipo'] ?? 'texto',
-            'timestamp' => date('c'),
-            'temp_id' => $tempId,
-            'leido' => 0,
-            'user_name' => $data['user_name'] ?? 'Usuario',
-            'status' => 'sent',
-            'action' => 'new_message'
-        ];
+    // 3. Preparar respuesta del mensaje
+    $response = [
+        'type' => 'chat_message',
+        'message_id' => $messageId,
+        'chat_id' => $chatId,
+        'user_id' => $userId,
+        'contenido' => $content,
+        'tipo' => $data['tipo'] ?? 'texto',
+        'timestamp' => date('c'),
+        'temp_id' => $tempId,
+        'leido' => 0,
+        'user_name' => $data['user_name'] ?? 'Usuario',
+        'status' => 'sent',
+        'action' => 'new_message'
+    ];
 
-        // 4. Enviar a todos en el chat
-        $sentCount = 0;
-        if (isset($this->sessions[$chatId])) {
-            foreach ($this->sessions[$chatId] as $client) {
-                try {
-                    $client->send(json_encode($response));
-                    $sentCount++;
-
-                    // Si no es el remitente, notificar nueva actualización
-                    if (isset($client->userId) && $client->userId != $userId) {
-                        $this->notifyNewMessage($chatId, $response, $userId);
-                    }
-                } catch (\Exception $e) {
-                    $this->logToFile("❌ Error enviando a cliente: {$e->getMessage()}");
-                }
+    // 4. Obtener información actualizada del chat
+    $chatUpdateData = null;
+    if ($this->chatModel && $messageId) {
+        try {
+            // Obtener información completa del mensaje
+            $fullMessage = $this->chatModel->getMessageById($messageId);
+            if ($fullMessage) {
+                $response = array_merge($response, $fullMessage);
             }
-        } else {
-            $from->send(json_encode($response));
-            $sentCount = 1;
+
+            // Obtener información actualizada del chat para la lista
+            $chatUpdateData = $this->getChatUpdateData($chatId, $userId);
+        } catch (\Exception $e) {
+            $this->logToFile("⚠️ Error obteniendo datos del chat: " . $e->getMessage());
+        }
+    }
+
+    // 5. Enviar a todos en el chat
+    $sentCount = 0;
+    $otherUsers = [];
+    
+    if (isset($this->sessions[$chatId])) {
+        foreach ($this->sessions[$chatId] as $client) {
+            try {
+                // Enviar el mensaje
+                $client->send(json_encode($response));
+                $sentCount++;
+
+                // Registrar otros usuarios conectados
+                if (isset($client->userId) && $client->userId != $userId) {
+                    $otherUsers[] = $client->userId;
+                    
+                    // Si no es el remitente, enviar notificación de chat actualizado
+                    $chatUpdate = $this->prepareChatUpdateForUser($chatId, $client->userId, $response);
+                    $client->send(json_encode($chatUpdate));
+                    
+                    // También enviar notificación de nuevo mensaje
+                    $this->sendNewMessageNotification($client, $chatId, $response);
+                }
+            } catch (\Exception $e) {
+                $this->logToFile("❌ Error enviando a cliente: {$e->getMessage()}");
+            }
+        }
+    } else {
+        $from->send(json_encode($response));
+        $sentCount = 1;
+    }
+
+    // 6. Enviar actualización de la lista de chats al remitente también
+    if ($chatUpdateData) {
+        $from->send(json_encode([
+            'type' => 'chat_list_update',
+            'action' => 'update_chat',
+            'chat_id' => $chatId,
+            'data' => $chatUpdateData,
+            'timestamp' => time()
+        ]));
+    }
+
+    $this->logToFile("📤 Mensaje enviado a {$sentCount} cliente(s). Otros usuarios: " . implode(', ', $otherUsers));
+}
+
+/**
+ * Obtener datos actualizados del chat para la lista
+ */
+private function getChatUpdateData($chatId, $excludeUserId)
+{
+    try {
+        if (!$this->chatModel) return null;
+
+        // Obtener información del chat
+        $sql = "SELECT 
+                    c.id as chat_id,
+                    c.name as chat_name,
+                    c.last_message_at,
+                    u.id as other_user_id,
+                    u.name as other_user_name,
+                    u.avatar as other_user_avatar,
+                    (SELECT contenido FROM mensajes WHERE chat_id = c.id ORDER BY id DESC LIMIT 1) as last_message,
+                    (SELECT COUNT(*) FROM mensajes WHERE chat_id = c.id AND leido = 0 AND user_id != ?) as unread_count
+                FROM chats c
+                JOIN chat_usuarios cu1 ON c.id = cu1.chat_id AND cu1.user_id = ?
+                JOIN chat_usuarios cu2 ON c.id = cu2.chat_id AND cu2.user_id != ?
+                JOIN users u ON u.id = cu2.user_id
+                WHERE c.id = ?
+                LIMIT 1";
+
+        $result = $this->chatModel->query($sql, [$excludeUserId, $excludeUserId, $excludeUserId, $chatId]);
+        
+        if (!empty($result)) {
+            $chatData = $result[0];
+            
+            return [
+                'chat_id' => $chatData['chat_id'],
+                'chat_name' => $chatData['chat_name'] ?? 'Chat privado',
+                'last_message' => $chatData['last_message'] ?? '',
+                'last_message_at' => $chatData['last_message_at'],
+                'unread_count' => (int)$chatData['unread_count'],
+                'other_user' => [
+                    'id' => $chatData['other_user_id'],
+                    'name' => $chatData['other_user_name'],
+                    'avatar' => $chatData['other_user_avatar']
+                ],
+                'updated_at' => date('c')
+            ];
+        }
+        
+        return null;
+    } catch (\Exception $e) {
+        $this->logToFile("❌ Error en getChatUpdateData: " . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * Preparar actualización de chat para un usuario específico
+ */
+private function prepareChatUpdateForUser($chatId, $userId, $messageData)
+{
+    try {
+        if (!$this->chatModel) {
+            return [
+                'type' => 'chat_updated',
+                'chat_id' => $chatId,
+                'action' => 'bump',
+                'timestamp' => time()
+            ];
         }
 
-        $this->logToFile("📤 Mensaje enviado a {$sentCount} cliente(s)");
+        // Obtener datos específicos para este usuario
+        $sql = "SELECT 
+                    c.id as chat_id,
+                    c.name as chat_name,
+                    c.last_message_at,
+                    (SELECT contenido FROM mensajes WHERE chat_id = c.id ORDER BY id DESC LIMIT 1) as last_message,
+                    (SELECT COUNT(*) FROM mensajes WHERE chat_id = c.id AND leido = 0 AND user_id != ?) as unread_count
+                FROM chats c
+                WHERE c.id = ?";
+
+        $result = $this->chatModel->query($sql, [$userId, $chatId]);
+        
+        if (!empty($result)) {
+            $chatData = $result[0];
+            
+            return [
+                'type' => 'chat_updated',
+                'action' => 'new_message',
+                'chat_id' => $chatId,
+                'data' => [
+                    'chat_id' => $chatData['chat_id'],
+                    'chat_name' => $chatData['chat_name'] ?? 'Chat privado',
+                    'last_message' => $messageData['contenido'] ?? $chatData['last_message'],
+                    'last_message_at' => $chatData['last_message_at'],
+                    'unread_count' => (int)$chatData['unread_count'] + 1, // Incrementar contador
+                    'sender_id' => $messageData['user_id'] ?? null,
+                    'sender_name' => $messageData['user_name'] ?? 'Usuario',
+                    'message_type' => $messageData['tipo'] ?? 'texto',
+                    'preview' => $this->getMessagePreview($messageData['contenido'] ?? '', $messageData['tipo'] ?? 'texto'),
+                    'timestamp' => date('c')
+                ]
+            ];
+        }
+        
+        return [
+            'type' => 'chat_updated',
+            'chat_id' => $chatId,
+            'action' => 'update',
+            'timestamp' => time()
+        ];
+    } catch (\Exception $e) {
+        $this->logToFile("❌ Error en prepareChatUpdateForUser: " . $e->getMessage());
+        return [
+            'type' => 'chat_updated',
+            'chat_id' => $chatId,
+            'action' => 'refresh',
+            'timestamp' => time()
+        ];
     }
+}
+
+/**
+ * Enviar notificación de nuevo mensaje
+ */
+private function sendNewMessageNotification($client, $chatId, $messageData)
+{
+    try {
+        $notification = [
+            'type' => 'new_message_notification',
+            'chat_id' => $chatId,
+            'message_id' => $messageData['message_id'] ?? null,
+            'sender_id' => $messageData['user_id'] ?? null,
+            'sender_name' => $messageData['user_name'] ?? 'Alguien',
+            'preview' => $this->getMessagePreview($messageData['contenido'] ?? '', $messageData['tipo'] ?? 'texto'),
+            'message_type' => $messageData['tipo'] ?? 'texto',
+            'unread_count' => 1,
+            'timestamp' => time(),
+            'sound' => true, // Para que el frontend reproduzca sonido
+            'badge' => true  // Para que el frontend actualice el badge
+        ];
+
+        $client->send(json_encode($notification));
+        $this->logToFile("🔔 Notificación enviada a usuario {$client->userId}");
+    } catch (\Exception $e) {
+        $this->logToFile("❌ Error enviando notificación: " . $e->getMessage());
+    }
+}
+
+/**
+ * Obtener preview del mensaje
+ */
+private function getMessagePreview($content, $type)
+{
+    if ($type === 'imagen') {
+        return '📷 Imagen';
+    } elseif ($type === 'archivo') {
+        return '📎 Archivo';
+    } elseif ($type === 'audio') {
+        return '🎵 Audio';
+    } else {
+        // Limitar texto a 50 caracteres
+        return strlen($content) > 50 ? substr($content, 0, 47) . '...' : $content;
+    }
+}
+
+
+
+/**
+ * Broadcast actualización de conteo no leído
+ */
+private function broadcastUnreadCountUpdate($userId)
+{
+    try {
+        $totalUnread = $this->getTotalUnreadCount($userId);
+        
+        // Buscar todas las conexiones de este usuario
+        foreach ($this->clients as $client) {
+            if (isset($client->userId) && $client->userId == $userId) {
+                $client->send(json_encode([
+                    'type' => 'unread_count_update',
+                    'total_unread' => $totalUnread,
+                    'timestamp' => time()
+                ]));
+            }
+        }
+    } catch (\Exception $e) {
+        $this->logToFile("❌ Error en broadcastUnreadCountUpdate: " . $e->getMessage());
+    }
+}
+
+/**
+ * Obtener conteo total de no leídos para un usuario
+ */
+private function getTotalUnreadCount($userId)
+{
+    try {
+        if (!$this->chatModel) return 0;
+        
+        $sql = "SELECT SUM(unread_count) as total 
+                FROM (
+                    SELECT COUNT(*) as unread_count 
+                    FROM mensajes m
+                    JOIN chats c ON m.chat_id = c.id
+                    JOIN chat_usuarios cu ON c.id = cu.chat_id
+                    WHERE cu.user_id = ? 
+                    AND m.user_id != ? 
+                    AND m.leido = 0
+                    GROUP BY m.chat_id
+                ) as counts";
+        
+        $result = $this->chatModel->query($sql, [$userId, $userId]);
+        
+        return !empty($result) ? (int)$result[0]['total'] : 0;
+    } catch (\Exception $e) {
+        $this->logToFile("❌ Error en getTotalUnreadCount: " . $e->getMessage());
+        return 0;
+    }
+}
     private function handleMarkAsRead($from, $data)
     {
         $chatId = $data['chat_id'] ?? null;
@@ -1297,7 +1552,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
             // Usar ChatModel para consultar notificaciones pendientes
             $sql = "SELECT id, chat_id, user_id, message_type, message_data, created_at 
-                    FROM notifications 
+                    FROM websocket_notifications 
                     WHERE status = 'pending' 
                     AND processed_at IS NULL 
                     ORDER BY created_at ASC 
@@ -1381,7 +1636,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 return false;
             }
 
-            $sql = "UPDATE notifications 
+            $sql = "UPDATE websocket_notifications 
                     SET status = ?, 
                         processed_at = NOW() 
                     WHERE id = ?";
