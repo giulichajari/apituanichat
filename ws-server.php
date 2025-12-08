@@ -844,6 +844,7 @@ private function handleInitCall($from, $data)
             'from_name' => $callerName,
             'to' => $toUserId,
             'chat_id' => $chatId,
+                    'caller_name' => $callerName,   // ⭐ Cambiado de 'from_name' a 'caller_name'
             'timestamp' => $data['timestamp'] ?? date('Y-m-d H:i:s'),
             'caller_name' => $callerName
         ]));
