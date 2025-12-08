@@ -548,62 +548,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         echo "❌ Error: {$e->getMessage()}\n";
     }
 }
-/**
- * Maneja inicio de llamada
- */
-private function handleInitCall($from, $data)
-{
-    echo "📞 Iniciando llamada: " . json_encode($data) . "\n";
-    
-    $userId = $this->getUserIdFromConnection($from);
-    $sessionId = $data['session_id'] ?? uniqid('call_', true);
-    $toUserId = $data['to'] ?? $data['other_user_id'] ?? null;
-    $chatId = $data['chat_id'] ?? null;
-    
-    // Validar datos
-    if (!$userId || !$toUserId || !$chatId) {
-        $from->send(json_encode([
-            'type' => 'call_error',
-            'message' => 'Datos incompletos para iniciar llamada'
-        ]));
-        return;
-    }
-    
-    // Buscar conexión del destinatario
-    $toConnection = $this->findConnectionByUserId($toUserId);
-    
-    if ($toConnection) {
-        // Enviar notificación de llamada entrante
-        $toConnection->send(json_encode([
-            'type' => 'incoming_call',
-            'session_id' => $sessionId,
-            'from' => $userId,
-            'from_name' => $this->getUserName($userId),
-            'to' => $toUserId,
-            'chat_id' => $chatId,
-            'timestamp' => date('Y-m-d H:i:s')
-        ]));
-        
-        echo "📞 Notificación de llamada enviada a usuario {$toUserId}\n";
-        
-        // Confirmar al llamante
-        $from->send(json_encode([
-            'type' => 'call_initiated',
-            'session_id' => $sessionId,
-            'to' => $toUserId,
-            'chat_id' => $chatId,
-            'status' => 'ringing'
-        ]));
-    } else {
-        // Destinatario no conectado
-        $from->send(json_encode([
-            'type' => 'call_error',
-            'session_id' => $sessionId,
-            'message' => 'El usuario no está conectado',
-            'status' => 'user_offline'
-        ]));
-    }
-}
+
 
 /**
  * Maneja oferta de WebRTC
@@ -772,25 +717,130 @@ private function handleCallReject($from, $data)
     // ===================== HANDLERS PRINCIPALES =====================
 
 
-    /**
- * Obtiene el ID de usuario de una conexión
+// En tu ws-server.php, línea 793 y alrededor
+
+/**
+ * Busca conexión por ID de usuario - CORREGIDO
+ */
+private function findConnectionByUserId($userId)
+{
+    echo "🔍 Buscando conexión para userId: " . $userId . "\n";
+    
+    // Validar que userId sea numérico
+    if (!is_numeric($userId)) {
+        echo "❌ userId no es numérico: " . $userId . "\n";
+        return null;
+    }
+    
+    $userId = (int)$userId; // Asegurar que sea entero
+    
+    // Buscar en el array de clientes
+    foreach ($this->clients as $storedUserId => $connection) {
+        echo "  Comparando: storedUserId={$storedUserId} (tipo: " . gettype($storedUserId) . ")\n";
+        
+        // Comparar como enteros
+        if ((int)$storedUserId === $userId) {
+            echo "✅ Conexión encontrada para userId: {$userId}\n";
+            return $connection;
+        }
+    }
+    
+
+    
+    return null;
+}
+
+/**
+ * Maneja inicio de llamada - CORREGIDO
+ */
+private function handleInitCall($from, $data)
+{
+    echo "📞 Iniciando llamada: " . json_encode($data) . "\n";
+    
+    // Obtener userId del remitente
+    $userId = $this->getUserIdFromConnection($from);
+    $sessionId = $data['session_id'] ?? uniqid('call_', true);
+    $toUserId = isset($data['to']) ? (int)$data['to'] : null;
+    $chatId = $data['chat_id'] ?? null;
+    $callerName = $data['caller_name'] ?? 'Usuario';
+    
+    echo "📞 Datos de llamada: from={$userId}, to={$toUserId}, chat={$chatId}, session={$sessionId}\n";
+    
+    // Validar datos
+    if (!$userId || !$toUserId || !$chatId) {
+        echo "❌ Datos incompletos para iniciar llamada\n";
+        $from->send(json_encode([
+            'type' => 'call_error',
+            'message' => 'Datos incompletos para iniciar llamada',
+            'session_id' => $sessionId
+        ]));
+        return;
+    }
+    
+    // Buscar conexión del destinatario
+    $toConnection = $this->findConnectionByUserId($toUserId);
+    
+    if ($toConnection) {
+        // Enviar notificación de llamada entrante
+        $toConnection->send(json_encode([
+            'type' => 'incoming_call',
+            'session_id' => $sessionId,
+            'from' => $userId,
+            'from_name' => $callerName,
+            'to' => $toUserId,
+            'chat_id' => $chatId,
+            'timestamp' => $data['timestamp'] ?? date('Y-m-d H:i:s')
+        ]));
+        
+        echo "📞 Notificación de llamada enviada a usuario {$toUserId}\n";
+        
+        // Confirmar al llamante
+        $from->send(json_encode([
+            'type' => 'call_initiated',
+            'session_id' => $sessionId,
+            'to' => $toUserId,
+            'chat_id' => $chatId,
+            'status' => 'ringing',
+            'timestamp' => date('Y-m-d H:i:s')
+        ]));
+        
+        // También enviar a todos en el chat (opcional)
+        $this->broadcastToChat($chatId, [
+            'type' => 'call_status',
+            'session_id' => $sessionId,
+            'status' => 'ringing',
+            'from' => $userId,
+            'to' => $toUserId,
+            'chat_id' => $chatId,
+            'timestamp' => date('Y-m-d H:i:s')
+        ], $from);
+        
+    } else {
+        // Destinatario no conectado
+        echo "❌ Destinatario {$toUserId} no conectado\n";
+        $from->send(json_encode([
+            'type' => 'call_error',
+            'session_id' => $sessionId,
+            'message' => 'El usuario no está conectado',
+            'status' => 'user_offline'
+        ]));
+    }
+}
+
+/**
+ * Obtiene el ID de usuario de una conexión - CORREGIDO
  */
 private function getUserIdFromConnection($connection)
 {
     foreach ($this->clients as $userId => $conn) {
         if ($conn === $connection) {
-            return $userId;
+            echo "✅ Usuario encontrado en conexión: {$userId}\n";
+            return (int)$userId; // Asegurar que sea entero
         }
     }
+    
+    echo "❌ No se pudo encontrar userId para la conexión\n";
     return null;
-}
-
-/**
- * Busca conexión por ID de usuario
- */
-private function findConnectionByUserId($userId)
-{
-    return $this->clients[$userId] ?? null;
 }
 
 /**
