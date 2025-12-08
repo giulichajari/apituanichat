@@ -771,9 +771,9 @@ private function findConnectionByUserId($userId)
     
     return null;
 }
-/**
- * Maneja inicio de llamada - CORREGIDO
- */
+
+
+
 private function handleInitCall($from, $data)
 {
     echo "\n📞 ========== INICIANDO LLAMADA ==========\n";
