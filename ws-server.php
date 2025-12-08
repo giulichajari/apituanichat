@@ -776,7 +776,7 @@ private function findConnectionByUserId($userId)
  */
 private function handleInitCall($from, $data)
 {
-    echo "📞 ========== INICIANDO LLAMADA ==========\n";
+    echo "\n📞 ========== INICIANDO LLAMADA ==========\n";
     echo "📦 Datos recibidos: " . json_encode($data) . "\n";
     
     // Obtener userId DEL MENSAJE, no de la conexión (temporalmente)
@@ -828,30 +828,69 @@ private function handleInitCall($from, $data)
         return;
     }
     
+    // ⭐⭐ DEBUG: Mostrar estado actual
+    echo "🔍 Estado actual de conexiones:\n";
+    $this->debugUserConnections();
+    
     // Buscar conexión del destinatario
     echo "🔍 Buscando conexión para usuario {$toUserId}...\n";
     $toConnection = $this->findConnectionByUserId($toUserId);
     
     if ($toConnection) {
         // Destinatario CONECTADO
-        echo "✅ Destinatario {$toUserId} encontrado y conectado\n";
+        echo "✅ Destinatario {$toUserId} encontrado y conectado (conexión #{$toConnection->resourceId})\n";
         
-        // Enviar notificación de llamada entrante
-        $toConnection->send(json_encode([
+        // ⭐⭐ AGREGAR ESTO - MUESTRA EL JSON COMPLETO
+        $notificationData = [
             'type' => 'incoming_call',
             'session_id' => $sessionId,
             'from' => $userId,
-            'from_name' => $callerName,
             'to' => $toUserId,
             'chat_id' => $chatId,
-                    'caller_name' => $callerName,   // ⭐ Cambiado de 'from_name' a 'caller_name'
-            'timestamp' => $data['timestamp'] ?? date('Y-m-d H:i:s'),
-            'caller_name' => $callerName
-        ]));
+            'caller_name' => $callerName,
+            'timestamp' => $data['timestamp'] ?? date('Y-m-d H:i:s')
+        ];
         
-        echo "📞 Notificación de llamada enviada a usuario {$toUserId}\n";
+        echo "📤📤📤 ENVIANDO A USUARIO {$toUserId} (conexión #{$toConnection->resourceId}):\n";
+        echo json_encode($notificationData, JSON_PRETTY_PRINT) . "\n";
+        echo "📤📤📤 FIN DEL MENSAJE\n";
         
-        // Confirmar al llamante
+        try {
+            $toConnection->send(json_encode($notificationData));
+            echo "✅ Mensaje enviado exitosamente a conexión #{$toConnection->resourceId}\n";
+            
+            // ⭐⭐ VERIFICA SI LA CONEXIÓN ESTÁ CERRADA
+            if (method_exists($toConnection, 'isClosed') && $toConnection->isClosed()) {
+                echo "⚠️⚠️⚠️ ADVERTENCIA: La conexión #{$toConnection->resourceId} está CERRADA\n";
+            }
+            
+            // ⭐⭐ ENVIAR TAMBIÉN A TODAS LAS CONEXIONES DEL USUARIO (por seguridad)
+            if (isset($this->userConnections[$toUserId]) && count($this->userConnections[$toUserId]) > 1) {
+                echo "🔍 Usuario {$toUserId} tiene múltiples conexiones, enviando a todas...\n";
+                $sentCount = 0;
+                foreach ($this->userConnections[$toUserId] as $connId => $connection) {
+                    if ($connection !== $toConnection) {
+                        try {
+                            $connection->send(json_encode($notificationData));
+                            echo "  ✅ También enviado a conexión #{$connId}\n";
+                            $sentCount++;
+                        } catch (\Exception $e) {
+                            echo "  ❌ Error enviando a conexión #{$connId}: " . $e->getMessage() . "\n";
+                        }
+                    }
+                }
+                echo "📤 Total enviado a {$sentCount} conexiones adicionales\n";
+            }
+            
+        } catch (\Exception $e) {
+            echo "❌❌❌ ERROR CRÍTICO al enviar: " . $e->getMessage() . "\n";
+            
+            // Intentar enviar a través de otra conexión
+            $this->sendToAllUserConnections($toUserId, $notificationData);
+        }
+        
+        // ⭐⭐ CONFIRMAR AL LLAMANTE QUE LA LLAMADA SE INICIÓ
+        echo "📤 Enviando confirmación al llamante {$userId}...\n";
         $from->send(json_encode([
             'type' => 'call_initiated',
             'session_id' => $sessionId,
@@ -859,8 +898,10 @@ private function handleInitCall($from, $data)
             'chat_id' => $chatId,
             'status' => 'ringing',
             'timestamp' => date('Y-m-d H:i:s'),
-            'message' => 'Llamando...'
+            'message' => 'Llamando...',
+            'caller_name' => $callerName
         ]));
+        echo "✅ Confirmación enviada al llamante\n";
         
     } else {
         // Destinatario NO CONECTADO
@@ -883,6 +924,68 @@ private function handleInitCall($from, $data)
     }
     
     echo "📞 ========== LLAMADA PROCESADA ==========\n\n";
+}
+
+/**
+ * Método auxiliar para enviar a todas las conexiones de un usuario
+ */
+private function sendToAllUserConnections($userId, $messageData)
+{
+    if (!isset($this->userConnections[$userId]) || empty($this->userConnections[$userId])) {
+        echo "❌ Usuario {$userId} no tiene conexiones activas\n";
+        return false;
+    }
+    
+    $jsonMessage = json_encode($messageData);
+    $sentCount = 0;
+    
+    echo "🔄 Enviando a TODAS las conexiones del usuario {$userId}...\n";
+    
+    foreach ($this->userConnections[$userId] as $connId => $connection) {
+        echo "  → Enviando a conexión #{$connId}... ";
+        
+        try {
+            $connection->send($jsonMessage);
+            echo "✅ OK\n";
+            $sentCount++;
+        } catch (\Exception $e) {
+            echo "❌ Error: " . $e->getMessage() . "\n";
+        }
+    }
+    
+    echo "📤 Enviado a {$sentCount} de " . count($this->userConnections[$userId]) . " conexiones\n";
+    return $sentCount > 0;
+}
+
+/**
+ * Método para debug de conexiones
+ */
+private function debugUserConnections()
+{
+    echo "=== DEBUG CONEXIONES ===\n";
+    
+    if (empty($this->userConnections)) {
+        echo "  No hay conexiones de usuarios registradas\n";
+    } else {
+        foreach ($this->userConnections as $userId => $connections) {
+            echo "Usuario {$userId} (" . count($connections) . " conexiones):\n";
+            foreach ($connections as $connId => $conn) {
+                echo "  - Conexión #{$connId}";
+                if (isset($conn->currentChat)) {
+                    echo " (en chat: {$conn->currentChat})";
+                }
+                if (isset($conn->userId)) {
+                    echo " [userId: {$conn->userId}]";
+                }
+                // Verificar si la conexión está cerrada
+                if (method_exists($conn, 'isClosed')) {
+                    echo $conn->isClosed() ? " [CERRADA]" : " [ACTIVA]";
+                }
+                echo "\n";
+            }
+        }
+    }
+    echo "=====================\n";
 }
 /**
  * Crea notificación push para llamada perdida
