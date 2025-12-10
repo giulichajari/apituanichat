@@ -445,102 +445,104 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
     }
 
- public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
+public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
 {
-    echo date('H:i:s') . " 📨 #{$from->resourceId} → " . substr($msg, 0, 200) . "\n";
-    $this->logToFile("📨 Mensaje recibido: " . $msg);
+    echo date('H:i:s') . " 📨 #{$from->resourceId} → " . (is_string($msg) ? substr($msg, 0, 200) : "[BINARIO " . strlen($msg) . " bytes]") . "\n";
+    $this->logToFile("📨 Mensaje recibido: " . (is_string($msg) ? $msg : "[BINARIO " . strlen($msg) . " bytes]"));
 
     try {
-        $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
+        if (is_string($msg) && $this->isJson($msg)) {
+            // 🔹 Mensaje JSON normal → chat, auth, ping, llamadas
+            $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
 
-        if (!isset($data['type'])) {
-            echo "❌ Sin tipo de mensaje\n";
-            return;
-        }
+            if (!isset($data['type'])) {
+                echo "❌ Sin tipo de mensaje\n";
+                return;
+            }
 
-        $this->logToFile("🎯 Tipo recibido: " . $data['type']);
+            $this->logToFile("🎯 Tipo recibido: " . $data['type']);
 
-        switch ($data['type']) {
-            case 'ping':
-                $this->handlePing($from);
-                break;
+            switch ($data['type']) {
+                case 'ping':
+                    $this->handlePing($from);
+                    break;
 
-            case 'auth':
-                $this->handleAuth($from, $data);
-                break;
+                case 'auth':
+                    $this->handleAuth($from, $data);
+                    break;
 
-            case 'join_chat':
-                $this->handleJoinChat($from, $data);
-                break;
+                case 'join_chat':
+                    $this->handleJoinChat($from, $data);
+                    break;
 
-            case 'chat_message':
-                $this->handleChatMessage($from, $data);
-                break;
+                case 'chat_message':
+                    $this->handleChatMessage($from, $data);
+                    break;
 
-            case 'file_upload':
-                $this->handleFileUpload($from, $data);
-                break;
+                case 'file_upload':
+                case 'image_upload':
+                    $this->handleFileUpload($from, $data);
+                    break;
 
-            case 'image_upload':
-                $this->handleFileUpload($from, $data);
-                break;
+                case 'file_uploaded':
+                case 'image_uploaded':
+                    $this->handleFileUploadNotification($from, $data);
+                    break;
 
-            case 'file_uploaded':
-            case 'image_uploaded':
-                $this->handleFileUploadNotification($from, $data);
-                break;
+                case 'mark_as_read':
+                    $this->handleMarkAsRead($from, $data);
+                    break;
 
-            case 'mark_as_read':
-                $this->handleMarkAsRead($from, $data);
-                break;
+                // 🔹 Llamadas WebRTC
+                case 'init_call':
+                    $this->handleInitCall($from, $data);
+                    break;
+                case 'call_offer':
+                    $this->handleCallOffer($from, $data);
+                    break;
+                case 'call_answer':
+                    $this->handleCallAnswer($from, $data);
+                    break;
+                case 'call_candidate':
+                    $this->handleCallCandidate($from, $data);
+                    break;
+                case 'call_ended':
+                    $this->handleCallEnded($from, $data);
+                    break;
+                case 'call_reject':
+                    $this->handleCallReject($from, $data);
+                    break;
 
-            // ✅ AÑADIR ESTOS NUEVOS CASOS PARA LLAMADAS
-            case 'init_call':
-                $this->handleInitCall($from, $data);
-                break;
+                case 'heartbeat':
+                    $this->handleHeartbeat($from, $data);
+                    break;
 
-            case 'call_offer':
-                $this->handleCallOffer($from, $data);
-                break;
+                case 'get_online_users':
+                    $this->handleGetOnlineUsers($from, $data);
+                    break;
 
-            case 'call_answer':
-                $this->handleCallAnswer($from, $data);
-                break;
+                case 'get_user_status':
+                    $this->handleGetUserStatus($from, $data);
+                    break;
 
-            case 'call_candidate':
-                $this->handleCallCandidate($from, $data);
-                break;
+                default:
+                    echo "⚠️ Tipo desconocido: {$data['type']}\n";
+                    $from->send(json_encode([
+                        'type' => 'error',
+                        'message' => 'Tipo no soportado: ' . $data['type']
+                    ]));
+            }
+        } else {
+            // 🔹 Mensaje binario → audio o cualquier otro stream
+            echo date('H:i:s') . " 🎵 Mensaje binario recibido: " . strlen($msg) . " bytes\n";
+            $this->logToFile("🎵 Mensaje binario recibido: " . strlen($msg) . " bytes");
 
-            case 'call_ended':
-                $this->handleCallEnded($from, $data);
-                break;
-
-            case 'call_reject':
-                $this->handleCallReject($from, $data);
-                break;
-
-            case 'test':
-                $this->handleTest($from, $data);
-                break;
-
-            case 'heartbeat':
-                $this->handleHeartbeat($from, $data);
-                break;
-
-            case 'get_online_users':
-                $this->handleGetOnlineUsers($from, $data);
-                break;
-
-            case 'get_user_status':
-                $this->handleGetUserStatus($from, $data);
-                break;
-
-            default:
-                echo "⚠️ Tipo desconocido: {$data['type']}\n";
-                $from->send(json_encode([
-                    'type' => 'error',
-                    'message' => 'Tipo no soportado: ' . $data['type']
-                ]));
+            // Reenviar binario a todos menos al emisor
+            foreach ($this->clients as $client) {
+                if ($from !== $client) {
+                    $client->send($msg);
+                }
+            }
         }
     } catch (\JsonException $e) {
         echo "❌ JSON inválido: {$e->getMessage()}\n";
@@ -548,6 +550,16 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         echo "❌ Error: {$e->getMessage()}\n";
     }
 }
+
+/**
+ * 🔹 Helper para detectar si un string es JSON válido
+ */
+private function isJson($string): bool {
+    if (!is_string($string)) return false;
+    json_decode($string);
+    return json_last_error() === JSON_ERROR_NONE;
+}
+
 
 
 /**
