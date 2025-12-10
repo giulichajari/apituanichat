@@ -445,285 +445,288 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
     }
 
-public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
-{
-    echo date('H:i:s') . " 📨 #{$from->resourceId} → " . (is_string($msg) ? substr($msg, 0, 200) : "[BINARIO " . strlen($msg) . " bytes]") . "\n";
-    $this->logToFile("📨 Mensaje recibido: " . (is_string($msg) ? $msg : "[BINARIO " . strlen($msg) . " bytes]"));
+    public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
+    {
+        echo date('H:i:s') . " 📨 #{$from->resourceId} → " . (is_string($msg) ? substr($msg, 0, 200) : "[BINARIO " . strlen($msg) . " bytes]") . "\n";
+        $this->logToFile("📨 Mensaje recibido: " . (is_string($msg) ? $msg : "[BINARIO " . strlen($msg) . " bytes]"));
 
-    try {
-        if (is_string($msg) && $this->isJson($msg)) {
-            // 🔹 Mensaje JSON normal → chat, auth, ping, llamadas
-            $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
+        try {
+            if (is_string($msg) && $this->isJson($msg)) {
+                // 🔹 Mensaje JSON normal → chat, auth, ping, llamadas
+                $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
 
-            if (!isset($data['type'])) {
-                echo "❌ Sin tipo de mensaje\n";
-                return;
-            }
+                if (!isset($data['type'])) {
+                    echo "❌ Sin tipo de mensaje\n";
+                    return;
+                }
 
-            $this->logToFile("🎯 Tipo recibido: " . $data['type']);
+                $this->logToFile("🎯 Tipo recibido: " . $data['type']);
 
-            switch ($data['type']) {
-                case 'ping':
-                    $this->handlePing($from);
-                    break;
+                switch ($data['type']) {
+                    case 'ping':
+                        $this->handlePing($from);
+                        break;
 
-                case 'auth':
-                    $this->handleAuth($from, $data);
-                    break;
+                    case 'auth':
+                        $this->handleAuth($from, $data);
+                        break;
 
-                case 'join_chat':
-                    $this->handleJoinChat($from, $data);
-                    break;
+                    case 'join_chat':
+                        $this->handleJoinChat($from, $data);
+                        break;
 
-                case 'chat_message':
-                    $this->handleChatMessage($from, $data);
-                    break;
+                    case 'chat_message':
+                        $this->handleChatMessage($from, $data);
+                        break;
 
-                case 'file_upload':
-                case 'image_upload':
-                    $this->handleFileUpload($from, $data);
-                    break;
+                    case 'file_upload':
+                    case 'image_upload':
+                        $this->handleFileUpload($from, $data);
+                        break;
 
-                case 'file_uploaded':
-                case 'image_uploaded':
-                    $this->handleFileUploadNotification($from, $data);
-                    break;
+                    case 'file_uploaded':
+                    case 'image_uploaded':
+                        $this->handleFileUploadNotification($from, $data);
+                        break;
 
-                case 'mark_as_read':
-                    $this->handleMarkAsRead($from, $data);
-                    break;
+                    case 'mark_as_read':
+                        $this->handleMarkAsRead($from, $data);
+                        break;
 
-                // 🔹 Llamadas WebRTC
-                case 'init_call':
-                    $this->handleInitCall($from, $data);
-                    break;
-                case 'call_offer':
-                    $this->handleCallOffer($from, $data);
-                    break;
-                case 'call_answer':
-                    $this->handleCallAnswer($from, $data);
-                    break;
-                case 'call_candidate':
-                    $this->handleCallCandidate($from, $data);
-                    break;
-                case 'call_ended':
-                    $this->handleCallEnded($from, $data);
-                    break;
-                case 'call_reject':
-                    $this->handleCallReject($from, $data);
-                    break;
+                    // 🔹 Llamadas WebRTC
+                    case 'init_call':
+                        $this->handleInitCall($from, $data);
+                        break;
+                    case 'call_offer':
+                        $this->handleCallOffer($from, $data);
+                        break;
+                    case 'call_answer':
+                        $this->handleCallAnswer($from, $data);
+                        break;
+                    case 'call_candidate':
+                        $this->handleCallCandidate($from, $data);
+                        break;
+                    case 'call_ended':
+                        $this->handleCallEnded($from, $data);
+                        break;
+                    case 'call_reject':
+                        $this->handleCallReject($from, $data);
+                        break;
 
-                case 'heartbeat':
-                    $this->handleHeartbeat($from, $data);
-                    break;
+                    case 'heartbeat':
+                        $this->handleHeartbeat($from, $data);
+                        break;
 
-                case 'get_online_users':
-                    $this->handleGetOnlineUsers($from, $data);
-                    break;
+                    case 'get_online_users':
+                        $this->handleGetOnlineUsers($from, $data);
+                        break;
 
-                case 'get_user_status':
-                    $this->handleGetUserStatus($from, $data);
-                    break;
+                    case 'get_user_status':
+                        $this->handleGetUserStatus($from, $data);
+                        break;
+                    case 'incoming_call':
+                        $this->handleInitCall($from, $data);
+                        break;
+                    default:
+                        echo "⚠️ Tipo desconocido: {$data['type']}\n";
+                        $from->send(json_encode([
+                            'type' => 'error',
+                            'message' => 'Tipo no soportado: ' . $data['type']
+                        ]));
+                }
+            } else {
+                // 🔹 Mensaje binario → audio o cualquier otro stream
+                echo date('H:i:s') . " 🎵 Mensaje binario recibido: " . strlen($msg) . " bytes\n";
+                $this->logToFile("🎵 Mensaje binario recibido: " . strlen($msg) . " bytes");
 
-                default:
-                    echo "⚠️ Tipo desconocido: {$data['type']}\n";
-                    $from->send(json_encode([
-                        'type' => 'error',
-                        'message' => 'Tipo no soportado: ' . $data['type']
-                    ]));
-            }
-        } else {
-            // 🔹 Mensaje binario → audio o cualquier otro stream
-            echo date('H:i:s') . " 🎵 Mensaje binario recibido: " . strlen($msg) . " bytes\n";
-            $this->logToFile("🎵 Mensaje binario recibido: " . strlen($msg) . " bytes");
-
-            // Reenviar binario a todos menos al emisor
-            foreach ($this->clients as $client) {
-                if ($from !== $client) {
-                    $client->send($msg);
+                // Reenviar binario a todos menos al emisor
+                foreach ($this->clients as $client) {
+                    if ($from !== $client) {
+                        $client->send($msg);
+                    }
                 }
             }
+        } catch (\JsonException $e) {
+            echo "❌ JSON inválido: {$e->getMessage()}\n";
+        } catch (\Exception $e) {
+            echo "❌ Error: {$e->getMessage()}\n";
         }
-    } catch (\JsonException $e) {
-        echo "❌ JSON inválido: {$e->getMessage()}\n";
-    } catch (\Exception $e) {
-        echo "❌ Error: {$e->getMessage()}\n";
     }
-}
 
-/**
- * 🔹 Helper para detectar si un string es JSON válido
- */
-private function isJson($string): bool {
-    if (!is_string($string)) return false;
-    json_decode($string);
-    return json_last_error() === JSON_ERROR_NONE;
-}
+    /**
+     * 🔹 Helper para detectar si un string es JSON válido
+     */
+    private function isJson($string): bool
+    {
+        if (!is_string($string)) return false;
+        json_decode($string);
+        return json_last_error() === JSON_ERROR_NONE;
+    }
 
 
 
-/**
- * Maneja oferta de WebRTC
- */
-private function handleCallOffer($from, $data)
-{
-    $userId = $this->getUserIdFromConnection($from);
-    $toUserId = $data['to'] ?? null;
-    $sessionId = $data['session_id'] ?? null;
-    $sdp = $data['sdp'] ?? null;
-    
-    if (!$userId || !$toUserId || !$sessionId || !$sdp) {
-        return;
-    }
-    
-    $toConnection = $this->findConnectionByUserId($toUserId);
-    
-    if ($toConnection) {
-        $toConnection->send(json_encode([
-            'type' => 'call_offer',
-            'session_id' => $sessionId,
-            'from' => $userId,
-            'to' => $toUserId,
-            'sdp' => $sdp,
-            'timestamp' => date('Y-m-d H:i:s')
-        ]));
-        
-        echo "📞 Oferta WebRTC enviada de {$userId} a {$toUserId}\n";
-    }
-}
+    /**
+     * Maneja oferta de WebRTC
+     */
+    private function handleCallOffer($from, $data)
+    {
+        $userId = $this->getUserIdFromConnection($from);
+        $toUserId = $data['to'] ?? null;
+        $sessionId = $data['session_id'] ?? null;
+        $sdp = $data['sdp'] ?? null;
 
-/**
- * Maneja respuesta de WebRTC
- */
-private function handleCallAnswer($from, $data)
-{
-    $userId = $this->getUserIdFromConnection($from);
-    $toUserId = $data['to'] ?? null;
-    $sessionId = $data['session_id'] ?? null;
-    $sdp = $data['sdp'] ?? null;
-    
-    if (!$userId || !$toUserId || !$sessionId || !$sdp) {
-        return;
-    }
-    
-    $toConnection = $this->findConnectionByUserId($toUserId);
-    
-    if ($toConnection) {
-        $toConnection->send(json_encode([
-            'type' => 'call_answer',
-            'session_id' => $sessionId,
-            'from' => $userId,
-            'to' => $toUserId,
-            'sdp' => $sdp,
-            'timestamp' => date('Y-m-d H:i:s')
-        ]));
-        
-        echo "📞 Respuesta WebRTC enviada de {$userId} a {$toUserId}\n";
-    }
-}
+        if (!$userId || !$toUserId || !$sessionId || !$sdp) {
+            return;
+        }
 
-/**
- * Maneja candidatos ICE
- */
-private function handleCallCandidate($from, $data)
-{
-    $userId = $this->getUserIdFromConnection($from);
-    $toUserId = $data['to'] ?? null;
-    $sessionId = $data['session_id'] ?? null;
-    $candidate = $data['candidate'] ?? null;
-    
-    if (!$userId || !$toUserId || !$sessionId || !$candidate) {
-        return;
-    }
-    
-    $toConnection = $this->findConnectionByUserId($toUserId);
-    
-    if ($toConnection) {
-        $toConnection->send(json_encode([
-            'type' => 'call_candidate',
-            'session_id' => $sessionId,
-            'from' => $userId,
-            'to' => $toUserId,
-            'candidate' => $candidate,
-            'timestamp' => date('Y-m-d H:i:s')
-        ]));
-        
-        echo "📞 Candidato ICE enviado de {$userId} a {$toUserId}\n";
-    }
-}
-
-/**
- * Maneja fin de llamada
- */
-private function handleCallEnded($from, $data)
-{
-    $userId = $this->getUserIdFromConnection($from);
-    $toUserId = $data['to'] ?? null;
-    $sessionId = $data['session_id'] ?? null;
-    $reason = $data['reason'] ?? 'ended_by_user';
-    
-    if (!$userId || !$sessionId) {
-        return;
-    }
-    
-    // Si hay destinatario, notificarle
-    if ($toUserId) {
         $toConnection = $this->findConnectionByUserId($toUserId);
+
         if ($toConnection) {
             $toConnection->send(json_encode([
-                'type' => 'call_ended',
+                'type' => 'call_offer',
+                'session_id' => $sessionId,
+                'from' => $userId,
+                'to' => $toUserId,
+                'sdp' => $sdp,
+                'timestamp' => date('Y-m-d H:i:s')
+            ]));
+
+            echo "📞 Oferta WebRTC enviada de {$userId} a {$toUserId}\n";
+        }
+    }
+
+    /**
+     * Maneja respuesta de WebRTC
+     */
+    private function handleCallAnswer($from, $data)
+    {
+        $userId = $this->getUserIdFromConnection($from);
+        $toUserId = $data['to'] ?? null;
+        $sessionId = $data['session_id'] ?? null;
+        $sdp = $data['sdp'] ?? null;
+
+        if (!$userId || !$toUserId || !$sessionId || !$sdp) {
+            return;
+        }
+
+        $toConnection = $this->findConnectionByUserId($toUserId);
+
+        if ($toConnection) {
+            $toConnection->send(json_encode([
+                'type' => 'call_answer',
+                'session_id' => $sessionId,
+                'from' => $userId,
+                'to' => $toUserId,
+                'sdp' => $sdp,
+                'timestamp' => date('Y-m-d H:i:s')
+            ]));
+
+            echo "📞 Respuesta WebRTC enviada de {$userId} a {$toUserId}\n";
+        }
+    }
+
+    /**
+     * Maneja candidatos ICE
+     */
+    private function handleCallCandidate($from, $data)
+    {
+        $userId = $this->getUserIdFromConnection($from);
+        $toUserId = $data['to'] ?? null;
+        $sessionId = $data['session_id'] ?? null;
+        $candidate = $data['candidate'] ?? null;
+
+        if (!$userId || !$toUserId || !$sessionId || !$candidate) {
+            return;
+        }
+
+        $toConnection = $this->findConnectionByUserId($toUserId);
+
+        if ($toConnection) {
+            $toConnection->send(json_encode([
+                'type' => 'call_candidate',
+                'session_id' => $sessionId,
+                'from' => $userId,
+                'to' => $toUserId,
+                'candidate' => $candidate,
+                'timestamp' => date('Y-m-d H:i:s')
+            ]));
+
+            echo "📞 Candidato ICE enviado de {$userId} a {$toUserId}\n";
+        }
+    }
+
+    /**
+     * Maneja fin de llamada
+     */
+    private function handleCallEnded($from, $data)
+    {
+        $userId = $this->getUserIdFromConnection($from);
+        $toUserId = $data['to'] ?? null;
+        $sessionId = $data['session_id'] ?? null;
+        $reason = $data['reason'] ?? 'ended_by_user';
+
+        if (!$userId || !$sessionId) {
+            return;
+        }
+
+        // Si hay destinatario, notificarle
+        if ($toUserId) {
+            $toConnection = $this->findConnectionByUserId($toUserId);
+            if ($toConnection) {
+                $toConnection->send(json_encode([
+                    'type' => 'call_ended',
+                    'session_id' => $sessionId,
+                    'from' => $userId,
+                    'reason' => $reason,
+                    'timestamp' => date('Y-m-d H:i:s')
+                ]));
+            }
+        }
+
+        // También notificar a todos en el chat
+        $chatId = $data['chat_id'] ?? null;
+        if ($chatId) {
+            $this->broadcastToChat($chatId, [
+                'type' => 'call_status',
+                'session_id' => $sessionId,
+                'status' => 'ended',
+                'ended_by' => $userId,
+                'reason' => $reason,
+                'timestamp' => date('Y-m-d H:i:s')
+            ], $from);
+        }
+
+        echo "📞 Llamada {$sessionId} terminada por {$userId}\n";
+    }
+
+    /**
+     * Maneja rechazo de llamada
+     */
+    private function handleCallReject($from, $data)
+    {
+        $userId = $this->getUserIdFromConnection($from);
+        $toUserId = $data['to'] ?? null;
+        $sessionId = $data['session_id'] ?? null;
+        $reason = $data['reason'] ?? 'rejected';
+
+        if (!$userId || !$toUserId || !$sessionId) {
+            return;
+        }
+
+        $toConnection = $this->findConnectionByUserId($toUserId);
+
+        if ($toConnection) {
+            $toConnection->send(json_encode([
+                'type' => 'call_rejected',
                 'session_id' => $sessionId,
                 'from' => $userId,
                 'reason' => $reason,
                 'timestamp' => date('Y-m-d H:i:s')
             ]));
+
+            echo "📞 Llamada {$sessionId} rechazada por {$userId}\n";
         }
     }
-    
-    // También notificar a todos en el chat
-    $chatId = $data['chat_id'] ?? null;
-    if ($chatId) {
-        $this->broadcastToChat($chatId, [
-            'type' => 'call_status',
-            'session_id' => $sessionId,
-            'status' => 'ended',
-            'ended_by' => $userId,
-            'reason' => $reason,
-            'timestamp' => date('Y-m-d H:i:s')
-        ], $from);
-    }
-    
-    echo "📞 Llamada {$sessionId} terminada por {$userId}\n";
-}
-
-/**
- * Maneja rechazo de llamada
- */
-private function handleCallReject($from, $data)
-{
-    $userId = $this->getUserIdFromConnection($from);
-    $toUserId = $data['to'] ?? null;
-    $sessionId = $data['session_id'] ?? null;
-    $reason = $data['reason'] ?? 'rejected';
-    
-    if (!$userId || !$toUserId || !$sessionId) {
-        return;
-    }
-    
-    $toConnection = $this->findConnectionByUserId($toUserId);
-    
-    if ($toConnection) {
-        $toConnection->send(json_encode([
-            'type' => 'call_rejected',
-            'session_id' => $sessionId,
-            'from' => $userId,
-            'reason' => $reason,
-            'timestamp' => date('Y-m-d H:i:s')
-        ]));
-        
-        echo "📞 Llamada {$sessionId} rechazada por {$userId}\n";
-    }
-}
 
 
     // ===================== HANDLERS PRINCIPALES =====================
@@ -731,77 +734,70 @@ private function handleCallReject($from, $data)
 
 // En tu ws-server.php, línea 793 y alrededor
 
-/**
- * Busca conexión por ID de usuario - CORREGIDO
- */
-private function findConnectionByUserId($userId)
-{
-    echo "🔍 findConnectionByUserId - Buscando para userId: " . $userId . "\n";
-    
-    // Validar
-    if (!is_numeric($userId)) {
-        echo "❌ userId no es numérico: " . $userId . "\n";
+    /**
+     * Busca conexión por ID de usuario - CORREGIDO
+     */
+    private function findConnectionByUserId($userId)
+    {
+        echo "🔍 findConnectionByUserId - Buscando para userId: " . $userId . "\n";
+
+        // Validar
+        if (!is_numeric($userId)) {
+            echo "❌ userId no es numérico: " . $userId . "\n";
+            return null;
+        }
+
+        $userId = (int)$userId;
+
+        echo "📊 userConnections actuales:\n";
+        foreach ($this->userConnections as $storedUserId => $connections) {
+            echo "  Usuario {$storedUserId}: " . count($connections) . " conexiones\n";
+            foreach ($connections as $connId => $conn) {
+                echo "    - Conexión #{$connId}\n";
+            }
+        }
+
+        // Buscar en userConnections
+        if (isset($this->userConnections[$userId]) && !empty($this->userConnections[$userId])) {
+            $connections = $this->userConnections[$userId];
+            $firstConnection = reset($connections);
+            $connId = key($connections);
+
+            echo "✅ Conexión encontrada: usuario {$userId}, conexión #{$connId}\n";
+            return $firstConnection;
+        }
+
+        echo "❌ No se encontró conexión activa para userId: {$userId}\n";
+
+        // Debug: mostrar todos los usuarios conectados
+        echo "👥 Usuarios actualmente conectados:\n";
+        $connectedUsers = [];
+        foreach ($this->userConnections as $uid => $conns) {
+            if (!empty($conns)) {
+                $connectedUsers[] = $uid;
+            }
+        }
+
+        if (empty($connectedUsers)) {
+            echo "  (ningún usuario conectado)\n";
+        } else {
+            echo "  " . implode(', ', $connectedUsers) . "\n";
+        }
+
         return null;
     }
-    
-    $userId = (int)$userId;
-    
-    echo "📊 userConnections actuales:\n";
-    foreach ($this->userConnections as $storedUserId => $connections) {
-        echo "  Usuario {$storedUserId}: " . count($connections) . " conexiones\n";
-        foreach ($connections as $connId => $conn) {
-            echo "    - Conexión #{$connId}\n";
-        }
-    }
-    
-    // Buscar en userConnections
-    if (isset($this->userConnections[$userId]) && !empty($this->userConnections[$userId])) {
-        $connections = $this->userConnections[$userId];
-        $firstConnection = reset($connections);
-        $connId = key($connections);
-        
-        echo "✅ Conexión encontrada: usuario {$userId}, conexión #{$connId}\n";
-        return $firstConnection;
-    }
-    
-    echo "❌ No se encontró conexión activa para userId: {$userId}\n";
-    
-    // Debug: mostrar todos los usuarios conectados
-    echo "👥 Usuarios actualmente conectados:\n";
-    $connectedUsers = [];
-    foreach ($this->userConnections as $uid => $conns) {
-        if (!empty($conns)) {
-            $connectedUsers[] = $uid;
-        }
-    }
-    
-    if (empty($connectedUsers)) {
-        echo "  (ningún usuario conectado)\n";
-    } else {
-        echo "  " . implode(', ', $connectedUsers) . "\n";
-    }
-    
-    return null;
-}
 
 
 
-private function handleInitCall($from, $data)
+  private function handleInitCall($from, $data)
 {
     echo "\n📞 ========== INICIANDO LLAMADA ==========\n";
     echo "📦 Datos recibidos: " . json_encode($data) . "\n";
-    
-    // Obtener userId DEL MENSAJE, no de la conexión (temporalmente)
+
     $userIdFromMessage = isset($data['from']) ? (int)$data['from'] : null;
     $userIdFromConnection = $this->getUserIdFromConnection($from);
-    
-    echo "📊 IDs comparados:\n";
-    echo "  - Del mensaje (from): {$userIdFromMessage}\n";
-    echo "  - De la conexión: " . ($userIdFromConnection ?? 'null') . "\n";
-    
-    // ⭐⭐ USAR EL ID DEL MENSAJE (es más confiable)
     $userId = $userIdFromMessage ?? $userIdFromConnection;
-    
+
     if (!$userId) {
         echo "❌ ERROR: No se pudo determinar userId\n";
         $from->send(json_encode([
@@ -811,21 +807,14 @@ private function handleInitCall($from, $data)
         ]));
         return;
     }
-    
+
     $sessionId = $data['session_id'] ?? uniqid('call_', true);
     $toUserId = isset($data['to']) ? (int)$data['to'] : null;
     $chatId = $data['chat_id'] ?? null;
     $callerName = $data['caller_name'] ?? 'Usuario';
-    
-    echo "📞 Datos de llamada:\n";
-    echo "  - De: {$userId}\n";
-    echo "  - Para: {$toUserId}\n";
-    echo "  - Chat: {$chatId}\n";
-    echo "  - Sesión: {$sessionId}\n";
-    echo "  - Nombre: {$callerName}\n";
-    
-    // Validar datos
-    if (!$userId || !$toUserId || !$chatId) {
+    $sdpOffer = $data['sdp'] ?? null; // <-- Oferta SDP del llamante
+
+    if (!$userId || !$toUserId || !$chatId || !$sdpOffer) {
         echo "❌ Datos incompletos para iniciar llamada\n";
         $from->send(json_encode([
             'type' => 'call_error',
@@ -834,26 +823,21 @@ private function handleInitCall($from, $data)
             'missing' => [
                 'from' => !$userId,
                 'to' => !$toUserId,
-                'chat_id' => !$chatId
+                'chat_id' => !$chatId,
+                'sdp' => !$sdpOffer
             ]
         ]));
         return;
     }
-    
-    // ⭐⭐ DEBUG: Mostrar estado actual
-    echo "🔍 Estado actual de conexiones:\n";
-    $this->debugUserConnections();
-    
+
     // Buscar conexión del destinatario
-    echo "🔍 Buscando conexión para usuario {$toUserId}...\n";
     $toConnection = $this->findConnectionByUserId($toUserId);
-    
+
     if ($toConnection) {
-        // Destinatario CONECTADO
-        echo "✅ Destinatario {$toUserId} encontrado y conectado (conexión #{$toConnection->resourceId})\n";
-        
-        // ⭐⭐ AGREGAR ESTO - MUESTRA EL JSON COMPLETO
-        $notificationData = [
+        echo "✅ Destinatario {$toUserId} encontrado (conexión #{$toConnection->resourceId})\n";
+
+        // Notificar al destinatario de la llamada entrante
+        $incomingCallData = [
             'type' => 'incoming_call',
             'session_id' => $sessionId,
             'from' => $userId,
@@ -862,47 +846,23 @@ private function handleInitCall($from, $data)
             'caller_name' => $callerName,
             'timestamp' => $data['timestamp'] ?? date('Y-m-d H:i:s')
         ];
-        
-        echo "📤📤📤 ENVIANDO A USUARIO {$toUserId} (conexión #{$toConnection->resourceId}):\n";
-        echo json_encode($notificationData, JSON_PRETTY_PRINT) . "\n";
-        echo "📤📤📤 FIN DEL MENSAJE\n";
-        
-        try {
-            $toConnection->send(json_encode($notificationData));
-            echo "✅ Mensaje enviado exitosamente a conexión #{$toConnection->resourceId}\n";
-            
-            // ⭐⭐ VERIFICA SI LA CONEXIÓN ESTÁ CERRADA
-            if (method_exists($toConnection, 'isClosed') && $toConnection->isClosed()) {
-                echo "⚠️⚠️⚠️ ADVERTENCIA: La conexión #{$toConnection->resourceId} está CERRADA\n";
-            }
-            
-            // ⭐⭐ ENVIAR TAMBIÉN A TODAS LAS CONEXIONES DEL USUARIO (por seguridad)
-            if (isset($this->userConnections[$toUserId]) && count($this->userConnections[$toUserId]) > 1) {
-                echo "🔍 Usuario {$toUserId} tiene múltiples conexiones, enviando a todas...\n";
-                $sentCount = 0;
-                foreach ($this->userConnections[$toUserId] as $connId => $connection) {
-                    if ($connection !== $toConnection) {
-                        try {
-                            $connection->send(json_encode($notificationData));
-                            echo "  ✅ También enviado a conexión #{$connId}\n";
-                            $sentCount++;
-                        } catch (\Exception $e) {
-                            echo "  ❌ Error enviando a conexión #{$connId}: " . $e->getMessage() . "\n";
-                        }
-                    }
-                }
-                echo "📤 Total enviado a {$sentCount} conexiones adicionales\n";
-            }
-            
-        } catch (\Exception $e) {
-            echo "❌❌❌ ERROR CRÍTICO al enviar: " . $e->getMessage() . "\n";
-            
-            // Intentar enviar a través de otra conexión
-            $this->sendToAllUserConnections($toUserId, $notificationData);
-        }
-        
-        // ⭐⭐ CONFIRMAR AL LLAMANTE QUE LA LLAMADA SE INICIÓ
-        echo "📤 Enviando confirmación al llamante {$userId}...\n";
+
+        $toConnection->send(json_encode($incomingCallData));
+        echo "📤 Incoming call enviado al destinatario\n";
+
+        // Enviar la oferta SDP al destinatario
+        $sdpData = [
+            'type' => 'call_offer',
+            'session_id' => $sessionId,
+            'from' => $userId,
+            'to' => $toUserId,
+            'sdp' => $sdpOffer
+        ];
+
+        $toConnection->send(json_encode($sdpData));
+        echo "📤 Oferta SDP enviada al destinatario\n";
+
+        // Confirmar al llamante que la llamada fue iniciada
         $from->send(json_encode([
             'type' => 'call_initiated',
             'session_id' => $sessionId,
@@ -914,142 +874,134 @@ private function handleInitCall($from, $data)
             'caller_name' => $callerName
         ]));
         echo "✅ Confirmación enviada al llamante\n";
-        
+
     } else {
-        // Destinatario NO CONECTADO
+        // Destinatario no conectado
         echo "❌ Destinatario {$toUserId} no conectado\n";
-        
         $from->send(json_encode([
             'type' => 'user_offline',
             'session_id' => $sessionId,
             'message' => 'El usuario no está disponible',
             'status' => 'offline',
-            'to' => $toUserId,
-            'suggestions' => [
-                'enviar_notificacion_push' => true,
-                'intentar_mas_tarde' => true
-            ]
+            'to' => $toUserId
         ]));
-        
-        // Opcional: Crear notificación push
-        $this->createCallNotification($userId, $toUserId, $sessionId, $chatId, $callerName);
     }
-    
+
     echo "📞 ========== LLAMADA PROCESADA ==========\n\n";
 }
 
-/**
- * Método auxiliar para enviar a todas las conexiones de un usuario
- */
-private function sendToAllUserConnections($userId, $messageData)
-{
-    if (!isset($this->userConnections[$userId]) || empty($this->userConnections[$userId])) {
-        echo "❌ Usuario {$userId} no tiene conexiones activas\n";
-        return false;
-    }
-    
-    $jsonMessage = json_encode($messageData);
-    $sentCount = 0;
-    
-    echo "🔄 Enviando a TODAS las conexiones del usuario {$userId}...\n";
-    
-    foreach ($this->userConnections[$userId] as $connId => $connection) {
-        echo "  → Enviando a conexión #{$connId}... ";
-        
-        try {
-            $connection->send($jsonMessage);
-            echo "✅ OK\n";
-            $sentCount++;
-        } catch (\Exception $e) {
-            echo "❌ Error: " . $e->getMessage() . "\n";
-        }
-    }
-    
-    echo "📤 Enviado a {$sentCount} de " . count($this->userConnections[$userId]) . " conexiones\n";
-    return $sentCount > 0;
-}
 
-/**
- * Método para debug de conexiones
- */
-private function debugUserConnections()
-{
-    echo "=== DEBUG CONEXIONES ===\n";
-    
-    if (empty($this->userConnections)) {
-        echo "  No hay conexiones de usuarios registradas\n";
-    } else {
-        foreach ($this->userConnections as $userId => $connections) {
-            echo "Usuario {$userId} (" . count($connections) . " conexiones):\n";
-            foreach ($connections as $connId => $conn) {
-                echo "  - Conexión #{$connId}";
-                if (isset($conn->currentChat)) {
-                    echo " (en chat: {$conn->currentChat})";
-                }
-                if (isset($conn->userId)) {
-                    echo " [userId: {$conn->userId}]";
-                }
-                // Verificar si la conexión está cerrada
-                if (method_exists($conn, 'isClosed')) {
-                    echo $conn->isClosed() ? " [CERRADA]" : " [ACTIVA]";
-                }
-                echo "\n";
+    /**
+     * Método auxiliar para enviar a todas las conexiones de un usuario
+     */
+    private function sendToAllUserConnections($userId, $messageData)
+    {
+        if (!isset($this->userConnections[$userId]) || empty($this->userConnections[$userId])) {
+            echo "❌ Usuario {$userId} no tiene conexiones activas\n";
+            return false;
+        }
+
+        $jsonMessage = json_encode($messageData);
+        $sentCount = 0;
+
+        echo "🔄 Enviando a TODAS las conexiones del usuario {$userId}...\n";
+
+        foreach ($this->userConnections[$userId] as $connId => $connection) {
+            echo "  → Enviando a conexión #{$connId}... ";
+
+            try {
+                $connection->send($jsonMessage);
+                echo "✅ OK\n";
+                $sentCount++;
+            } catch (\Exception $e) {
+                echo "❌ Error: " . $e->getMessage() . "\n";
             }
         }
+
+        echo "📤 Enviado a {$sentCount} de " . count($this->userConnections[$userId]) . " conexiones\n";
+        return $sentCount > 0;
     }
-    echo "=====================\n";
-}
-/**
- * Crea notificación push para llamada perdida
- */
-private function createCallNotification($fromUserId, $toUserId, $sessionId, $chatId, $callerName)
-{
-    echo "📱 Creando notificación de llamada para usuario {$toUserId}\n";
-    
-    try {
-        // Guardar en base de datos para notificación push
-        if ($this->chatModel) {
-            $sql = "INSERT INTO call_notifications 
+
+    /**
+     * Método para debug de conexiones
+     */
+    private function debugUserConnections()
+    {
+        echo "=== DEBUG CONEXIONES ===\n";
+
+        if (empty($this->userConnections)) {
+            echo "  No hay conexiones de usuarios registradas\n";
+        } else {
+            foreach ($this->userConnections as $userId => $connections) {
+                echo "Usuario {$userId} (" . count($connections) . " conexiones):\n";
+                foreach ($connections as $connId => $conn) {
+                    echo "  - Conexión #{$connId}";
+                    if (isset($conn->currentChat)) {
+                        echo " (en chat: {$conn->currentChat})";
+                    }
+                    if (isset($conn->userId)) {
+                        echo " [userId: {$conn->userId}]";
+                    }
+                    // Verificar si la conexión está cerrada
+                    if (method_exists($conn, 'isClosed')) {
+                        echo $conn->isClosed() ? " [CERRADA]" : " [ACTIVA]";
+                    }
+                    echo "\n";
+                }
+            }
+        }
+        echo "=====================\n";
+    }
+    /**
+     * Crea notificación push para llamada perdida
+     */
+    private function createCallNotification($fromUserId, $toUserId, $sessionId, $chatId, $callerName)
+    {
+        echo "📱 Creando notificación de llamada para usuario {$toUserId}\n";
+
+        try {
+            // Guardar en base de datos para notificación push
+            if ($this->chatModel) {
+                $sql = "INSERT INTO call_notifications 
                     (session_id, from_user_id, to_user_id, chat_id, caller_name, status, created_at) 
                     VALUES (?, ?, ?, ?, ?, 'pending', NOW())";
-            
-            $this->chatModel->query($sql, [
-                $sessionId,
-                $fromUserId,
-                $toUserId,
-                $chatId,
-                $callerName
-            ]);
-            
-            echo "💾 Notificación de llamada guardada en DB para usuario {$toUserId}\n";
-            
-            // Aquí podrías integrar con FCM (Firebase Cloud Messaging) para notificaciones push
-            $this->sendPushNotification($toUserId, "📞 Llamada perdida de {$callerName}", [
-                'type' => 'missed_call',
-                'session_id' => $sessionId,
-                'from_user_id' => $fromUserId,
-                'chat_id' => $chatId,
-                'caller_name' => $callerName
-            ]);
-        } else {
-            echo "⚠️ ChatModel no disponible, no se pudo guardar notificación\n";
-        }
-        
-    } catch (\Exception $e) {
-        echo "❌ Error guardando notificación: " . $e->getMessage() . "\n";
-    }
-}
 
-/**
- * Envía notificación push (simulada - integrar con tu sistema real)
- */
-private function sendPushNotification($toUserId, $message, $data = [])
-{
-    echo "📲 Enviando notificación push a usuario {$toUserId}: {$message}\n";
-    
-    // Aquí deberías integrar con tu sistema de notificaciones push
-    // Ejemplo con Firebase Cloud Messaging:
-    /*
+                $this->chatModel->query($sql, [
+                    $sessionId,
+                    $fromUserId,
+                    $toUserId,
+                    $chatId,
+                    $callerName
+                ]);
+
+                echo "💾 Notificación de llamada guardada en DB para usuario {$toUserId}\n";
+
+                // Aquí podrías integrar con FCM (Firebase Cloud Messaging) para notificaciones push
+                $this->sendPushNotification($toUserId, "📞 Llamada perdida de {$callerName}", [
+                    'type' => 'missed_call',
+                    'session_id' => $sessionId,
+                    'from_user_id' => $fromUserId,
+                    'chat_id' => $chatId,
+                    'caller_name' => $callerName
+                ]);
+            } else {
+                echo "⚠️ ChatModel no disponible, no se pudo guardar notificación\n";
+            }
+        } catch (\Exception $e) {
+            echo "❌ Error guardando notificación: " . $e->getMessage() . "\n";
+        }
+    }
+
+    /**
+     * Envía notificación push (simulada - integrar con tu sistema real)
+     */
+    private function sendPushNotification($toUserId, $message, $data = [])
+    {
+        echo "📲 Enviando notificación push a usuario {$toUserId}: {$message}\n";
+
+        // Aquí deberías integrar con tu sistema de notificaciones push
+        // Ejemplo con Firebase Cloud Messaging:
+        /*
     $fcmUrl = 'https://fcm.googleapis.com/fcm/send';
     $serverKey = 'TU_SERVER_KEY_AQUI';
     
@@ -1083,152 +1035,152 @@ private function sendPushNotification($toUserId, $message, $data = [])
     
     echo "✅ Notificación push enviada: " . $result . "\n";
     */
-    
-    // Por ahora, solo simulamos el envío
-    echo "📱 [SIMULADO] Notificación push para usuario {$toUserId}: {$message}\n";
-    echo "📱 [SIMULADO] Datos: " . json_encode($data) . "\n";
-}
-/**
- * Obtiene el ID de usuario de una conexión - CORREGIDO
- */
-private function getUserIdFromConnection($connection)
-{
-    echo "🔍 getUserIdFromConnection - Buscando userId para conexión #{$connection->resourceId}\n";
-    
-    // DEBUG: Mostrar todas las propiedades de la conexión
-    echo "📋 Propiedades de la conexión #{$connection->resourceId}:\n";
-    $props = [];
-    foreach ($connection as $key => $value) {
-        if (!is_object($value)) {
-            $props[$key] = $value;
-        }
-    }
-    echo "  " . json_encode($props) . "\n";
-    
-    // OPCIÓN 1: Verificar si ya tiene userId asignado
-    if (isset($connection->userId)) {
-        echo "✅ userId encontrado en propiedad directa: {$connection->userId}\n";
-        return (int)$connection->userId;
-    }
-    
-    // OPCIÓN 2: Buscar en $this->userConnections
-    echo "🔍 Buscando en userConnections...\n";
-    foreach ($this->userConnections as $userId => $connections) {
-        foreach ($connections as $connId => $conn) {
-            if ($connId === $connection->resourceId) {
-                echo "✅ Encontrado en userConnections: usuario {$userId}, conexión #{$connId}\n";
-                // Actualizar propiedad para futuras consultas
-                $connection->userId = (int)$userId;
-                return (int)$userId;
-            }
-        }
-    }
-    
-    // OPCIÓN 3: Buscar por referencia de objeto
-    echo "🔍 Buscando por referencia de objeto...\n";
-    foreach ($this->userConnections as $userId => $connections) {
-        foreach ($connections as $connId => $conn) {
-            if ($conn === $connection) {
-                echo "✅ Encontrado por referencia: usuario {$userId}, conexión #{$connId}\n";
-                $connection->userId = (int)$userId;
-                return (int)$userId;
-            }
-        }
-    }
-    
-    echo "❌ ERROR: No se pudo encontrar userId para conexión #{$connection->resourceId}\n";
-    echo "⚠️ Esta conexión no está autenticada o hay un bug\n";
-    
-    // DEBUG: Mostrar estado actual
-    $this->debugAllConnections();
-    
-    return null;
-}
 
-// Agrega este método para debug
-private function debugAllConnections()
-{
-    echo "=== DEBUG DE TODAS LAS CONEXIONES ===\n";
-    echo "Total clientes: " . count($this->clients) . "\n";
-    echo "UserConnections:\n";
-    foreach ($this->userConnections as $userId => $connections) {
-        echo "  Usuario {$userId}:\n";
-        foreach ($connections as $connId => $conn) {
-            echo "    - Conexión #{$connId}";
-            if (isset($conn->userId)) {
-                echo " (userId en propiedad: {$conn->userId})";
-            }
-            echo "\n";
-        }
+        // Por ahora, solo simulamos el envío
+        echo "📱 [SIMULADO] Notificación push para usuario {$toUserId}: {$message}\n";
+        echo "📱 [SIMULADO] Datos: " . json_encode($data) . "\n";
     }
-    echo "===============================\n";
-}
-/**
- * Obtiene nombre de usuario (puedes adaptarlo a tu DB)
- */
-private function getUserName($userId)
-{
-    // Aquí deberías obtener el nombre de tu base de datos
-    // Por ahora devuelve un placeholder
-    return "Usuario {$userId}";
-}
+    /**
+     * Obtiene el ID de usuario de una conexión - CORREGIDO
+     */
+    private function getUserIdFromConnection($connection)
+    {
+        echo "🔍 getUserIdFromConnection - Buscando userId para conexión #{$connection->resourceId}\n";
 
-/**
- * Transmite mensaje a todos en un chat
- */
-
-   private function handleAuth($from, $data)
-{
-    echo "🔐 ========== AUTENTICACIÓN ==========\n";
-    
-    // VALIDACIÓN MÁS ESTRICTA
-    if (!isset($data['user_id'])) {
-        echo "❌ ERROR: Falta user_id\n";
-        return;
-    }
-    
-    $userId = $data['user_id'];
-    
-    // Convertir a número y validar
-    if (!is_numeric($userId)) {
-        echo "❌ ERROR: user_id no es numérico\n";
-        return;
-    }
-    
-    $userId = (int)$userId;
-    
-    // ⭐⭐ VALIDAR QUE NO SEA 0 O 1 (a menos que sean usuarios reales)
-    if ($userId <= 1) {
-        echo "⚠️ ADVERTENCIA: user_id {$userId} puede ser inválido\n";
-        // Continuar pero con advertencia
-    }
-    
-    // Limpiar conexiones anteriores para este userId
-    if (isset($this->userConnections[$userId])) {
-        echo "🧹 Limpiando conexiones anteriores para usuario {$userId}\n";
-        foreach ($this->userConnections[$userId] as $oldConnId => $oldConn) {
-            if ($oldConn !== $from) {
-                echo "  - Removiendo conexión anterior #{$oldConnId}\n";
-                unset($this->userConnections[$userId][$oldConnId]);
+        // DEBUG: Mostrar todas las propiedades de la conexión
+        echo "📋 Propiedades de la conexión #{$connection->resourceId}:\n";
+        $props = [];
+        foreach ($connection as $key => $value) {
+            if (!is_object($value)) {
+                $props[$key] = $value;
             }
         }
+        echo "  " . json_encode($props) . "\n";
+
+        // OPCIÓN 1: Verificar si ya tiene userId asignado
+        if (isset($connection->userId)) {
+            echo "✅ userId encontrado en propiedad directa: {$connection->userId}\n";
+            return (int)$connection->userId;
+        }
+
+        // OPCIÓN 2: Buscar en $this->userConnections
+        echo "🔍 Buscando en userConnections...\n";
+        foreach ($this->userConnections as $userId => $connections) {
+            foreach ($connections as $connId => $conn) {
+                if ($connId === $connection->resourceId) {
+                    echo "✅ Encontrado en userConnections: usuario {$userId}, conexión #{$connId}\n";
+                    // Actualizar propiedad para futuras consultas
+                    $connection->userId = (int)$userId;
+                    return (int)$userId;
+                }
+            }
+        }
+
+        // OPCIÓN 3: Buscar por referencia de objeto
+        echo "🔍 Buscando por referencia de objeto...\n";
+        foreach ($this->userConnections as $userId => $connections) {
+            foreach ($connections as $connId => $conn) {
+                if ($conn === $connection) {
+                    echo "✅ Encontrado por referencia: usuario {$userId}, conexión #{$connId}\n";
+                    $connection->userId = (int)$userId;
+                    return (int)$userId;
+                }
+            }
+        }
+
+        echo "❌ ERROR: No se pudo encontrar userId para conexión #{$connection->resourceId}\n";
+        echo "⚠️ Esta conexión no está autenticada o hay un bug\n";
+
+        // DEBUG: Mostrar estado actual
+        $this->debugAllConnections();
+
+        return null;
     }
-    
-    // Asignar userId
-    $from->userId = $userId;
-    $from->userData = $data['user_data'] ?? [];
-    
-    echo "✅ Usuario {$userId} autenticado en conexión #{$from->resourceId}\n";
-    
-    // Almacenar en userConnections
-    if (!isset($this->userConnections[$userId])) {
-        $this->userConnections[$userId] = [];
+
+    // Agrega este método para debug
+    private function debugAllConnections()
+    {
+        echo "=== DEBUG DE TODAS LAS CONEXIONES ===\n";
+        echo "Total clientes: " . count($this->clients) . "\n";
+        echo "UserConnections:\n";
+        foreach ($this->userConnections as $userId => $connections) {
+            echo "  Usuario {$userId}:\n";
+            foreach ($connections as $connId => $conn) {
+                echo "    - Conexión #{$connId}";
+                if (isset($conn->userId)) {
+                    echo " (userId en propiedad: {$conn->userId})";
+                }
+                echo "\n";
+            }
+        }
+        echo "===============================\n";
     }
-    $this->userConnections[$userId][$from->resourceId] = $from;
-    
-    // Resto del código...
-    echo "🔐 ========== AUTENTICACIÓN COMPLETADA ==========\n\n";
-}
+    /**
+     * Obtiene nombre de usuario (puedes adaptarlo a tu DB)
+     */
+    private function getUserName($userId)
+    {
+        // Aquí deberías obtener el nombre de tu base de datos
+        // Por ahora devuelve un placeholder
+        return "Usuario {$userId}";
+    }
+
+    /**
+     * Transmite mensaje a todos en un chat
+     */
+
+    private function handleAuth($from, $data)
+    {
+        echo "🔐 ========== AUTENTICACIÓN ==========\n";
+
+        // VALIDACIÓN MÁS ESTRICTA
+        if (!isset($data['user_id'])) {
+            echo "❌ ERROR: Falta user_id\n";
+            return;
+        }
+
+        $userId = $data['user_id'];
+
+        // Convertir a número y validar
+        if (!is_numeric($userId)) {
+            echo "❌ ERROR: user_id no es numérico\n";
+            return;
+        }
+
+        $userId = (int)$userId;
+
+        // ⭐⭐ VALIDAR QUE NO SEA 0 O 1 (a menos que sean usuarios reales)
+        if ($userId <= 1) {
+            echo "⚠️ ADVERTENCIA: user_id {$userId} puede ser inválido\n";
+            // Continuar pero con advertencia
+        }
+
+        // Limpiar conexiones anteriores para este userId
+        if (isset($this->userConnections[$userId])) {
+            echo "🧹 Limpiando conexiones anteriores para usuario {$userId}\n";
+            foreach ($this->userConnections[$userId] as $oldConnId => $oldConn) {
+                if ($oldConn !== $from) {
+                    echo "  - Removiendo conexión anterior #{$oldConnId}\n";
+                    unset($this->userConnections[$userId][$oldConnId]);
+                }
+            }
+        }
+
+        // Asignar userId
+        $from->userId = $userId;
+        $from->userData = $data['user_data'] ?? [];
+
+        echo "✅ Usuario {$userId} autenticado en conexión #{$from->resourceId}\n";
+
+        // Almacenar en userConnections
+        if (!isset($this->userConnections[$userId])) {
+            $this->userConnections[$userId] = [];
+        }
+        $this->userConnections[$userId][$from->resourceId] = $from;
+
+        // Resto del código...
+        echo "🔐 ========== AUTENTICACIÓN COMPLETADA ==========\n\n";
+    }
 
     private function handleHeartbeat($from, $data)
     {
@@ -1718,158 +1670,158 @@ private function getUserName($userId)
             }
         }
     }
-  private function handleChatMessage($from, $data)
-{
-    $this->logToFile("💭 Procesando mensaje de chat");
+    private function handleChatMessage($from, $data)
+    {
+        $this->logToFile("💭 Procesando mensaje de chat");
 
-    $chatId = $data['chat_id'] ?? null;
-    $userId = $data['user_id'] ?? null;
-    $content = $data['contenido'] ?? '';
-    $tempId = $data['temp_id'] ?? null;
+        $chatId = $data['chat_id'] ?? null;
+        $userId = $data['user_id'] ?? null;
+        $content = $data['contenido'] ?? '';
+        $tempId = $data['temp_id'] ?? null;
 
-    if (!$chatId || !$userId) {
-        $this->logToFile("❌ Datos incompletos");
-        return;
-    }
+        if (!$chatId || !$userId) {
+            $this->logToFile("❌ Datos incompletos");
+            return;
+        }
 
-    // 1. Confirmación inmediata
-    if ($tempId) {
-        $from->send(json_encode([
-            'type' => 'message_ack',
-            'temp_id' => $tempId,
-            'status' => 'received',
-            'timestamp' => time()
-        ]));
-    }
+        // 1. Confirmación inmediata
+        if ($tempId) {
+            $from->send(json_encode([
+                'type' => 'message_ack',
+                'temp_id' => $tempId,
+                'status' => 'received',
+                'timestamp' => time()
+            ]));
+        }
 
-    // 2. Guardar en BD
-    $messageId = null;
-    $realChatId = $chatId;
-    $otherUserId = null;
+        // 2. Guardar en BD
+        $messageId = null;
+        $realChatId = $chatId;
+        $otherUserId = null;
 
-    if ($this->chatModel) {
-        try {
-            // Verificar y/o crear chat
-            if (!$this->chatModel->chatExists($chatId)) {
-                $otherUserId = $data['other_user_id'] ?? $chatId;
-                $realChatId = $this->chatModel->findChatBetweenUsers($userId, $otherUserId);
+        if ($this->chatModel) {
+            try {
+                // Verificar y/o crear chat
+                if (!$this->chatModel->chatExists($chatId)) {
+                    $otherUserId = $data['other_user_id'] ?? $chatId;
+                    $realChatId = $this->chatModel->findChatBetweenUsers($userId, $otherUserId);
 
-                if (!$realChatId) {
-                    $realChatId = $this->chatModel->createChat([$userId, $otherUserId]);
-                    $this->logToFile("🆕 Chat creado: {$realChatId}");
+                    if (!$realChatId) {
+                        $realChatId = $this->chatModel->createChat([$userId, $otherUserId]);
+                        $this->logToFile("🆕 Chat creado: {$realChatId}");
+                    }
+
+                    $chatId = $realChatId;
                 }
 
-                $chatId = $realChatId;
+                // Guardar mensaje
+                $messageId = $this->chatModel->sendMessage(
+                    $chatId,
+                    $userId,
+                    $content,
+                    $data['tipo'] ?? 'texto'
+                );
+
+                $this->logToFile("✅ Mensaje guardado en BD: ID {$messageId}");
+
+                // Obtener conteo de mensajes no leídos para cada usuario
+                $this->updateUnreadCounts($chatId, $userId);
+            } catch (\Exception $e) {
+                $this->logToFile("❌ Error BD: " . $e->getMessage());
+                $messageId = 'temp_' . rand(1000, 9999);
             }
-
-            // Guardar mensaje
-            $messageId = $this->chatModel->sendMessage(
-                $chatId,
-                $userId,
-                $content,
-                $data['tipo'] ?? 'texto'
-            );
-
-            $this->logToFile("✅ Mensaje guardado en BD: ID {$messageId}");
-
-            // Obtener conteo de mensajes no leídos para cada usuario
-            $this->updateUnreadCounts($chatId, $userId);
-        } catch (\Exception $e) {
-            $this->logToFile("❌ Error BD: " . $e->getMessage());
+        } else {
             $messageId = 'temp_' . rand(1000, 9999);
         }
-    } else {
-        $messageId = 'temp_' . rand(1000, 9999);
-    }
 
-    // 3. Preparar respuesta del mensaje
-    $response = [
-        'type' => 'chat_message',
-        'message_id' => $messageId,
-        'chat_id' => $chatId,
-        'user_id' => $userId,
-        'contenido' => $content,
-        'tipo' => $data['tipo'] ?? 'texto',
-        'timestamp' => date('c'),
-        'temp_id' => $tempId,
-        'leido' => 0,
-        'user_name' => $data['user_name'] ?? 'Usuario',
-        'status' => 'sent',
-        'action' => 'new_message'
-    ];
-
-    // 4. Obtener información actualizada del chat
-    $chatUpdateData = null;
-    if ($this->chatModel && $messageId) {
-        try {
-            // Obtener información completa del mensaje
-            $fullMessage = $this->chatModel->getMessageById($messageId);
-            if ($fullMessage) {
-                $response = array_merge($response, $fullMessage);
-            }
-
-            // Obtener información actualizada del chat para la lista
-            $chatUpdateData = $this->getChatUpdateData($chatId, $userId);
-        } catch (\Exception $e) {
-            $this->logToFile("⚠️ Error obteniendo datos del chat: " . $e->getMessage());
-        }
-    }
-
-    // 5. Enviar a todos en el chat
-    $sentCount = 0;
-    $otherUsers = [];
-    
-    if (isset($this->sessions[$chatId])) {
-        foreach ($this->sessions[$chatId] as $client) {
-            try {
-                // Enviar el mensaje
-                $client->send(json_encode($response));
-                $sentCount++;
-
-                // Registrar otros usuarios conectados
-                if (isset($client->userId) && $client->userId != $userId) {
-                    $otherUsers[] = $client->userId;
-                    
-                    // Si no es el remitente, enviar notificación de chat actualizado
-                    $chatUpdate = $this->prepareChatUpdateForUser($chatId, $client->userId, $response);
-                    $client->send(json_encode($chatUpdate));
-                    
-                    // También enviar notificación de nuevo mensaje
-                    $this->sendNewMessageNotification($client, $chatId, $response);
-                }
-            } catch (\Exception $e) {
-                $this->logToFile("❌ Error enviando a cliente: {$e->getMessage()}");
-            }
-        }
-    } else {
-        $from->send(json_encode($response));
-        $sentCount = 1;
-    }
-
-    // 6. Enviar actualización de la lista de chats al remitente también
-    if ($chatUpdateData) {
-        $from->send(json_encode([
-            'type' => 'chat_list_update',
-            'action' => 'update_chat',
+        // 3. Preparar respuesta del mensaje
+        $response = [
+            'type' => 'chat_message',
+            'message_id' => $messageId,
             'chat_id' => $chatId,
-            'data' => $chatUpdateData,
-            'timestamp' => time()
-        ]));
+            'user_id' => $userId,
+            'contenido' => $content,
+            'tipo' => $data['tipo'] ?? 'texto',
+            'timestamp' => date('c'),
+            'temp_id' => $tempId,
+            'leido' => 0,
+            'user_name' => $data['user_name'] ?? 'Usuario',
+            'status' => 'sent',
+            'action' => 'new_message'
+        ];
+
+        // 4. Obtener información actualizada del chat
+        $chatUpdateData = null;
+        if ($this->chatModel && $messageId) {
+            try {
+                // Obtener información completa del mensaje
+                $fullMessage = $this->chatModel->getMessageById($messageId);
+                if ($fullMessage) {
+                    $response = array_merge($response, $fullMessage);
+                }
+
+                // Obtener información actualizada del chat para la lista
+                $chatUpdateData = $this->getChatUpdateData($chatId, $userId);
+            } catch (\Exception $e) {
+                $this->logToFile("⚠️ Error obteniendo datos del chat: " . $e->getMessage());
+            }
+        }
+
+        // 5. Enviar a todos en el chat
+        $sentCount = 0;
+        $otherUsers = [];
+
+        if (isset($this->sessions[$chatId])) {
+            foreach ($this->sessions[$chatId] as $client) {
+                try {
+                    // Enviar el mensaje
+                    $client->send(json_encode($response));
+                    $sentCount++;
+
+                    // Registrar otros usuarios conectados
+                    if (isset($client->userId) && $client->userId != $userId) {
+                        $otherUsers[] = $client->userId;
+
+                        // Si no es el remitente, enviar notificación de chat actualizado
+                        $chatUpdate = $this->prepareChatUpdateForUser($chatId, $client->userId, $response);
+                        $client->send(json_encode($chatUpdate));
+
+                        // También enviar notificación de nuevo mensaje
+                        $this->sendNewMessageNotification($client, $chatId, $response);
+                    }
+                } catch (\Exception $e) {
+                    $this->logToFile("❌ Error enviando a cliente: {$e->getMessage()}");
+                }
+            }
+        } else {
+            $from->send(json_encode($response));
+            $sentCount = 1;
+        }
+
+        // 6. Enviar actualización de la lista de chats al remitente también
+        if ($chatUpdateData) {
+            $from->send(json_encode([
+                'type' => 'chat_list_update',
+                'action' => 'update_chat',
+                'chat_id' => $chatId,
+                'data' => $chatUpdateData,
+                'timestamp' => time()
+            ]));
+        }
+
+        $this->logToFile("📤 Mensaje enviado a {$sentCount} cliente(s). Otros usuarios: " . implode(', ', $otherUsers));
     }
 
-    $this->logToFile("📤 Mensaje enviado a {$sentCount} cliente(s). Otros usuarios: " . implode(', ', $otherUsers));
-}
+    /**
+     * Obtener datos actualizados del chat para la lista
+     */
+    private function getChatUpdateData($chatId, $excludeUserId)
+    {
+        try {
+            if (!$this->chatModel) return null;
 
-/**
- * Obtener datos actualizados del chat para la lista
- */
-private function getChatUpdateData($chatId, $excludeUserId)
-{
-    try {
-        if (!$this->chatModel) return null;
-
-        // Obtener información del chat
-        $sql = "SELECT 
+            // Obtener información del chat
+            $sql = "SELECT 
                     c.id as chat_id,
                     c.name as chat_name,
                     c.last_message_at,
@@ -1885,50 +1837,50 @@ private function getChatUpdateData($chatId, $excludeUserId)
                 WHERE c.id = ?
                 LIMIT 1";
 
-        $result = $this->chatModel->query($sql, [$excludeUserId, $excludeUserId, $excludeUserId, $chatId]);
-        
-        if (!empty($result)) {
-            $chatData = $result[0];
-            
-            return [
-                'chat_id' => $chatData['chat_id'],
-                'chat_name' => $chatData['chat_name'] ?? 'Chat privado',
-                'last_message' => $chatData['last_message'] ?? '',
-                'last_message_at' => $chatData['last_message_at'],
-                'unread_count' => (int)$chatData['unread_count'],
-                'other_user' => [
-                    'id' => $chatData['other_user_id'],
-                    'name' => $chatData['other_user_name'],
-                    'avatar' => $chatData['other_user_avatar']
-                ],
-                'updated_at' => date('c')
-            ];
+            $result = $this->chatModel->query($sql, [$excludeUserId, $excludeUserId, $excludeUserId, $chatId]);
+
+            if (!empty($result)) {
+                $chatData = $result[0];
+
+                return [
+                    'chat_id' => $chatData['chat_id'],
+                    'chat_name' => $chatData['chat_name'] ?? 'Chat privado',
+                    'last_message' => $chatData['last_message'] ?? '',
+                    'last_message_at' => $chatData['last_message_at'],
+                    'unread_count' => (int)$chatData['unread_count'],
+                    'other_user' => [
+                        'id' => $chatData['other_user_id'],
+                        'name' => $chatData['other_user_name'],
+                        'avatar' => $chatData['other_user_avatar']
+                    ],
+                    'updated_at' => date('c')
+                ];
+            }
+
+            return null;
+        } catch (\Exception $e) {
+            $this->logToFile("❌ Error en getChatUpdateData: " . $e->getMessage());
+            return null;
         }
-        
-        return null;
-    } catch (\Exception $e) {
-        $this->logToFile("❌ Error en getChatUpdateData: " . $e->getMessage());
-        return null;
     }
-}
 
-/**
- * Preparar actualización de chat para un usuario específico
- */
-private function prepareChatUpdateForUser($chatId, $userId, $messageData)
-{
-    try {
-        if (!$this->chatModel) {
-            return [
-                'type' => 'chat_updated',
-                'chat_id' => $chatId,
-                'action' => 'bump',
-                'timestamp' => time()
-            ];
-        }
+    /**
+     * Preparar actualización de chat para un usuario específico
+     */
+    private function prepareChatUpdateForUser($chatId, $userId, $messageData)
+    {
+        try {
+            if (!$this->chatModel) {
+                return [
+                    'type' => 'chat_updated',
+                    'chat_id' => $chatId,
+                    'action' => 'bump',
+                    'timestamp' => time()
+                ];
+            }
 
-        // Obtener datos específicos para este usuario
-        $sql = "SELECT 
+            // Obtener datos específicos para este usuario
+            $sql = "SELECT 
                     c.id as chat_id,
                     c.name as chat_name,
                     c.last_message_at,
@@ -1937,125 +1889,125 @@ private function prepareChatUpdateForUser($chatId, $userId, $messageData)
                 FROM chats c
                 WHERE c.id = ?";
 
-        $result = $this->chatModel->query($sql, [$userId, $chatId]);
-        
-        if (!empty($result)) {
-            $chatData = $result[0];
-            
+            $result = $this->chatModel->query($sql, [$userId, $chatId]);
+
+            if (!empty($result)) {
+                $chatData = $result[0];
+
+                return [
+                    'type' => 'chat_updated',
+                    'action' => 'new_message',
+                    'chat_id' => $chatId,
+                    'data' => [
+                        'chat_id' => $chatData['chat_id'],
+                        'chat_name' => $chatData['chat_name'] ?? 'Chat privado',
+                        'last_message' => $messageData['contenido'] ?? $chatData['last_message'],
+                        'last_message_at' => $chatData['last_message_at'],
+                        'unread_count' => (int)$chatData['unread_count'] + 1, // Incrementar contador
+                        'sender_id' => $messageData['user_id'] ?? null,
+                        'sender_name' => $messageData['user_name'] ?? 'Usuario',
+                        'message_type' => $messageData['tipo'] ?? 'texto',
+                        'preview' => $this->getMessagePreview($messageData['contenido'] ?? '', $messageData['tipo'] ?? 'texto'),
+                        'timestamp' => date('c')
+                    ]
+                ];
+            }
+
             return [
                 'type' => 'chat_updated',
-                'action' => 'new_message',
                 'chat_id' => $chatId,
-                'data' => [
-                    'chat_id' => $chatData['chat_id'],
-                    'chat_name' => $chatData['chat_name'] ?? 'Chat privado',
-                    'last_message' => $messageData['contenido'] ?? $chatData['last_message'],
-                    'last_message_at' => $chatData['last_message_at'],
-                    'unread_count' => (int)$chatData['unread_count'] + 1, // Incrementar contador
-                    'sender_id' => $messageData['user_id'] ?? null,
-                    'sender_name' => $messageData['user_name'] ?? 'Usuario',
-                    'message_type' => $messageData['tipo'] ?? 'texto',
-                    'preview' => $this->getMessagePreview($messageData['contenido'] ?? '', $messageData['tipo'] ?? 'texto'),
-                    'timestamp' => date('c')
-                ]
+                'action' => 'update',
+                'timestamp' => time()
+            ];
+        } catch (\Exception $e) {
+            $this->logToFile("❌ Error en prepareChatUpdateForUser: " . $e->getMessage());
+            return [
+                'type' => 'chat_updated',
+                'chat_id' => $chatId,
+                'action' => 'refresh',
+                'timestamp' => time()
             ];
         }
-        
-        return [
-            'type' => 'chat_updated',
-            'chat_id' => $chatId,
-            'action' => 'update',
-            'timestamp' => time()
-        ];
-    } catch (\Exception $e) {
-        $this->logToFile("❌ Error en prepareChatUpdateForUser: " . $e->getMessage());
-        return [
-            'type' => 'chat_updated',
-            'chat_id' => $chatId,
-            'action' => 'refresh',
-            'timestamp' => time()
-        ];
     }
-}
 
-/**
- * Enviar notificación de nuevo mensaje
- */
-private function sendNewMessageNotification($client, $chatId, $messageData)
-{
-    try {
-        $notification = [
-            'type' => 'new_message_notification',
-            'chat_id' => $chatId,
-            'message_id' => $messageData['message_id'] ?? null,
-            'sender_id' => $messageData['user_id'] ?? null,
-            'sender_name' => $messageData['user_name'] ?? 'Alguien',
-            'preview' => $this->getMessagePreview($messageData['contenido'] ?? '', $messageData['tipo'] ?? 'texto'),
-            'message_type' => $messageData['tipo'] ?? 'texto',
-            'unread_count' => 1,
-            'timestamp' => time(),
-            'sound' => true, // Para que el frontend reproduzca sonido
-            'badge' => true  // Para que el frontend actualice el badge
-        ];
+    /**
+     * Enviar notificación de nuevo mensaje
+     */
+    private function sendNewMessageNotification($client, $chatId, $messageData)
+    {
+        try {
+            $notification = [
+                'type' => 'new_message_notification',
+                'chat_id' => $chatId,
+                'message_id' => $messageData['message_id'] ?? null,
+                'sender_id' => $messageData['user_id'] ?? null,
+                'sender_name' => $messageData['user_name'] ?? 'Alguien',
+                'preview' => $this->getMessagePreview($messageData['contenido'] ?? '', $messageData['tipo'] ?? 'texto'),
+                'message_type' => $messageData['tipo'] ?? 'texto',
+                'unread_count' => 1,
+                'timestamp' => time(),
+                'sound' => true, // Para que el frontend reproduzca sonido
+                'badge' => true  // Para que el frontend actualice el badge
+            ];
 
-        $client->send(json_encode($notification));
-        $this->logToFile("🔔 Notificación enviada a usuario {$client->userId}");
-    } catch (\Exception $e) {
-        $this->logToFile("❌ Error enviando notificación: " . $e->getMessage());
-    }
-}
-
-/**
- * Obtener preview del mensaje
- */
-private function getMessagePreview($content, $type)
-{
-    if ($type === 'imagen') {
-        return '📷 Imagen';
-    } elseif ($type === 'archivo') {
-        return '📎 Archivo';
-    } elseif ($type === 'audio') {
-        return '🎵 Audio';
-    } else {
-        // Limitar texto a 50 caracteres
-        return strlen($content) > 50 ? substr($content, 0, 47) . '...' : $content;
-    }
-}
-
-
-
-/**
- * Broadcast actualización de conteo no leído
- */
-private function broadcastUnreadCountUpdate($userId)
-{
-    try {
-        $totalUnread = $this->getTotalUnreadCount($userId);
-        
-        // Buscar todas las conexiones de este usuario
-        foreach ($this->clients as $client) {
-            if (isset($client->userId) && $client->userId == $userId) {
-                $client->send(json_encode([
-                    'type' => 'unread_count_update',
-                    'total_unread' => $totalUnread,
-                    'timestamp' => time()
-                ]));
-            }
+            $client->send(json_encode($notification));
+            $this->logToFile("🔔 Notificación enviada a usuario {$client->userId}");
+        } catch (\Exception $e) {
+            $this->logToFile("❌ Error enviando notificación: " . $e->getMessage());
         }
-    } catch (\Exception $e) {
-        $this->logToFile("❌ Error en broadcastUnreadCountUpdate: " . $e->getMessage());
     }
-}
 
-/**
- * Obtener conteo total de no leídos para un usuario
- */
-private function getTotalUnreadCount($userId)
-{
-    try {
-        if (!$this->chatModel) return 0;
-        
-        $sql = "SELECT SUM(unread_count) as total 
+    /**
+     * Obtener preview del mensaje
+     */
+    private function getMessagePreview($content, $type)
+    {
+        if ($type === 'imagen') {
+            return '📷 Imagen';
+        } elseif ($type === 'archivo') {
+            return '📎 Archivo';
+        } elseif ($type === 'audio') {
+            return '🎵 Audio';
+        } else {
+            // Limitar texto a 50 caracteres
+            return strlen($content) > 50 ? substr($content, 0, 47) . '...' : $content;
+        }
+    }
+
+
+
+    /**
+     * Broadcast actualización de conteo no leído
+     */
+    private function broadcastUnreadCountUpdate($userId)
+    {
+        try {
+            $totalUnread = $this->getTotalUnreadCount($userId);
+
+            // Buscar todas las conexiones de este usuario
+            foreach ($this->clients as $client) {
+                if (isset($client->userId) && $client->userId == $userId) {
+                    $client->send(json_encode([
+                        'type' => 'unread_count_update',
+                        'total_unread' => $totalUnread,
+                        'timestamp' => time()
+                    ]));
+                }
+            }
+        } catch (\Exception $e) {
+            $this->logToFile("❌ Error en broadcastUnreadCountUpdate: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Obtener conteo total de no leídos para un usuario
+     */
+    private function getTotalUnreadCount($userId)
+    {
+        try {
+            if (!$this->chatModel) return 0;
+
+            $sql = "SELECT SUM(unread_count) as total 
                 FROM (
                     SELECT COUNT(*) as unread_count 
                     FROM mensajes m
@@ -2066,15 +2018,15 @@ private function getTotalUnreadCount($userId)
                     AND m.leido = 0
                     GROUP BY m.chat_id
                 ) as counts";
-        
-        $result = $this->chatModel->query($sql, [$userId, $userId]);
-        
-        return !empty($result) ? (int)$result[0]['total'] : 0;
-    } catch (\Exception $e) {
-        $this->logToFile("❌ Error en getTotalUnreadCount: " . $e->getMessage());
-        return 0;
+
+            $result = $this->chatModel->query($sql, [$userId, $userId]);
+
+            return !empty($result) ? (int)$result[0]['total'] : 0;
+        } catch (\Exception $e) {
+            $this->logToFile("❌ Error en getTotalUnreadCount: " . $e->getMessage());
+            return 0;
+        }
     }
-}
     private function handleMarkAsRead($from, $data)
     {
         $chatId = $data['chat_id'] ?? null;
