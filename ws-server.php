@@ -560,6 +560,19 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                     case 'get_user_status':
                         $this->handleGetUserStatus($from, $data);
                         break;
+                    // En ws-server.php
+                    case 'call_request':
+                        $this->handleCallRequest($from, $data);
+                        break;
+
+                    case 'call_accepted':
+                        $this->handleCallAnswer($from, $data);
+                        break;
+
+                    case 'call_rejected':
+                        $this->handleCallReject($from, $data);
+                        break;
+
 
                     default:
                         echo "⚠️ Tipo desconocido: {$data['type']}\n";
@@ -588,7 +601,39 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
     }
 
+    private function handleCallRequest($from, $data)
+    {
+        $userId = $this->getUserIdFromConnection($from);
+        $toUserId = $data['to'] ?? null;
+        $chatId = $data['chat_id'] ?? null;
+        $sessionId = $data['session_id'] ?? null;
 
+        if (!$userId || !$toUserId || !$chatId || !$sessionId) return;
+
+        $toConnection = $this->findConnectionByUserId($toUserId);
+
+        if ($toConnection) {
+            $toConnection->send(json_encode([
+                'type' => 'incoming_call',
+                'session_id' => $sessionId,
+                'from' => $userId,
+                'to' => $toUserId,
+                'chat_id' => $chatId,
+                'caller_name' => $data['caller_name'] ?? 'Usuario',
+                'timestamp' => date('Y-m-d H:i:s')
+            ]));
+
+            echo "📞 Solicitud de llamada de {$userId} a {$toUserId}\n";
+        } else {
+            // Usuario offline
+            $from->send(json_encode([
+                'type' => 'call_ended',
+                'session_id' => $sessionId,
+                'reason' => 'user_offline',
+                'message' => 'Usuario no disponible'
+            ]));
+        }
+    }
     /**
      * 🔹 Helper para detectar si un string es JSON válido
      */
