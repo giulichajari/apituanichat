@@ -455,136 +455,135 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             echo $formattedMessage;
         }
     }
-public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
-{
-    echo date('H:i:s') . " 📨 #{$from->resourceId} → " . (is_string($msg) ? substr($msg, 0, 200) : "[BINARIO " . strlen($msg) . " bytes]") . "\n";
-    $this->logToFile("📨 Mensaje recibido: " . (is_string($msg) ? $msg : "[BINARIO " . strlen($msg) . " bytes]"));
+    public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
+    {
+        echo date('H:i:s') . " 📨 #{$from->resourceId} → " . (is_string($msg) ? substr($msg, 0, 200) : "[BINARIO " . strlen($msg) . " bytes]") . "\n";
+        $this->logToFile("📨 Mensaje recibido: " . (is_string($msg) ? $msg : "[BINARIO " . strlen($msg) . " bytes]"));
 
-    try {
+        try {
 
-        // PRIMERO: si es JSON, decodificarlo
-        if (is_string($msg) && $this->isJson($msg)) {
+            // PRIMERO: si es JSON, decodificarlo
+            if (is_string($msg) && $this->isJson($msg)) {
 
-            $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
+                $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
 
-            // 🔹 Primer mensaje: identificación del user
-            if (isset($data['type']) && $data['type'] === 'identify') {
+                // 🔹 Primer mensaje: identificación del user
+                if (isset($data['type']) && $data['type'] === 'identify') {
 
-                $userId = $data['user_id'];
+                    $userId = $data['user_id'];
 
-                // Guardar el user_id asociado al socket
-                $this->connectionUsers[$from->resourceId] = $userId;
+                    // Guardar el user_id asociado al socket
+                    $this->connectionUsers[$from->resourceId] = $userId;
 
-                // Guardar el socket asociado al user_id
-                $this->users[$userId] = $from;
+                    // Guardar el socket asociado al user_id
+                    $this->users[$userId] = $from;
 
-                echo "🟢 Usuario identificado: $userId en socket {$from->resourceId}\n";
+                    echo "🟢 Usuario identificado: $userId en socket {$from->resourceId}\n";
+                    return;
+                }
+
+                if (!isset($data['type'])) {
+                    echo "❌ Sin tipo de mensaje\n";
+                    return;
+                }
+
+                $this->logToFile("🎯 Tipo recibido: " . $data['type']);
+
+                switch ($data['type']) {
+
+                    case 'ping':
+                        $this->handlePing($from);
+                        break;
+                
+                    case 'auth':
+                        $this->handleAuth($from, $data);
+                        break;
+
+                    case 'join_chat':
+                        $this->handleJoinChat($from, $data);
+                        break;
+
+                    case 'chat_message':
+                        $this->handleChatMessage($from, $data);
+                        break;
+
+                    case 'file_upload':
+                    case 'image_upload':
+                        $this->handleFileUpload($from, $data);
+                        break;
+
+                    case 'file_uploaded':
+                    case 'image_uploaded':
+                        $this->handleFileUploadNotification($from, $data);
+                        break;
+
+                    case 'mark_as_read':
+                        $this->handleMarkAsRead($from, $data);
+                        break;
+
+                    // WebRTC
+                    case 'init_call':
+                        $this->handleInitCall($from, $data);
+                        break;
+
+                    case 'call_offer':
+                        $this->handleCallOffer($from, $data);
+                        break;
+
+                    case 'call_accepted':
+                        $this->handleCallAnswer($from, $data);
+                        break;
+
+                    case 'call_candidate':
+                        $this->handleCallCandidate($from, $data);
+                        break;
+
+                    case 'call_ended':
+                        $this->handleCallEnded($from, $data);
+                        break;
+
+                    case 'call_reject':
+                        $this->handleCallReject($from, $data);
+                        break;
+
+                    case 'heartbeat':
+                        $this->handleHeartbeat($from, $data);
+                        break;
+
+                    case 'get_online_users':
+                        $this->handleGetOnlineUsers($from, $data);
+                        break;
+
+                    case 'get_user_status':
+                        $this->handleGetUserStatus($from, $data);
+                        break;
+
+                    default:
+                        echo "⚠️ Tipo desconocido: {$data['type']}\n";
+                        $from->send(json_encode([
+                            'type' => 'error',
+                            'message' => 'Tipo no soportado: ' . $data['type']
+                        ]));
+                }
+
                 return;
             }
 
-            if (!isset($data['type'])) {
-                echo "❌ Sin tipo de mensaje\n";
-                return;
+            // 🔹 Si no es JSON → Es binario (audio)
+            echo date('H:i:s') . " 🎵 Mensaje binario recibido: " . strlen($msg) . " bytes\n";
+            $this->logToFile("🎵 Mensaje binario recibido: " . strlen($msg) . " bytes");
+
+            foreach ($this->clients as $client) {
+                if ($from !== $client) {
+                    $client->send($msg);
+                }
             }
-
-            $this->logToFile("🎯 Tipo recibido: " . $data['type']);
-
-            switch ($data['type']) {
-
-                case 'ping':
-                    $this->handlePing($from);
-                    break;
-
-                case 'auth':
-                    $this->handleAuth($from, $data);
-                    break;
-
-                case 'join_chat':
-                    $this->handleJoinChat($from, $data);
-                    break;
-
-                case 'chat_message':
-                    $this->handleChatMessage($from, $data);
-                    break;
-
-                case 'file_upload':
-                case 'image_upload':
-                    $this->handleFileUpload($from, $data);
-                    break;
-
-                case 'file_uploaded':
-                case 'image_uploaded':
-                    $this->handleFileUploadNotification($from, $data);
-                    break;
-
-                case 'mark_as_read':
-                    $this->handleMarkAsRead($from, $data);
-                    break;
-
-                // WebRTC
-                case 'init_call':
-                    $this->handleInitCall($from, $data);
-                    break;
-
-                case 'call_offer':
-                    $this->handleCallOffer($from, $data);
-                    break;
-
-                case 'call_accepted':
-                    $this->handleCallAnswer($from, $data);
-                    break;
-
-                case 'call_candidate':
-                    $this->handleCallCandidate($from, $data);
-                    break;
-
-                case 'call_ended':
-                    $this->handleCallEnded($from, $data);
-                    break;
-
-                case 'call_reject':
-                    $this->handleCallReject($from, $data);
-                    break;
-
-                case 'heartbeat':
-                    $this->handleHeartbeat($from, $data);
-                    break;
-
-                case 'get_online_users':
-                    $this->handleGetOnlineUsers($from, $data);
-                    break;
-
-                case 'get_user_status':
-                    $this->handleGetUserStatus($from, $data);
-                    break;
-
-                default:
-                    echo "⚠️ Tipo desconocido: {$data['type']}\n";
-                    $from->send(json_encode([
-                        'type' => 'error',
-                        'message' => 'Tipo no soportado: ' . $data['type']
-                    ]));
-            }
-
-            return;
+        } catch (\JsonException $e) {
+            echo "❌ JSON inválido: {$e->getMessage()}\n";
+        } catch (\Exception $e) {
+            echo "❌ Error: {$e->getMessage()}\n";
         }
-
-        // 🔹 Si no es JSON → Es binario (audio)
-        echo date('H:i:s') . " 🎵 Mensaje binario recibido: " . strlen($msg) . " bytes\n";
-        $this->logToFile("🎵 Mensaje binario recibido: " . strlen($msg) . " bytes");
-
-        foreach ($this->clients as $client) {
-            if ($from !== $client) {
-                $client->send($msg);
-            }
-        }
-
-    } catch (\JsonException $e) {
-        echo "❌ JSON inválido: {$e->getMessage()}\n";
-    } catch (\Exception $e) {
-        echo "❌ Error: {$e->getMessage()}\n";
     }
-}
 
 
     /**
@@ -602,30 +601,30 @@ public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
     /**
      * Maneja oferta de WebRTC
      */
-   private function handleCallOffer($from, $data)
-{
-    $userId = $this->getUserIdFromConnection($from);
-    $toUserId = $data['to'] ?? null;
+    private function handleCallOffer($from, $data)
+    {
+        $userId = $this->getUserIdFromConnection($from);
+        $toUserId = $data['to'] ?? null;
 
-    if (!$userId || !$toUserId) {
-        return;
+        if (!$userId || !$toUserId) {
+            return;
+        }
+
+        // Buscar el socket del receptor
+        $toConnection = $this->findConnectionByUserId($toUserId);
+
+        if ($toConnection) {
+
+            // 🔥 Reenviar TODOS los atributos del mensaje original
+            // + asegurar que 'from' y 'timestamp' sean correctos
+            $data['from'] = $userId;
+            $data['timestamp'] = date('Y-m-d H:i:s');
+
+            $toConnection->send(json_encode($data));
+
+            echo "📞 Oferta WebRTC enviada de {$userId} a {$toUserId}\n";
+        }
     }
-
-    // Buscar el socket del receptor
-    $toConnection = $this->findConnectionByUserId($toUserId);
-
-    if ($toConnection) {
-
-        // 🔥 Reenviar TODOS los atributos del mensaje original
-        // + asegurar que 'from' y 'timestamp' sean correctos
-        $data['from'] = $userId;
-        $data['timestamp'] = date('Y-m-d H:i:s');
-
-        $toConnection->send(json_encode($data));
-
-        echo "📞 Oferta WebRTC enviada de {$userId} a {$toUserId}\n";
-    }
-}
 
 
     /**
