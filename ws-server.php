@@ -1670,147 +1670,135 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             }
         }
     }
-    private function handleChatMessage($from, $data)
-    {
-        $this->logToFile("💭 Procesando mensaje de chat");
+private function handleChatMessage($from, $data)
+{
+    $this->logToFile("💭 Procesando mensaje de chat");
 
-        $chatId = $data['chat_id'] ?? null;
-        $userId = $data['user_id'] ?? null;
-        $content = $data['contenido'] ?? '';
-        $tempId = $data['temp_id'] ?? null;
+    $chatId = $data['chat_id'] ?? null;
+    $userId = $data['user_id'] ?? null;
+    $content = $data['contenido'] ?? '';
+    $tempId = $data['temp_id'] ?? null;
 
-        if (!$chatId || !$userId) {
-            $this->logToFile("❌ Datos incompletos");
-            return;
-        }
-
-        // 1. Confirmación inmediata
-        if ($tempId) {
-            $from->send(json_encode([
-                'type' => 'message_ack',
-                'temp_id' => $tempId,
-                'status' => 'received',
-                'timestamp' => time()
-            ]));
-        }
-
-        // 2. Guardar en BD
-        $messageId = null;
-        $realChatId = $chatId;
-        $otherUserId = null;
-
-        if ($this->chatModel) {
-            try {
-                // Verificar y/o crear chat
-                if (!$this->chatModel->chatExists($chatId)) {
-                    $otherUserId = $data['other_user_id'] ?? $chatId;
-                    $realChatId = $this->chatModel->findChatBetweenUsers($userId, $otherUserId);
-
-                    if (!$realChatId) {
-                        $realChatId = $this->chatModel->createChat([$userId, $otherUserId]);
-                        $this->logToFile("🆕 Chat creado: {$realChatId}");
-                    }
-
-                    $chatId = $realChatId;
-                }
-
-                // Guardar mensaje
-                $messageId = $this->chatModel->sendMessage(
-                    $chatId,
-                    $userId,
-                    $content,
-                    $data['tipo'] ?? 'texto'
-                );
-
-                $this->logToFile("✅ Mensaje guardado en BD: ID {$messageId}");
-
-                // Obtener conteo de mensajes no leídos para cada usuario
-                $this->updateUnreadCounts($chatId, $userId);
-            } catch (\Exception $e) {
-                $this->logToFile("❌ Error BD: " . $e->getMessage());
-                $messageId = 'temp_' . rand(1000, 9999);
-            }
-        } else {
-            $messageId = 'temp_' . rand(1000, 9999);
-        }
-
-        // 3. Preparar respuesta del mensaje
-        $response = [
-            'type' => 'chat_message',
-            'message_id' => $messageId,
-            'chat_id' => $chatId,
-            'user_id' => $userId,
-            'contenido' => $content,
-            'tipo' => $data['tipo'] ?? 'texto',
-            'timestamp' => date('c'),
-            'temp_id' => $tempId,
-            'leido' => 0,
-            'user_name' => $data['user_name'] ?? 'Usuario',
-            'status' => 'sent',
-            'action' => 'new_message'
-        ];
-
-        // 4. Obtener información actualizada del chat
-        $chatUpdateData = null;
-        if ($this->chatModel && $messageId) {
-            try {
-                // Obtener información completa del mensaje
-                $fullMessage = $this->chatModel->getMessageById($messageId);
-                if ($fullMessage) {
-                    $response = array_merge($response, $fullMessage);
-                }
-
-                // Obtener información actualizada del chat para la lista
-                $chatUpdateData = $this->getChatUpdateData($chatId, $userId);
-            } catch (\Exception $e) {
-                $this->logToFile("⚠️ Error obteniendo datos del chat: " . $e->getMessage());
-            }
-        }
-
-        // 5. Enviar a todos en el chat
-        $sentCount = 0;
-        $otherUsers = [];
-
-        if (isset($this->sessions[$chatId])) {
-            foreach ($this->sessions[$chatId] as $client) {
-                try {
-                    // Enviar el mensaje
-                    $client->send(json_encode($response));
-                    $sentCount++;
-
-                    // Registrar otros usuarios conectados
-                    if (isset($client->userId) && $client->userId != $userId) {
-                        $otherUsers[] = $client->userId;
-
-                        // Si no es el remitente, enviar notificación de chat actualizado
-                        $chatUpdate = $this->prepareChatUpdateForUser($chatId, $client->userId, $response);
-                        $client->send(json_encode($chatUpdate));
-
-                        // También enviar notificación de nuevo mensaje
-                        $this->sendNewMessageNotification($client, $chatId, $response);
-                    }
-                } catch (\Exception $e) {
-                    $this->logToFile("❌ Error enviando a cliente: {$e->getMessage()}");
-                }
-            }
-        } else {
-            $from->send(json_encode($response));
-            $sentCount = 1;
-        }
-
-        // 6. Enviar actualización de la lista de chats al remitente también
-        if ($chatUpdateData) {
-            $from->send(json_encode([
-                'type' => 'chat_list_update',
-                'action' => 'update_chat',
-                'chat_id' => $chatId,
-                'data' => $chatUpdateData,
-                'timestamp' => time()
-            ]));
-        }
-
-        $this->logToFile("📤 Mensaje enviado a {$sentCount} cliente(s). Otros usuarios: " . implode(', ', $otherUsers));
+    if (!$chatId || !$userId) {
+        $this->logToFile("❌ Datos incompletos");
+        return;
     }
+
+    // 1. Confirmación inmediata
+    if ($tempId) {
+        $from->send(json_encode([
+            'type' => 'message_ack',
+            'temp_id' => $tempId,
+            'status' => 'received',
+            'timestamp' => time()
+        ]));
+    }
+
+    // 2. Guardar en BD
+    $messageId = null;
+    $realChatId = $chatId;
+    $otherUserId = null;
+
+    if ($this->chatModel) {
+        try {
+            // Verificar y/o crear chat
+            if (!$this->chatModel->chatExists($chatId)) {
+                $otherUserId = $data['other_user_id'] ?? $chatId;
+                $realChatId = $this->chatModel->findChatBetweenUsers($userId, $otherUserId);
+
+                if (!$realChatId) {
+                    $realChatId = $this->chatModel->createChat([$userId, $otherUserId]);
+                    $this->logToFile("🆕 Chat creado: {$realChatId}");
+                }
+
+                $chatId = $realChatId;
+            }
+
+            // Guardar mensaje y obtener ID REAL
+            $messageId = $this->chatModel->sendMessage(
+                $chatId,
+                $userId,
+                $content,
+                $data['tipo'] ?? 'texto'
+            );
+
+            $this->logToFile("✅ Mensaje guardado en BD: ID REAL {$messageId}");
+
+            // ⭐⭐ ENVIAR CONFIRMACIÓN CON ID REAL AL REMITENTE
+            if ($tempId && $messageId) {
+                $confirmation = [
+                    'type' => 'message_sent', // ⭐⭐ TIPO NUEVO
+                    'message_id' => $messageId, // ⭐⭐ ID REAL
+                    'temp_id' => $tempId, // ⭐⭐ ID TEMPORAL
+                    'chat_id' => $chatId,
+                    'user_id' => $userId,
+                    'contenido' => $content,
+                    'tipo' => $data['tipo'] ?? 'texto',
+                    'timestamp' => date('c'),
+                    'status' => 'sent',
+                    'action' => 'message_confirmed' // ⭐⭐ ACCIÓN
+                ];
+                
+                // Enviar confirmación SOLO al remitente
+                $from->send(json_encode($confirmation));
+                $this->logToFile("✅ Confirmación enviada al remitente: temp_id={$tempId}, message_id={$messageId}");
+            }
+
+            // Obtener conteo de mensajes no leídos para cada usuario
+            $this->updateUnreadCounts($chatId, $userId);
+            
+        } catch (\Exception $e) {
+            $this->logToFile("❌ Error BD: " . $e->getMessage());
+            // Si hay error, enviar confirmación de error
+            if ($tempId) {
+                $from->send(json_encode([
+                    'type' => 'message_error',
+                    'temp_id' => $tempId,
+                    'error' => $e->getMessage(),
+                    'status' => 'failed'
+                ]));
+            }
+            return; // Salir si hay error
+        }
+    } else {
+        $messageId = 'temp_' . rand(1000, 9999);
+    }
+
+    // 3. Preparar respuesta del mensaje para broadcast
+    $response = [
+        'type' => 'chat_message',
+        'message_id' => $messageId, // ⭐⭐ Esto ya es el ID REAL si se guardó
+        'chat_id' => $chatId,
+        'user_id' => $userId,
+        'contenido' => $content,
+        'tipo' => $data['tipo'] ?? 'texto',
+        'timestamp' => date('c'),
+        'temp_id' => $tempId,
+        'leido' => 0,
+        'user_name' => $data['user_name'] ?? 'Usuario',
+        'status' => 'sent',
+        'action' => 'new_message'
+    ];
+
+    // 4. Enviar a todos en el chat (EXCEPTO AL REMITENTE - ya recibió confirmación)
+    $sentCount = 0;
+    
+    if (isset($this->sessions[$chatId])) {
+        foreach ($this->sessions[$chatId] as $client) {
+            // ⭐⭐ NO enviar al remitente (ya recibió confirmación)
+            if ($client === $from) continue;
+            
+            try {
+                $client->send(json_encode($response));
+                $sentCount++;
+            } catch (\Exception $e) {
+                $this->logToFile("❌ Error enviando a cliente: {$e->getMessage()}");
+            }
+        }
+    }
+
+    $this->logToFile("📤 Mensaje broadcast a {$sentCount} otros cliente(s)");
+}
 
     /**
      * Obtener datos actualizados del chat para la lista
