@@ -60,6 +60,7 @@ if (file_exists($chatModelPath)) {
 
 // ===================== CONFIGURACIÓN REDIS =====================
 use Predis\Client as RedisClient;
+use Ratchet\ConnectionInterface;
 
 class UserStatusManager
 {
@@ -261,6 +262,8 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     protected $statusManager;
     protected $userTimers = [];
     protected $chatModel; // ⭐⭐ NUEVO: Instancia de ChatModel
+    private $users = []; // user_id => connection
+    private $connectionUsers = []; // socketId => user_id
 
     public function __construct()
     {
@@ -272,6 +275,11 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
         echo "🚀 SignalServer inicializado\n";
     }
+    private function getUserId(ConnectionInterface $conn)
+    {
+        return $this->connectionUsers[$conn->resourceId] ?? null;
+    }
+
     // En SignalServer class
     private function notifyNewMessage($chatId, $messageData, $senderId = null)
     {
@@ -358,6 +366,9 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
     public function onOpen(\Ratchet\ConnectionInterface $conn)
     {
+        $userId = $this->getUserId($conn);
+
+        $this->users[$userId] = $conn;
         $this->clients->attach($conn);
         echo date('H:i:s') . " 🔗 Conexión #{$conn->resourceId} abierta\n";
 
@@ -444,114 +455,137 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             echo $formattedMessage;
         }
     }
+public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
+{
+    echo date('H:i:s') . " 📨 #{$from->resourceId} → " . (is_string($msg) ? substr($msg, 0, 200) : "[BINARIO " . strlen($msg) . " bytes]") . "\n";
+    $this->logToFile("📨 Mensaje recibido: " . (is_string($msg) ? $msg : "[BINARIO " . strlen($msg) . " bytes]"));
 
-    public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
-    {
-        echo date('H:i:s') . " 📨 #{$from->resourceId} → " . (is_string($msg) ? substr($msg, 0, 200) : "[BINARIO " . strlen($msg) . " bytes]") . "\n";
-        $this->logToFile("📨 Mensaje recibido: " . (is_string($msg) ? $msg : "[BINARIO " . strlen($msg) . " bytes]"));
+    try {
 
-        try {
-            if (is_string($msg) && $this->isJson($msg)) {
-                // 🔹 Mensaje JSON normal → chat, auth, ping, llamadas
-                $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
+        // PRIMERO: si es JSON, decodificarlo
+        if (is_string($msg) && $this->isJson($msg)) {
 
-                if (!isset($data['type'])) {
-                    echo "❌ Sin tipo de mensaje\n";
-                    return;
-                }
+            $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
 
-                $this->logToFile("🎯 Tipo recibido: " . $data['type']);
+            // 🔹 Primer mensaje: identificación del user
+            if (isset($data['type']) && $data['type'] === 'identify') {
 
-                switch ($data['type']) {
-                    case 'ping':
-                        $this->handlePing($from);
-                        break;
+                $userId = $data['user_id'];
 
-                    case 'auth':
-                        $this->handleAuth($from, $data);
-                        break;
+                // Guardar el user_id asociado al socket
+                $this->connectionUsers[$from->resourceId] = $userId;
 
-                    case 'join_chat':
-                        $this->handleJoinChat($from, $data);
-                        break;
+                // Guardar el socket asociado al user_id
+                $this->users[$userId] = $from;
 
-                    case 'chat_message':
-                        $this->handleChatMessage($from, $data);
-                        break;
-
-                    case 'file_upload':
-                    case 'image_upload':
-                        $this->handleFileUpload($from, $data);
-                        break;
-
-                    case 'file_uploaded':
-                    case 'image_uploaded':
-                        $this->handleFileUploadNotification($from, $data);
-                        break;
-
-                    case 'mark_as_read':
-                        $this->handleMarkAsRead($from, $data);
-                        break;
-
-                    // 🔹 Llamadas WebRTC
-                    case 'init_call':
-                        $this->handleInitCall($from, $data);
-                        break;
-                    case 'call_offer':
-                        $this->handleCallOffer($from, $data);
-                        break;
-                    case 'call_answer':
-                        $this->handleCallAnswer($from, $data);
-                        break;
-                    case 'call_candidate':
-                        $this->handleCallCandidate($from, $data);
-                        break;
-                    case 'call_ended':
-                        $this->handleCallEnded($from, $data);
-                        break;
-                    case 'call_reject':
-                        $this->handleCallReject($from, $data);
-                        break;
-
-                    case 'heartbeat':
-                        $this->handleHeartbeat($from, $data);
-                        break;
-
-                    case 'get_online_users':
-                        $this->handleGetOnlineUsers($from, $data);
-                        break;
-
-                    case 'get_user_status':
-                        $this->handleGetUserStatus($from, $data);
-                        break;
-                    case 'incoming_call':
-                        $this->handleInitCall($from, $data);
-                        break;
-                    default:
-                        echo "⚠️ Tipo desconocido: {$data['type']}\n";
-                        $from->send(json_encode([
-                            'type' => 'error',
-                            'message' => 'Tipo no soportado: ' . $data['type']
-                        ]));
-                }
-            } else {
-                // 🔹 Mensaje binario → audio o cualquier otro stream
-                echo date('H:i:s') . " 🎵 Mensaje binario recibido: " . strlen($msg) . " bytes\n";
-                $this->logToFile("🎵 Mensaje binario recibido: " . strlen($msg) . " bytes");
-
-                // Reenviar binario a todos menos al emisor
-                foreach ($this->clients as $client) {
-                    if ($from !== $client) {
-                        $client->send($msg);
-                    }
-                }
+                echo "🟢 Usuario identificado: $userId en socket {$from->resourceId}\n";
+                return;
             }
-        } catch (\JsonException $e) {
-            echo "❌ JSON inválido: {$e->getMessage()}\n";
-        } catch (\Exception $e) {
-            echo "❌ Error: {$e->getMessage()}\n";
+
+            if (!isset($data['type'])) {
+                echo "❌ Sin tipo de mensaje\n";
+                return;
+            }
+
+            $this->logToFile("🎯 Tipo recibido: " . $data['type']);
+
+            switch ($data['type']) {
+
+                case 'ping':
+                    $this->handlePing($from);
+                    break;
+
+                case 'auth':
+                    $this->handleAuth($from, $data);
+                    break;
+
+                case 'join_chat':
+                    $this->handleJoinChat($from, $data);
+                    break;
+
+                case 'chat_message':
+                    $this->handleChatMessage($from, $data);
+                    break;
+
+                case 'file_upload':
+                case 'image_upload':
+                    $this->handleFileUpload($from, $data);
+                    break;
+
+                case 'file_uploaded':
+                case 'image_uploaded':
+                    $this->handleFileUploadNotification($from, $data);
+                    break;
+
+                case 'mark_as_read':
+                    $this->handleMarkAsRead($from, $data);
+                    break;
+
+                // WebRTC
+                case 'init_call':
+                    $this->handleInitCall($from, $data);
+                    break;
+
+                case 'call_offer':
+                    $this->handleCallOffer($from, $data);
+                    break;
+
+                case 'call_answer':
+                    $this->handleCallAnswer($from, $data);
+                    break;
+
+                case 'call_candidate':
+                    $this->handleCallCandidate($from, $data);
+                    break;
+
+                case 'call_ended':
+                    $this->handleCallEnded($from, $data);
+                    break;
+
+                case 'call_reject':
+                    $this->handleCallReject($from, $data);
+                    break;
+
+                case 'heartbeat':
+                    $this->handleHeartbeat($from, $data);
+                    break;
+
+                case 'get_online_users':
+                    $this->handleGetOnlineUsers($from, $data);
+                    break;
+
+                case 'get_user_status':
+                    $this->handleGetUserStatus($from, $data);
+                    break;
+
+                default:
+                    echo "⚠️ Tipo desconocido: {$data['type']}\n";
+                    $from->send(json_encode([
+                        'type' => 'error',
+                        'message' => 'Tipo no soportado: ' . $data['type']
+                    ]));
+            }
+
+            return;
         }
+
+        // 🔹 Si no es JSON → Es binario (audio)
+        echo date('H:i:s') . " 🎵 Mensaje binario recibido: " . strlen($msg) . " bytes\n";
+        $this->logToFile("🎵 Mensaje binario recibido: " . strlen($msg) . " bytes");
+
+        foreach ($this->clients as $client) {
+            if ($from !== $client) {
+                $client->send($msg);
+            }
+        }
+
+    } catch (\JsonException $e) {
+        echo "❌ JSON inválido: {$e->getMessage()}\n";
+    } catch (\Exception $e) {
+        echo "❌ Error: {$e->getMessage()}\n";
     }
+}
+
 
     /**
      * 🔹 Helper para detectar si un string es JSON válido
@@ -789,260 +823,107 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
 
 
-  private function handleInitCall($from, $data)
-{
-    echo "\n📞 ========== INICIANDO LLAMADA ==========\n";
-    echo "📦 Datos recibidos: " . json_encode($data) . "\n";
-
-    $userIdFromMessage = isset($data['from']) ? (int)$data['from'] : null;
-    $userIdFromConnection = $this->getUserIdFromConnection($from);
-    $userId = $userIdFromMessage ?? $userIdFromConnection;
-
-    if (!$userId) {
-        echo "❌ ERROR: No se pudo determinar userId\n";
-        $from->send(json_encode([
-            'type' => 'call_error',
-            'message' => 'No se pudo identificar al usuario',
-            'session_id' => $data['session_id'] ?? null
-        ]));
-        return;
-    }
-
-    $sessionId = $data['session_id'] ?? uniqid('call_', true);
-    $toUserId = isset($data['to']) ? (int)$data['to'] : null;
-    $chatId = $data['chat_id'] ?? null;
-    $callerName = $data['caller_name'] ?? 'Usuario';
-    $sdpOffer = $data['sdp'] ?? null; // <-- Oferta SDP del llamante
-
-    if (!$userId || !$toUserId || !$chatId || !$sdpOffer) {
-        echo "❌ Datos incompletos para iniciar llamada\n";
-        $from->send(json_encode([
-            'type' => 'call_error',
-            'message' => 'Datos incompletos para iniciar llamada',
-            'session_id' => $sessionId,
-            'missing' => [
-                'from' => !$userId,
-                'to' => !$toUserId,
-                'chat_id' => !$chatId,
-                'sdp' => !$sdpOffer
-            ]
-        ]));
-        return;
-    }
-
-    // Buscar conexión del destinatario
-    $toConnection = $this->findConnectionByUserId($toUserId);
-
-    if ($toConnection) {
-        echo "✅ Destinatario {$toUserId} encontrado (conexión #{$toConnection->resourceId})\n";
-
-        // Notificar al destinatario de la llamada entrante
-        $incomingCallData = [
-            'type' => 'incoming_call',
-            'session_id' => $sessionId,
-            'from' => $userId,
-            'to' => $toUserId,
-            'chat_id' => $chatId,
-            'caller_name' => $callerName,
-            'timestamp' => $data['timestamp'] ?? date('Y-m-d H:i:s')
-        ];
-
-        $toConnection->send(json_encode($incomingCallData));
-        echo "📤 Incoming call enviado al destinatario\n";
-
-        // Enviar la oferta SDP al destinatario
-        $sdpData = [
-            'type' => 'call_offer',
-            'session_id' => $sessionId,
-            'from' => $userId,
-            'to' => $toUserId,
-            'sdp' => $sdpOffer
-        ];
-
-        $toConnection->send(json_encode($sdpData));
-        echo "📤 Oferta SDP enviada al destinatario\n";
-
-        // Confirmar al llamante que la llamada fue iniciada
-        $from->send(json_encode([
-            'type' => 'call_initiated',
-            'session_id' => $sessionId,
-            'to' => $toUserId,
-            'chat_id' => $chatId,
-            'status' => 'ringing',
-            'timestamp' => date('Y-m-d H:i:s'),
-            'message' => 'Llamando...',
-            'caller_name' => $callerName
-        ]));
-        echo "✅ Confirmación enviada al llamante\n";
-
-    } else {
-        // Destinatario no conectado
-        echo "❌ Destinatario {$toUserId} no conectado\n";
-        $from->send(json_encode([
-            'type' => 'user_offline',
-            'session_id' => $sessionId,
-            'message' => 'El usuario no está disponible',
-            'status' => 'offline',
-            'to' => $toUserId
-        ]));
-    }
-
-    echo "📞 ========== LLAMADA PROCESADA ==========\n\n";
-}
-
-
-    /**
-     * Método auxiliar para enviar a todas las conexiones de un usuario
-     */
-    private function sendToAllUserConnections($userId, $messageData)
+    private function handleInitCall($from, $data)
     {
-        if (!isset($this->userConnections[$userId]) || empty($this->userConnections[$userId])) {
-            echo "❌ Usuario {$userId} no tiene conexiones activas\n";
-            return false;
+        echo "\n📞 ========== INICIANDO LLAMADA ==========\n";
+        echo "📦 Datos recibidos: " . json_encode($data) . "\n";
+
+        $userIdFromMessage = isset($data['from']) ? (int)$data['from'] : null;
+        $userIdFromConnection = $this->getUserIdFromConnection($from);
+        $userId = $userIdFromMessage ?? $userIdFromConnection;
+
+        if (!$userId) {
+            echo "❌ ERROR: No se pudo determinar userId\n";
+            $from->send(json_encode([
+                'type' => 'call_error',
+                'message' => 'No se pudo identificar al usuario',
+                'session_id' => $data['session_id'] ?? null
+            ]));
+            return;
         }
 
-        $jsonMessage = json_encode($messageData);
-        $sentCount = 0;
+        $sessionId = $data['session_id'] ?? uniqid('call_', true);
+        $toUserId = isset($data['to']) ? (int)$data['to'] : null;
+        $chatId = $data['chat_id'] ?? null;
+        $callerName = $data['caller_name'] ?? 'Usuario';
+        $sdpOffer = $data['sdp'] ?? null; // <-- Oferta SDP del llamante
 
-        echo "🔄 Enviando a TODAS las conexiones del usuario {$userId}...\n";
-
-        foreach ($this->userConnections[$userId] as $connId => $connection) {
-            echo "  → Enviando a conexión #{$connId}... ";
-
-            try {
-                $connection->send($jsonMessage);
-                echo "✅ OK\n";
-                $sentCount++;
-            } catch (\Exception $e) {
-                echo "❌ Error: " . $e->getMessage() . "\n";
-            }
+        if (!$userId || !$toUserId || !$chatId || !$sdpOffer) {
+            echo "❌ Datos incompletos para iniciar llamada\n";
+            $from->send(json_encode([
+                'type' => 'call_error',
+                'message' => 'Datos incompletos para iniciar llamada',
+                'session_id' => $sessionId,
+                'missing' => [
+                    'from' => !$userId,
+                    'to' => !$toUserId,
+                    'chat_id' => !$chatId,
+                    'sdp' => !$sdpOffer
+                ]
+            ]));
+            return;
         }
 
-        echo "📤 Enviado a {$sentCount} de " . count($this->userConnections[$userId]) . " conexiones\n";
-        return $sentCount > 0;
-    }
+        // Buscar conexión del destinatario
+        $toConnection = $this->findConnectionByUserId($toUserId);
 
-    /**
-     * Método para debug de conexiones
-     */
-    private function debugUserConnections()
-    {
-        echo "=== DEBUG CONEXIONES ===\n";
+        if ($toConnection) {
+            echo "✅ Destinatario {$toUserId} encontrado (conexión #{$toConnection->resourceId})\n";
 
-        if (empty($this->userConnections)) {
-            echo "  No hay conexiones de usuarios registradas\n";
+            // Notificar al destinatario de la llamada entrante
+            $incomingCallData = [
+                'type' => 'incoming_call',
+                'session_id' => $sessionId,
+                'from' => $userId,
+                'to' => $toUserId,
+                'chat_id' => $chatId,
+                'caller_name' => $callerName,
+                'timestamp' => $data['timestamp'] ?? date('Y-m-d H:i:s')
+            ];
+
+            $toConnection->send(json_encode($incomingCallData));
+            echo "📤 Incoming call enviado al destinatario\n";
+
+            // Enviar la oferta SDP al destinatario
+            $sdpData = [
+                'type' => 'call_offer',
+                'session_id' => $sessionId,
+                'from' => $userId,
+                'to' => $toUserId,
+                'sdp' => $sdpOffer
+            ];
+
+            $toConnection->send(json_encode($sdpData));
+            echo "📤 Oferta SDP enviada al destinatario\n";
+
+            // Confirmar al llamante que la llamada fue iniciada
+            $from->send(json_encode([
+                'type' => 'call_initiated',
+                'session_id' => $sessionId,
+                'to' => $toUserId,
+                'chat_id' => $chatId,
+                'status' => 'ringing',
+                'timestamp' => date('Y-m-d H:i:s'),
+                'message' => 'Llamando...',
+                'caller_name' => $callerName
+            ]));
+            echo "✅ Confirmación enviada al llamante\n";
         } else {
-            foreach ($this->userConnections as $userId => $connections) {
-                echo "Usuario {$userId} (" . count($connections) . " conexiones):\n";
-                foreach ($connections as $connId => $conn) {
-                    echo "  - Conexión #{$connId}";
-                    if (isset($conn->currentChat)) {
-                        echo " (en chat: {$conn->currentChat})";
-                    }
-                    if (isset($conn->userId)) {
-                        echo " [userId: {$conn->userId}]";
-                    }
-                    // Verificar si la conexión está cerrada
-                    if (method_exists($conn, 'isClosed')) {
-                        echo $conn->isClosed() ? " [CERRADA]" : " [ACTIVA]";
-                    }
-                    echo "\n";
-                }
-            }
+            // Destinatario no conectado
+            echo "❌ Destinatario {$toUserId} no conectado\n";
+            $from->send(json_encode([
+                'type' => 'user_offline',
+                'session_id' => $sessionId,
+                'message' => 'El usuario no está disponible',
+                'status' => 'offline',
+                'to' => $toUserId
+            ]));
         }
-        echo "=====================\n";
-    }
-    /**
-     * Crea notificación push para llamada perdida
-     */
-    private function createCallNotification($fromUserId, $toUserId, $sessionId, $chatId, $callerName)
-    {
-        echo "📱 Creando notificación de llamada para usuario {$toUserId}\n";
 
-        try {
-            // Guardar en base de datos para notificación push
-            if ($this->chatModel) {
-                $sql = "INSERT INTO call_notifications 
-                    (session_id, from_user_id, to_user_id, chat_id, caller_name, status, created_at) 
-                    VALUES (?, ?, ?, ?, ?, 'pending', NOW())";
-
-                $this->chatModel->query($sql, [
-                    $sessionId,
-                    $fromUserId,
-                    $toUserId,
-                    $chatId,
-                    $callerName
-                ]);
-
-                echo "💾 Notificación de llamada guardada en DB para usuario {$toUserId}\n";
-
-                // Aquí podrías integrar con FCM (Firebase Cloud Messaging) para notificaciones push
-                $this->sendPushNotification($toUserId, "📞 Llamada perdida de {$callerName}", [
-                    'type' => 'missed_call',
-                    'session_id' => $sessionId,
-                    'from_user_id' => $fromUserId,
-                    'chat_id' => $chatId,
-                    'caller_name' => $callerName
-                ]);
-            } else {
-                echo "⚠️ ChatModel no disponible, no se pudo guardar notificación\n";
-            }
-        } catch (\Exception $e) {
-            echo "❌ Error guardando notificación: " . $e->getMessage() . "\n";
-        }
+        echo "📞 ========== LLAMADA PROCESADA ==========\n\n";
     }
 
-    /**
-     * Envía notificación push (simulada - integrar con tu sistema real)
-     */
-    private function sendPushNotification($toUserId, $message, $data = [])
-    {
-        echo "📲 Enviando notificación push a usuario {$toUserId}: {$message}\n";
 
-        // Aquí deberías integrar con tu sistema de notificaciones push
-        // Ejemplo con Firebase Cloud Messaging:
-        /*
-    $fcmUrl = 'https://fcm.googleapis.com/fcm/send';
-    $serverKey = 'TU_SERVER_KEY_AQUI';
-    
-    $notification = [
-        'to' => '/topics/user_' . $toUserId,
-        'notification' => [
-            'title' => 'Llamada perdida',
-            'body' => $message,
-            'sound' => 'default',
-            'badge' => '1'
-        ],
-        'data' => array_merge($data, [
-            'click_action' => 'FLUTTER_NOTIFICATION_CLICK',
-            'type' => 'missed_call'
-        ])
-    ];
-    
-    $headers = [
-        'Authorization: key=' . $serverKey,
-        'Content-Type: application/json'
-    ];
-    
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $fcmUrl);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($notification));
-    $result = curl_exec($ch);
-    curl_close($ch);
-    
-    echo "✅ Notificación push enviada: " . $result . "\n";
-    */
-
-        // Por ahora, solo simulamos el envío
-        echo "📱 [SIMULADO] Notificación push para usuario {$toUserId}: {$message}\n";
-        echo "📱 [SIMULADO] Datos: " . json_encode($data) . "\n";
-    }
-    /**
-     * Obtiene el ID de usuario de una conexión - CORREGIDO
-     */
     private function getUserIdFromConnection($connection)
     {
         echo "🔍 getUserIdFromConnection - Buscando userId para conexión #{$connection->resourceId}\n";
@@ -1115,15 +996,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
         echo "===============================\n";
     }
-    /**
-     * Obtiene nombre de usuario (puedes adaptarlo a tu DB)
-     */
-    private function getUserName($userId)
-    {
-        // Aquí deberías obtener el nombre de tu base de datos
-        // Por ahora devuelve un placeholder
-        return "Usuario {$userId}";
-    }
+
 
     /**
      * Transmite mensaje a todos en un chat
@@ -1235,12 +1108,28 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             return;
         }
 
-        $chatId = $data['chat_id'];
-        $userId = $data['user_id'];
+        $chatId = (int)$data['chat_id'];
+        $userId = (int)$data['user_id'];
 
+        echo "➡ handleJoinChat: user {$userId} entra al chat {$chatId}\n";
+
+        // 🔥🔥🔥 FIX IMPORTANTE 🔥🔥🔥
+        // Mantener SIEMPRE al usuario dentro de userConnections
+        if (!isset($this->userConnections[$userId])) {
+            $this->userConnections[$userId] = [];
+        }
+
+        // Registrar o actualizar la conexión actual
+        $this->userConnections[$userId][$from->resourceId] = $from;
+
+        // Asegurar que la conexión tiene userId seteado
+        $from->userId = $userId;
+        // ----------------------------------------------------------
+
+        // Registrar al usuario dentro del chat
         if (!isset($this->sessions[$chatId])) {
             $this->sessions[$chatId] = [];
-            echo "💬 Nueva sesión chat {$chatId}\n";
+            echo "💬 Nueva sesión creada para chat {$chatId}\n";
         }
 
         $this->sessions[$chatId][$from->resourceId] = $from;
@@ -1248,8 +1137,10 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
         echo "➕ Usuario {$userId} unido al chat {$chatId}\n";
 
+        // Obtener lista de usuarios conectados en este chat
         $onlineInChat = $this->getOnlineUsersInChat($chatId);
 
+        // Enviar confirmación al cliente
         $from->send(json_encode([
             'type' => 'joined_chat',
             'chat_id' => $chatId,
@@ -1259,8 +1150,10 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'timestamp' => time()
         ]));
 
+        // Notificar a los demás usuarios del chat
         $this->notifyUserJoinedChat($chatId, $userId);
     }
+
 
     private function handlePing($from)
     {
@@ -1670,135 +1563,134 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             }
         }
     }
-private function handleChatMessage($from, $data)
-{
-    $this->logToFile("💭 Procesando mensaje de chat");
+    private function handleChatMessage($from, $data)
+    {
+        $this->logToFile("💭 Procesando mensaje de chat");
 
-    $chatId = $data['chat_id'] ?? null;
-    $userId = $data['user_id'] ?? null;
-    $content = $data['contenido'] ?? '';
-    $tempId = $data['temp_id'] ?? null;
+        $chatId = $data['chat_id'] ?? null;
+        $userId = $data['user_id'] ?? null;
+        $content = $data['contenido'] ?? '';
+        $tempId = $data['temp_id'] ?? null;
 
-    if (!$chatId || !$userId) {
-        $this->logToFile("❌ Datos incompletos");
-        return;
-    }
+        if (!$chatId || !$userId) {
+            $this->logToFile("❌ Datos incompletos");
+            return;
+        }
 
-    // 1. Confirmación inmediata
-    if ($tempId) {
-        $from->send(json_encode([
-            'type' => 'message_ack',
-            'temp_id' => $tempId,
-            'status' => 'received',
-            'timestamp' => time()
-        ]));
-    }
+        // 1. Confirmación inmediata
+        if ($tempId) {
+            $from->send(json_encode([
+                'type' => 'message_ack',
+                'temp_id' => $tempId,
+                'status' => 'received',
+                'timestamp' => time()
+            ]));
+        }
 
-    // 2. Guardar en BD
-    $messageId = null;
-    $realChatId = $chatId;
-    $otherUserId = null;
+        // 2. Guardar en BD
+        $messageId = null;
+        $realChatId = $chatId;
+        $otherUserId = null;
 
-    if ($this->chatModel) {
-        try {
-            // Verificar y/o crear chat
-            if (!$this->chatModel->chatExists($chatId)) {
-                $otherUserId = $data['other_user_id'] ?? $chatId;
-                $realChatId = $this->chatModel->findChatBetweenUsers($userId, $otherUserId);
+        if ($this->chatModel) {
+            try {
+                // Verificar y/o crear chat
+                if (!$this->chatModel->chatExists($chatId)) {
+                    $otherUserId = $data['other_user_id'] ?? $chatId;
+                    $realChatId = $this->chatModel->findChatBetweenUsers($userId, $otherUserId);
 
-                if (!$realChatId) {
-                    $realChatId = $this->chatModel->createChat([$userId, $otherUserId]);
-                    $this->logToFile("🆕 Chat creado: {$realChatId}");
+                    if (!$realChatId) {
+                        $realChatId = $this->chatModel->createChat([$userId, $otherUserId]);
+                        $this->logToFile("🆕 Chat creado: {$realChatId}");
+                    }
+
+                    $chatId = $realChatId;
                 }
 
-                $chatId = $realChatId;
-            }
+                // Guardar mensaje y obtener ID REAL
+                $messageId = $this->chatModel->sendMessage(
+                    $chatId,
+                    $userId,
+                    $content,
+                    $data['tipo'] ?? 'texto'
+                );
 
-            // Guardar mensaje y obtener ID REAL
-            $messageId = $this->chatModel->sendMessage(
-                $chatId,
-                $userId,
-                $content,
-                $data['tipo'] ?? 'texto'
-            );
+                $this->logToFile("✅ Mensaje guardado en BD: ID REAL {$messageId}");
 
-            $this->logToFile("✅ Mensaje guardado en BD: ID REAL {$messageId}");
+                // ⭐⭐ ENVIAR CONFIRMACIÓN CON ID REAL AL REMITENTE
+                if ($tempId && $messageId) {
+                    $confirmation = [
+                        'type' => 'message_sent', // ⭐⭐ TIPO NUEVO
+                        'message_id' => $messageId, // ⭐⭐ ID REAL
+                        'temp_id' => $tempId, // ⭐⭐ ID TEMPORAL
+                        'chat_id' => $chatId,
+                        'user_id' => $userId,
+                        'contenido' => $content,
+                        'tipo' => $data['tipo'] ?? 'texto',
+                        'timestamp' => date('c'),
+                        'status' => 'sent',
+                        'action' => 'message_confirmed' // ⭐⭐ ACCIÓN
+                    ];
 
-            // ⭐⭐ ENVIAR CONFIRMACIÓN CON ID REAL AL REMITENTE
-            if ($tempId && $messageId) {
-                $confirmation = [
-                    'type' => 'message_sent', // ⭐⭐ TIPO NUEVO
-                    'message_id' => $messageId, // ⭐⭐ ID REAL
-                    'temp_id' => $tempId, // ⭐⭐ ID TEMPORAL
-                    'chat_id' => $chatId,
-                    'user_id' => $userId,
-                    'contenido' => $content,
-                    'tipo' => $data['tipo'] ?? 'texto',
-                    'timestamp' => date('c'),
-                    'status' => 'sent',
-                    'action' => 'message_confirmed' // ⭐⭐ ACCIÓN
-                ];
-                
-                // Enviar confirmación SOLO al remitente
-                $from->send(json_encode($confirmation));
-                $this->logToFile("✅ Confirmación enviada al remitente: temp_id={$tempId}, message_id={$messageId}");
-            }
+                    // Enviar confirmación SOLO al remitente
+                    $from->send(json_encode($confirmation));
+                    $this->logToFile("✅ Confirmación enviada al remitente: temp_id={$tempId}, message_id={$messageId}");
+                }
 
-            // Obtener conteo de mensajes no leídos para cada usuario
-            $this->updateUnreadCounts($chatId, $userId);
-            
-        } catch (\Exception $e) {
-            $this->logToFile("❌ Error BD: " . $e->getMessage());
-            // Si hay error, enviar confirmación de error
-            if ($tempId) {
-                $from->send(json_encode([
-                    'type' => 'message_error',
-                    'temp_id' => $tempId,
-                    'error' => $e->getMessage(),
-                    'status' => 'failed'
-                ]));
-            }
-            return; // Salir si hay error
-        }
-    } else {
-        $messageId = 'temp_' . rand(1000, 9999);
-    }
-
-    // 3. Preparar respuesta del mensaje para broadcast
-    $response = [
-        'type' => 'chat_message',
-        'message_id' => $messageId, // ⭐⭐ Esto ya es el ID REAL si se guardó
-        'chat_id' => $chatId,
-        'user_id' => $userId,
-        'contenido' => $content,
-        'tipo' => $data['tipo'] ?? 'texto',
-        'timestamp' => date('c'),
-        'temp_id' => $tempId,
-        'leido' => 0,
-        'user_name' => $data['user_name'] ?? 'Usuario',
-        'status' => 'sent',
-        'action' => 'new_message'
-    ];
-
-    // 4. Enviar a todos en el chat (EXCEPTO AL REMITENTE - ya recibió confirmación)
-    $sentCount = 0;
-    
-    if (isset($this->sessions[$chatId])) {
-        foreach ($this->sessions[$chatId] as $client) {
-            // ⭐⭐ NO enviar al remitente (ya recibió confirmación)
-            if ($client === $from) continue;
-            
-            try {
-                $client->send(json_encode($response));
-                $sentCount++;
+                // Obtener conteo de mensajes no leídos para cada usuario
+                $this->updateUnreadCounts($chatId, $userId);
             } catch (\Exception $e) {
-                $this->logToFile("❌ Error enviando a cliente: {$e->getMessage()}");
+                $this->logToFile("❌ Error BD: " . $e->getMessage());
+                // Si hay error, enviar confirmación de error
+                if ($tempId) {
+                    $from->send(json_encode([
+                        'type' => 'message_error',
+                        'temp_id' => $tempId,
+                        'error' => $e->getMessage(),
+                        'status' => 'failed'
+                    ]));
+                }
+                return; // Salir si hay error
+            }
+        } else {
+            $messageId = 'temp_' . rand(1000, 9999);
+        }
+
+        // 3. Preparar respuesta del mensaje para broadcast
+        $response = [
+            'type' => 'chat_message',
+            'message_id' => $messageId, // ⭐⭐ Esto ya es el ID REAL si se guardó
+            'chat_id' => $chatId,
+            'user_id' => $userId,
+            'contenido' => $content,
+            'tipo' => $data['tipo'] ?? 'texto',
+            'timestamp' => date('c'),
+            'temp_id' => $tempId,
+            'leido' => 0,
+            'user_name' => $data['user_name'] ?? 'Usuario',
+            'status' => 'sent',
+            'action' => 'new_message'
+        ];
+
+        // 4. Enviar a todos en el chat (EXCEPTO AL REMITENTE - ya recibió confirmación)
+        $sentCount = 0;
+
+        if (isset($this->sessions[$chatId])) {
+            foreach ($this->sessions[$chatId] as $client) {
+                // ⭐⭐ NO enviar al remitente (ya recibió confirmación)
+                if ($client === $from) continue;
+
+                try {
+                    $client->send(json_encode($response));
+                    $sentCount++;
+                } catch (\Exception $e) {
+                    $this->logToFile("❌ Error enviando a cliente: {$e->getMessage()}");
+                }
             }
         }
-    }
 
-    $this->logToFile("📤 Mensaje broadcast a {$sentCount} otros cliente(s)");
-}
+        $this->logToFile("📤 Mensaje broadcast a {$sentCount} otros cliente(s)");
+    }
 
     /**
      * Obtener datos actualizados del chat para la lista
