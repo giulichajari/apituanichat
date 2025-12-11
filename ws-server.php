@@ -494,7 +494,10 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                     case 'ping':
                         $this->handlePing($from);
                         break;
-                
+                    case 'call_answer':
+                        $this->handleCallAnswer($from, $data);
+                        break;
+
                     case 'auth':
                         $this->handleAuth($from, $data);
                         break;
