@@ -530,7 +530,7 @@ public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
                     $this->handleCallOffer($from, $data);
                     break;
 
-                case 'call_answer':
+                case 'call_accepted':
                     $this->handleCallAnswer($from, $data);
                     break;
 
