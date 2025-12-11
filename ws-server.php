@@ -602,32 +602,31 @@ public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
     /**
      * Maneja oferta de WebRTC
      */
-    private function handleCallOffer($from, $data)
-    {
-        $userId = $this->getUserIdFromConnection($from);
-        $toUserId = $data['to'] ?? null;
-        $sessionId = $data['session_id'] ?? null;
-        $sdp = $data['sdp'] ?? null;
+   private function handleCallOffer($from, $data)
+{
+    $userId = $this->getUserIdFromConnection($from);
+    $toUserId = $data['to'] ?? null;
 
-        if (!$userId || !$toUserId || !$sessionId || !$sdp) {
-            return;
-        }
-
-        $toConnection = $this->findConnectionByUserId($toUserId);
-
-        if ($toConnection) {
-            $toConnection->send(json_encode([
-                'type' => 'call_offer',
-                'session_id' => $sessionId,
-                'from' => $userId,
-                'to' => $toUserId,
-                'sdp' => $sdp,
-                'timestamp' => date('Y-m-d H:i:s')
-            ]));
-
-            echo "📞 Oferta WebRTC enviada de {$userId} a {$toUserId}\n";
-        }
+    if (!$userId || !$toUserId) {
+        return;
     }
+
+    // Buscar el socket del receptor
+    $toConnection = $this->findConnectionByUserId($toUserId);
+
+    if ($toConnection) {
+
+        // 🔥 Reenviar TODOS los atributos del mensaje original
+        // + asegurar que 'from' y 'timestamp' sean correctos
+        $data['from'] = $userId;
+        $data['timestamp'] = date('Y-m-d H:i:s');
+
+        $toConnection->send(json_encode($data));
+
+        echo "📞 Oferta WebRTC enviada de {$userId} a {$toUserId}\n";
+    }
+}
+
 
     /**
      * Maneja respuesta de WebRTC
