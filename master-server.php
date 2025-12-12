@@ -14,7 +14,10 @@ use AudioCallApp\AudioCallServer;
 
 // Crear loop de eventos
 $loop = \React\EventLoop\Factory::create();
-
+$audioWebSock = new \React\Socket\Server('0.0.0.0:9095', $loop);
+$audioWsServer = new \Ratchet\WebSocket\WsServer(new AudioCallServer());
+$audioHttpServer = new \Ratchet\Http\HttpServer($audioWsServer);
+new \Ratchet\Server\IoServer($audioHttpServer, $audioWebSock, $loop);
 // Chat Server
 $chatWebSock = new \React\Socket\Server('0.0.0.0:9090', $loop);
 $chatWsServer = new \Ratchet\WebSocket\WsServer(new \SignalServer());
@@ -22,10 +25,7 @@ $chatHttpServer = new \Ratchet\Http\HttpServer($chatWsServer);
 new \Ratchet\Server\IoServer($chatHttpServer, $chatWebSock, $loop);
 
 // Audio Server CON TURN
-$audioWebSock = new \React\Socket\Server('0.0.0.0:9095', $loop);
-$audioWsServer = new \Ratchet\WebSocket\WsServer(new AudioCallServer());
-$audioHttpServer = new \Ratchet\Http\HttpServer($audioWsServer);
-new \Ratchet\Server\IoServer($audioHttpServer, $audioWebSock, $loop);
+
 
 $loop->addSignal(SIGINT, function () use ($loop) {
     echo "\n🛑 Señal SIGINT recibida, apagando servidores...\n";
