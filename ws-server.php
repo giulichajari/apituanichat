@@ -1,5 +1,8 @@
 <?php
 // ws-server.php - VERSIÓN CORREGIDA CON CHATMODEL INTEGRADO
+
+require_once __DIR__ . '/AudioCallServer.php';
+
 use AudioCallApp\AudioCallServer;
 
 // ===================== CONFIGURACIÓN DEBUG =====================
