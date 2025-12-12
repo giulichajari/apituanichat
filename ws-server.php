@@ -1,9 +1,6 @@
 <?php
 // ws-server.php - VERSIÓN CORREGIDA CON CHATMODEL INTEGRADO
 
-require_once __DIR__ . '/AudioCallServer.php';
-
-use AudioCallApp\AudioCallServer;
 
 // ===================== CONFIGURACIÓN DEBUG =====================
 error_reporting(E_ALL);
@@ -2228,6 +2225,10 @@ echo "🚀 INICIANDO SERVIDOR WEBSOCKET MEJORADO\n";
 echo "========================================\n\n";
 
 try {
+    
+require_once __DIR__ . '/AudioCallServer.php';
+
+
     $loop = \React\EventLoop\Factory::create();
     $webSock = new \React\Socket\Server('0.0.0.0:9090', $loop);
 
