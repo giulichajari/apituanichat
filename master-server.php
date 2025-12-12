@@ -3,6 +3,7 @@ error_reporting(E_ALL);
 ini_set('display_errors', 1);
 ini_set('log_errors', 1);
 ini_set('error_log', __DIR__ . '/unified-error.log');
+    use AudioCallApp\AudioCallServer;
 
 try {
     echo "🚀 UNIFIED SERVER - Con TURN configurado\n";
@@ -11,7 +12,6 @@ try {
     require_once __DIR__ . '/AudioCallServer.php';
     require_once __DIR__ . '/ws-server.php';
 
-    use AudioCallApp\AudioCallServer;
 
     // Crear loop de eventos
     $loop = \React\EventLoop\Factory::create();
