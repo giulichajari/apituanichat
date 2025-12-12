@@ -4,24 +4,60 @@ namespace AudioCallApp;
 
 use Ratchet\MessageComponentInterface;
 use Ratchet\ConnectionInterface;
-use Ratchet\Server\IoServer;
-use Ratchet\WebSocket\WsServer;
 
 class AudioCallServer implements MessageComponentInterface
 {
     protected $clients;
-    protected $rooms;
+    protected $turnConfig;
 
     public function __construct()
     {
-        $this->clients = new \SplObjectStorage;
-        $this->rooms = [];
+        $this->clients = new \SplObjectStorage();
+        
+        // 🔥 CONFIGURACIÓN TURN
+        $this->turnConfig = [
+            'server' => 'tuanichat.com',
+            'port' => 3478,
+            'tls_port' => 5349,
+            'username' => 'webrtcuser',
+            'password' => 'ClaveSuperSegura123'
+        ];
+        
+        echo "🎧 AudioCallServer con TURN inicializado\n";
     }
 
     public function onOpen(ConnectionInterface $conn)
     {
         $this->clients->attach($conn);
-        echo "Nueva conexión: {$conn->resourceId}\n";
+        echo "🔗 Nueva conexión de audio: {$conn->resourceId}\n";
+        
+        // 🔥 ENVIAR CONFIGURACIÓN TURN INMEDIATAMENTE
+        $this->sendTurnConfig($conn);
+    }
+
+    private function sendTurnConfig(ConnectionInterface $conn)
+    {
+        $config = [
+            'type' => 'turn_config',
+            'turn_servers' => [
+                [
+                    'urls' => [
+                        'turn:' . $this->turnConfig['server'] . ':' . $this->turnConfig['port'] . '?transport=udp',
+                        'turn:' . $this->turnConfig['server'] . ':' . $this->turnConfig['port'] . '?transport=tcp',
+                        'turns:' . $this->turnConfig['server'] . ':' . $this->turnConfig['tls_port'] . '?transport=tcp'
+                    ],
+                    'username' => $this->turnConfig['username'],
+                    'credential' => $this->turnConfig['password']
+                ]
+            ],
+            'stun_servers' => [
+                ['urls' => 'stun:stun.l.google.com:19302']
+            ],
+            'server_time' => date('Y-m-d H:i:s')
+        ];
+        
+        $conn->send(json_encode($config));
+        echo "📤 Configuración TURN enviada a conexión #{$conn->resourceId}\n";
     }
 
     public function onMessage(ConnectionInterface $from, $msg)
@@ -29,99 +65,54 @@ class AudioCallServer implements MessageComponentInterface
         $data = json_decode($msg, true);
         
         if (!$data) {
+            // Manejar audio binario
+            $this->relayAudio($from, $msg);
             return;
         }
 
         switch ($data['type']) {
-            case 'join':
-                $roomId = $data['roomId'];
-                $userId = $data['userId'];
-                
-                if (!isset($this->rooms[$roomId])) {
-                    $this->rooms[$roomId] = [];
-                }
-                
-                $this->rooms[$roomId][$userId] = $from;
-                $from->roomId = $roomId;
-                $from->userId = $userId;
-                
-                // Notificar a otros en la sala
-                foreach ($this->rooms[$roomId] as $id => $client) {
-                    if ($id !== $userId) {
-                        $client->send(json_encode([
-                            'type' => 'user-joined',
-                            'userId' => $userId
-                        ]));
-                    }
-                }
-                
-                // Enviar lista de usuarios al nuevo
-                $users = array_keys($this->rooms[$roomId]);
-                $from->send(json_encode([
-                    'type' => 'room-info',
-                    'users' => $users
-                ]));
+            case 'get_turn_config':
+                $this->sendTurnConfig($from);
                 break;
-
+                
             case 'offer':
             case 'answer':
             case 'candidate':
-                $targetUserId = $data['targetUserId'];
-                $roomId = $from->roomId;
-                
-                if (isset($this->rooms[$roomId][$targetUserId])) {
-                    $this->rooms[$roomId][$targetUserId]->send(json_encode([
-                        'type' => $data['type'],
-                        'from' => $from->userId,
-                        'data' => $data['data']
-                    ]));
-                }
+                $this->relayWebRTCMessage($from, $data);
                 break;
+                
+            default:
+                echo "⚠️ Tipo desconocido: {$data['type']}\n";
+        }
+    }
 
-            case 'leave':
-                $roomId = $from->roomId;
-                $userId = $from->userId;
-                
-                if (isset($this->rooms[$roomId][$userId])) {
-                    unset($this->rooms[$roomId][$userId]);
-                    
-                    foreach ($this->rooms[$roomId] as $client) {
-                        $client->send(json_encode([
-                            'type' => 'user-left',
-                            'userId' => $userId
-                        ]));
-                    }
-                }
-                break;
+    private function relayWebRTCMessage($from, $data)
+    {
+        foreach ($this->clients as $client) {
+            if ($from !== $client) {
+                $client->send(json_encode($data));
+            }
+        }
+    }
+
+    private function relayAudio($from, $audioData)
+    {
+        foreach ($this->clients as $client) {
+            if ($from !== $client) {
+                $client->send($audioData);
+            }
         }
     }
 
     public function onClose(ConnectionInterface $conn)
     {
         $this->clients->detach($conn);
-        
-        if (isset($conn->roomId, $conn->userId)) {
-            $roomId = $conn->roomId;
-            $userId = $conn->userId;
-            
-            if (isset($this->rooms[$roomId][$userId])) {
-                unset($this->rooms[$roomId][$userId]);
-                
-                foreach ($this->rooms[$roomId] as $client) {
-                    $client->send(json_encode([
-                        'type' => 'user-left',
-                        'userId' => $userId
-                    ]));
-                }
-            }
-        }
-        
-        echo "Conexión cerrada: {$conn->resourceId}\n";
+        echo "❌ Conexión de audio cerrada: {$conn->resourceId}\n";
     }
 
     public function onError(ConnectionInterface $conn, \Exception $e)
     {
-        echo "Error: {$e->getMessage()}\n";
+        echo "⚠️ Error en audio: {$e->getMessage()}\n";
         $conn->close();
     }
 }

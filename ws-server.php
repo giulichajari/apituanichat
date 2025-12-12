@@ -2242,6 +2242,7 @@ try {
         $app->periodicCleanup();
     });
 
+
     echo "✅ Servidor WebSocket configurado\n";
     echo "📡 Escuchando en: ws://0.0.0.0:9090\n";
     echo "🔄 Timer de BD: cada 2 segundos\n";
