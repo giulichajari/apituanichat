@@ -1,5 +1,6 @@
 <?php
 // ws-server.php - VERSIÓN CORREGIDA CON CHATMODEL INTEGRADO
+use AudioCallApp\AudioCallServer;
 
 // ===================== CONFIGURACIÓN DEBUG =====================
 error_reporting(E_ALL);
@@ -22,7 +23,7 @@ echo "✅ Vendor autoload cargado\n";
 
 // ===================== CARGAR CHATMODEL =====================
 // Asegúrate de que esta ruta sea correcta
-$chatModelPath = __DIR__ . '/app/Models/ChatModel.php';
+$chatModelPath = __DIR__ . '/App/Models/ChatModel.php';
 if (!file_exists($chatModelPath)) {
     echo "⚠️ ChatModel.php no encontrado en: $chatModelPath\n";
     echo "📂 Buscando en otras ubicaciones...\n";
@@ -2224,26 +2225,64 @@ echo "🚀 INICIANDO SERVIDOR WEBSOCKET MEJORADO\n";
 echo "========================================\n\n";
 
 try {
-    $app = new SignalServer();
     $loop = \React\EventLoop\Factory::create();
     $webSock = new \React\Socket\Server('0.0.0.0:9090', $loop);
-    $wsServer = new \Ratchet\WebSocket\WsServer($app);
+
+    $chatApp  = new SignalServer();      // Chat
+    $audioApp = new AudioCallApp\AudioCallServer();   // Audio/TURN
+
+    // Servidor WS unificado
+    $wsServer = new \Ratchet\WebSocket\WsServer(
+        new class($chatApp, $audioApp) implements \Ratchet\MessageComponentInterface {
+            private $chatApp;
+            private $audioApp;
+
+            public function __construct($chatApp, $audioApp) {
+                $this->chatApp  = $chatApp;
+                $this->audioApp = $audioApp;
+            }
+
+            public function onOpen(\Ratchet\ConnectionInterface $conn) {
+                $this->chatApp->onOpen($conn);
+                $this->audioApp->onOpen($conn);
+            }
+
+            public function onMessage(\Ratchet\ConnectionInterface $from, $msg) {
+                $data = json_decode($msg, true);
+                if (($data['type'] ?? '') === 'chat_message') {
+                    $this->chatApp->onMessage($from, $msg);
+                } else {
+                    $this->audioApp->onMessage($from, $msg);
+                }
+            }
+
+            public function onClose(\Ratchet\ConnectionInterface $conn) {
+                $this->chatApp->onClose($conn);
+                $this->audioApp->onClose($conn);
+            }
+
+            public function onError(\Ratchet\ConnectionInterface $conn, \Exception $e) {
+                $this->chatApp->onError($conn, $e);
+                $this->audioApp->onError($conn, $e);
+            }
+        }
+    );
+
     $httpServer = new \Ratchet\Http\HttpServer($wsServer);
-    $server = new \Ratchet\Server\IoServer($httpServer, $webSock, $loop);
+    new \Ratchet\Server\IoServer($httpServer, $webSock, $loop);
 
     // Timer para notificaciones
-    $loop->addPeriodicTimer(2, function () use ($app) {
+    $loop->addPeriodicTimer(2, function () use ($chatApp) {
         echo date('H:i:s') . " 🔍 Verificando notificaciones...\n";
-        $app->checkDatabaseNotifications();
+        $chatApp->checkDatabaseNotifications();
     });
 
     // Timer para limpieza
-    $loop->addPeriodicTimer(30, function () use ($app) {
-        $app->periodicCleanup();
+    $loop->addPeriodicTimer(30, function () use ($chatApp) {
+        $chatApp->periodicCleanup();
     });
 
-
-    echo "✅ Servidor WebSocket configurado\n";
+    echo "✅ Servidor WebSocket unificado configurado\n";
     echo "📡 Escuchando en: ws://0.0.0.0:9090\n";
     echo "🔄 Timer de BD: cada 2 segundos\n";
     echo "🧹 Limpieza: cada 30 segundos\n";
@@ -2260,3 +2299,4 @@ try {
     echo "Línea: " . $e->getLine() . "\n";
     exit(1);
 }
+
