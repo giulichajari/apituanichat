@@ -491,40 +491,20 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 $this->logToFile("🎯 Tipo recibido: " . $data['type']);
 
                 switch ($data['type']) {
-   case 'init_call':
-        $this->handleInitCall($from, $data);
-        break;
-        
-    case 'call_offer':
-        $this->handleCallOffer($from, $data);
-        break;
-        
-    case 'call_answer':
-        $this->handleCallAnswer($from, $data);
-        break;
-        
-    case 'call_candidate':
-        $this->handleCallCandidate($from, $data);
-        break;
-        
-    case 'call_ended':
-        $this->handleCallEnded($from, $data);
-        break;
-        
-    case 'call_reject':
-        $this->handleCallReject($from, $data);
-        break;
+                    // ========== AUTENTICACIÓN Y CONEXIÓN ==========
                     case 'ping':
                         $this->handlePing($from);
-                        break;
-                    case 'call_answer':
-                        $this->handleCallAnswer($from, $data);
                         break;
 
                     case 'auth':
                         $this->handleAuth($from, $data);
                         break;
 
+                    case 'heartbeat':
+                        $this->handleHeartbeat($from, $data);
+                        break;
+
+                    // ========== CHAT Y MENSAJES ==========
                     case 'join_chat':
                         $this->handleJoinChat($from, $data);
                         break;
@@ -547,17 +527,38 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                         $this->handleMarkAsRead($from, $data);
                         break;
 
-                    // WebRTC
+                    case 'typing':
+                        $this->handleTyping($from, $data);
+                        break;
+
+                    // ========== ESTADOS Y USUARIOS ==========
+                    case 'get_online_users':
+                        $this->handleGetOnlineUsers($from, $data);
+                        break;
+
+                    case 'get_user_status':
+                        $this->handleGetUserStatus($from, $data);
+                        break;
+
+                    // ========== LLAMADAS DE VOZ (CORREGIDO) ==========
                     case 'init_call':
                         $this->handleInitCall($from, $data);
+                        break;
+
+                    case 'call_request':
+                        $this->handleCallRequest($from, $data);
                         break;
 
                     case 'call_offer':
                         $this->handleCallOffer($from, $data);
                         break;
 
-                    case 'call_accepted':
+                    case 'call_answer':
                         $this->handleCallAnswer($from, $data);
+                        break;
+
+                    case 'call_accepted':
+                        $this->handleCallAccepted($from, $data);
                         break;
 
                     case 'call_candidate':
@@ -569,33 +570,9 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                         break;
 
                     case 'call_reject':
-                        $this->handleCallReject($from, $data);
-                        break;
-
-                    case 'heartbeat':
-                        $this->handleHeartbeat($from, $data);
-                        break;
-
-                    case 'get_online_users':
-                        $this->handleGetOnlineUsers($from, $data);
-                        break;
-
-                    case 'get_user_status':
-                        $this->handleGetUserStatus($from, $data);
-                        break;
-                    // En ws-server.php
-                    case 'call_request':
-                        $this->handleCallRequest($from, $data);
-                        break;
-
-                    case 'call_accepted':
-                        $this->handleCallAnswer($from, $data);
-                        break;
-
                     case 'call_rejected':
                         $this->handleCallReject($from, $data);
                         break;
-
 
                     default:
                         echo "⚠️ Tipo desconocido: {$data['type']}\n";
@@ -623,7 +600,75 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             echo "❌ Error: {$e->getMessage()}\n";
         }
     }
+/**
+ * Manejar aceptación de llamada
+ */
+private function handleCallAccepted($from, $data)
+{
+    $userId = $this->getUserIdFromConnection($from);
+    $toUserId = $data['to'] ?? null;
+    $sessionId = $data['session_id'] ?? null;
+    $chatId = $data['chat_id'] ?? null;
 
+    if (!$userId || !$toUserId || !$sessionId) {
+        echo "❌ Datos incompletos en call_accepted\n";
+        return;
+    }
+
+    echo "✅ Llamada aceptada por {$userId} para sesión {$sessionId}\n";
+
+    $toConnection = $this->findConnectionByUserId($toUserId);
+
+    if ($toConnection) {
+        $toConnection->send(json_encode([
+            'type' => 'call_accepted',
+            'session_id' => $sessionId,
+            'from' => $userId,
+            'to' => $toUserId,
+            'chat_id' => $chatId,
+            'timestamp' => date('Y-m-d H:i:s')
+        ]));
+        
+        echo "📤 call_accepted enviado a {$toUserId}\n";
+    } else {
+        echo "❌ Destinatario {$toUserId} no encontrado\n";
+    }
+}
+/**
+ * Manejar indicador de typing
+ */
+private function handleTyping($from, $data)
+{
+    $userId = $this->getUserIdFromConnection($from);
+    $chatId = $data['chat_id'] ?? null;
+    $isTyping = $data['isTyping'] ?? false;
+
+    if (!$userId || !$chatId) {
+        echo "❌ Datos incompletos en typing\n";
+        return;
+    }
+
+    // Enviar a todos en el chat excepto al remitente
+    if (isset($this->sessions[$chatId])) {
+        foreach ($this->sessions[$chatId] as $client) {
+            if ($client !== $from) {
+                try {
+                    $client->send(json_encode([
+                        'type' => 'typing',
+                        'chat_id' => $chatId,
+                        'user_id' => $userId,
+                        'isTyping' => $isTyping,
+                        'timestamp' => date('Y-m-d H:i:s')
+                    ]));
+                } catch (\Exception $e) {
+                    echo "❌ Error enviando typing: {$e->getMessage()}\n";
+                }
+            }
+        }
+    }
+    
+    echo "⌨️ Typing de {$userId} en chat {$chatId}: " . ($isTyping ? 'SÍ' : 'NO') . "\n";
+}
     private function handleCallRequest($from, $data)
     {
         $userId = $this->getUserIdFromConnection($from);
@@ -2247,8 +2292,8 @@ echo "🚀 INICIANDO SERVIDOR WEBSOCKET MEJORADO\n";
 echo "========================================\n\n";
 
 try {
-    
-require_once __DIR__ . '/AudioCallServer.php';
+
+    require_once __DIR__ . '/AudioCallServer.php';
 
 
     $loop = \React\EventLoop\Factory::create();
@@ -2263,17 +2308,20 @@ require_once __DIR__ . '/AudioCallServer.php';
             private $chatApp;
             private $audioApp;
 
-            public function __construct($chatApp, $audioApp) {
+            public function __construct($chatApp, $audioApp)
+            {
                 $this->chatApp  = $chatApp;
                 $this->audioApp = $audioApp;
             }
 
-            public function onOpen(\Ratchet\ConnectionInterface $conn) {
+            public function onOpen(\Ratchet\ConnectionInterface $conn)
+            {
                 $this->chatApp->onOpen($conn);
                 $this->audioApp->onOpen($conn);
             }
 
-            public function onMessage(\Ratchet\ConnectionInterface $from, $msg) {
+            public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
+            {
                 $data = json_decode($msg, true);
                 if (($data['type'] ?? '') === 'chat_message') {
                     $this->chatApp->onMessage($from, $msg);
@@ -2282,12 +2330,14 @@ require_once __DIR__ . '/AudioCallServer.php';
                 }
             }
 
-            public function onClose(\Ratchet\ConnectionInterface $conn) {
+            public function onClose(\Ratchet\ConnectionInterface $conn)
+            {
                 $this->chatApp->onClose($conn);
                 $this->audioApp->onClose($conn);
             }
 
-            public function onError(\Ratchet\ConnectionInterface $conn, \Exception $e) {
+            public function onError(\Ratchet\ConnectionInterface $conn, \Exception $e)
+            {
                 $this->chatApp->onError($conn, $e);
                 $this->audioApp->onError($conn, $e);
             }
@@ -2325,4 +2375,3 @@ require_once __DIR__ . '/AudioCallServer.php';
     echo "Línea: " . $e->getLine() . "\n";
     exit(1);
 }
-
