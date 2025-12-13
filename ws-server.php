@@ -490,7 +490,11 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
                 $this->logToFile("🎯 Tipo recibido: " . $data['type']);
 
-                switch ($data['type']) {
+               
+
+                return;
+            }
+ switch ($data['type']) {
                     // ========== AUTENTICACIÓN Y CONEXIÓN ==========
                     case 'ping':
                         $this->handlePing($from);
@@ -581,10 +585,6 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                             'message' => 'Tipo no soportado: ' . $data['type']
                         ]));
                 }
-
-                return;
-            }
-
             // 🔹 Si no es JSON → Es binario (audio)
             echo date('H:i:s') . " 🎵 Mensaje binario recibido: " . strlen($msg) . " bytes\n";
             $this->logToFile("🎵 Mensaje binario recibido: " . strlen($msg) . " bytes");
