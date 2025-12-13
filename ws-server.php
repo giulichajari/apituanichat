@@ -456,219 +456,239 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             echo $formattedMessage;
         }
     }
-    public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
-    {
-        echo date('H:i:s') . " 📨 #{$from->resourceId} → " . (is_string($msg) ? substr($msg, 0, 200) : "[BINARIO " . strlen($msg) . " bytes]") . "\n";
-        $this->logToFile("📨 Mensaje recibido: " . (is_string($msg) ? $msg : "[BINARIO " . strlen($msg) . " bytes]"));
+public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
+{
+    echo date('H:i:s') . " 📨 #{$from->resourceId} → " . (is_string($msg) ? substr($msg, 0, 200) : "[BINARIO " . strlen($msg) . " bytes]") . "\n";
+    $this->logToFile("📨 Mensaje recibido: " . (is_string($msg) ? $msg : "[BINARIO " . strlen($msg) . " bytes]"));
 
-        try {
+    try {
+        // PRIMERO: si es JSON, decodificarlo
+        if (is_string($msg) && $this->isJson($msg)) {
+            $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
 
-            // PRIMERO: si es JSON, decodificarlo
-            if (is_string($msg) && $this->isJson($msg)) {
+            // 🔹 Primer mensaje: identificación del user
+            if (isset($data['type']) && $data['type'] === 'identify') {
+                $userId = $data['user_id'];
 
-                $data = json_decode($msg, true, 512, JSON_THROW_ON_ERROR);
+                // Guardar el user_id asociado al socket
+                $this->connectionUsers[$from->resourceId] = $userId;
 
-                // 🔹 Primer mensaje: identificación del user
-                if (isset($data['type']) && $data['type'] === 'identify') {
+                // Guardar el socket asociado al user_id
+                $this->users[$userId] = $from;
 
-                    $userId = $data['user_id'];
+                echo "🟢 Usuario identificado: $userId en socket {$from->resourceId}\n";
+                return; // ⭐⭐ IMPORTANTE: Salir aquí, solo para identify
+            }
 
-                    // Guardar el user_id asociado al socket
-                    $this->connectionUsers[$from->resourceId] = $userId;
-
-                    // Guardar el socket asociado al user_id
-                    $this->users[$userId] = $from;
-
-                    echo "🟢 Usuario identificado: $userId en socket {$from->resourceId}\n";
-                    return;
-                }
-
-                if (!isset($data['type'])) {
-                    echo "❌ Sin tipo de mensaje\n";
-                    return;
-                }
-
-                $this->logToFile("🎯 Tipo recibido: " . $data['type']);
-
-               
-
+            // ⭐⭐ CRÍTICO: Si no es identify, continuar procesando
+            if (!isset($data['type'])) {
+                echo "❌ Sin tipo de mensaje\n";
                 return;
             }
- switch ($data['type']) {
-                    // ========== AUTENTICACIÓN Y CONEXIÓN ==========
-                    case 'ping':
-                        $this->handlePing($from);
-                        break;
 
-                    case 'auth':
-                        $this->handleAuth($from, $data);
-                        break;
+            $this->logToFile("🎯 Tipo recibido: " . $data['type']);
+            echo "🎯 Tipo recibido: " . $data['type'] . "\n";
 
-                    case 'heartbeat':
-                        $this->handleHeartbeat($from, $data);
-                        break;
-
-                    // ========== CHAT Y MENSAJES ==========
-                    case 'join_chat':
-                        $this->handleJoinChat($from, $data);
-                        break;
-
-                    case 'chat_message':
-                        $this->handleChatMessage($from, $data);
-                        break;
-
-                    case 'file_upload':
-                    case 'image_upload':
-                        $this->handleFileUpload($from, $data);
-                        break;
-
-                    case 'file_uploaded':
-                    case 'image_uploaded':
-                        $this->handleFileUploadNotification($from, $data);
-                        break;
-
-                    case 'mark_as_read':
-                        $this->handleMarkAsRead($from, $data);
-                        break;
-
-                    case 'typing':
-                        $this->handleTyping($from, $data);
-                        break;
-
-                    // ========== ESTADOS Y USUARIOS ==========
-                    case 'get_online_users':
-                        $this->handleGetOnlineUsers($from, $data);
-                        break;
-
-                    case 'get_user_status':
-                        $this->handleGetUserStatus($from, $data);
-                        break;
-
-                    // ========== LLAMADAS DE VOZ (CORREGIDO) ==========
-                    case 'init_call':
-                        $this->handleInitCall($from, $data);
-                        break;
-
-                    case 'call_request':
-                        $this->handleCallRequest($from, $data);
-                        break;
-
-                    case 'call_offer':
-                        $this->handleCallOffer($from, $data);
-                        break;
-
-                    case 'call_answer':
-                        $this->handleCallAnswer($from, $data);
-                        break;
-
-                    case 'call_accepted':
-                        $this->handleCallAccepted($from, $data);
-                        break;
-
-                    case 'call_candidate':
-                        $this->handleCallCandidate($from, $data);
-                        break;
-
-                    case 'call_ended':
-                        $this->handleCallEnded($from, $data);
-                        break;
-
-                    case 'call_reject':
-                    case 'call_rejected':
-                        $this->handleCallReject($from, $data);
-                        break;
-
-                    default:
-                        echo "⚠️ Tipo desconocido: {$data['type']}\n";
-                        $from->send(json_encode([
-                            'type' => 'error',
-                            'message' => 'Tipo no soportado: ' . $data['type']
-                        ]));
-                }
-            // 🔹 Si no es JSON → Es binario (audio)
-            echo date('H:i:s') . " 🎵 Mensaje binario recibido: " . strlen($msg) . " bytes\n";
-            $this->logToFile("🎵 Mensaje binario recibido: " . strlen($msg) . " bytes");
-
-            foreach ($this->clients as $client) {
-                if ($from !== $client) {
-                    $client->send($msg);
-                }
-            }
-        } catch (\JsonException $e) {
-            echo "❌ JSON inválido: {$e->getMessage()}\n";
-        } catch (\Exception $e) {
-            echo "❌ Error: {$e->getMessage()}\n";
-        }
-    }
-/**
- * Manejar aceptación de llamada
- */
-private function handleCallAccepted($from, $data)
-{
-    $userId = $this->getUserIdFromConnection($from);
-    $toUserId = $data['to'] ?? null;
-    $sessionId = $data['session_id'] ?? null;
-    $chatId = $data['chat_id'] ?? null;
-
-    if (!$userId || !$toUserId || !$sessionId) {
-        echo "❌ Datos incompletos en call_accepted\n";
-        return;
-    }
-
-    echo "✅ Llamada aceptada por {$userId} para sesión {$sessionId}\n";
-
-    $toConnection = $this->findConnectionByUserId($toUserId);
-
-    if ($toConnection) {
-        $toConnection->send(json_encode([
-            'type' => 'call_accepted',
-            'session_id' => $sessionId,
-            'from' => $userId,
-            'to' => $toUserId,
-            'chat_id' => $chatId,
-            'timestamp' => date('Y-m-d H:i:s')
-        ]));
-        
-        echo "📤 call_accepted enviado a {$toUserId}\n";
-    } else {
-        echo "❌ Destinatario {$toUserId} no encontrado\n";
-    }
-}
-/**
- * Manejar indicador de typing
- */
-private function handleTyping($from, $data)
-{
-    $userId = $this->getUserIdFromConnection($from);
-    $chatId = $data['chat_id'] ?? null;
-    $isTyping = $data['isTyping'] ?? false;
-
-    if (!$userId || !$chatId) {
-        echo "❌ Datos incompletos en typing\n";
-        return;
-    }
-
-    // Enviar a todos en el chat excepto al remitente
-    if (isset($this->sessions[$chatId])) {
-        foreach ($this->sessions[$chatId] as $client) {
-            if ($client !== $from) {
-                try {
-                    $client->send(json_encode([
-                        'type' => 'typing',
-                        'chat_id' => $chatId,
-                        'user_id' => $userId,
-                        'isTyping' => $isTyping,
-                        'timestamp' => date('Y-m-d H:i:s')
+            // ⭐⭐ SWITCH DENTRO del if que procesa JSON
+            switch ($data['type']) {
+                // ========== AUTENTICACIÓN Y CONEXIÓN ==========
+                case 'ping':
+                    $this->handlePing($from);
+                    break;
+                    
+                case 'auth':
+                    $this->handleAuth($from, $data);
+                    break;
+                    
+                case 'heartbeat':
+                    $this->handleHeartbeat($from, $data);
+                    break;
+                    
+                // ========== CHAT Y MENSAJES ==========
+                case 'join_chat':
+                    $this->handleJoinChat($from, $data);
+                    break;
+                    
+                case 'chat_message':
+                    $this->handleChatMessage($from, $data);
+                    break;
+                    
+                case 'file_upload':
+                case 'image_upload':
+                    $this->handleFileUpload($from, $data);
+                    break;
+                    
+                case 'file_uploaded':
+                case 'image_uploaded':
+                    $this->handleFileUploadNotification($from, $data);
+                    break;
+                    
+                case 'mark_as_read':
+                    $this->handleMarkAsRead($from, $data);
+                    break;
+                    
+                case 'typing':
+                    $this->handleTyping($from, $data);
+                    break;
+                    
+                // ========== ESTADOS Y USUARIOS ==========
+                case 'get_online_users':
+                    $this->handleGetOnlineUsers($from, $data);
+                    break;
+                    
+                case 'get_user_status':
+                    $this->handleGetUserStatus($from, $data);
+                    break;
+                    
+                // ========== LLAMADAS DE VOZ ==========
+                case 'init_call':
+                    echo "📞📞📞 INIT_CALL RECIBIDO 📞📞📞\n";
+                    print_r($data); // ⭐⭐ DEBUG: Mostrar datos
+                    $this->handleInitCall($from, $data);
+                    break;
+                    
+                case 'call_request':
+                    echo "📞📞📞 CALL_REQUEST RECIBIDO 📞📞📞\n";
+                    print_r($data);
+                    $this->handleCallRequest($from, $data);
+                    break;
+                    
+                case 'call_offer':
+                    echo "📞📞📞 CALL_OFFER RECIBIDO 📞📞📞\n";
+                    print_r($data);
+                    $this->handleCallOffer($from, $data);
+                    break;
+                    
+                case 'call_answer':
+                    echo "📞📞📞 CALL_ANSWER RECIBIDO 📞📞📞\n";
+                    print_r($data);
+                    $this->handleCallAnswer($from, $data);
+                    break;
+                    
+                case 'call_accepted':
+                    echo "📞📞📞 CALL_ACCEPTED RECIBIDO 📞📞📞\n";
+                    print_r($data);
+                    $this->handleCallAccepted($from, $data);
+                    break;
+                    
+                case 'call_candidate':
+                    echo "📞📞📞 CALL_CANDIDATE RECIBIDO 📞📞📞\n";
+                    print_r($data);
+                    $this->handleCallCandidate($from, $data);
+                    break;
+                    
+                case 'call_ended':
+                    echo "📞📞📞 CALL_ENDED RECIBIDO 📞📞📞\n";
+                    print_r($data);
+                    $this->handleCallEnded($from, $data);
+                    break;
+                    
+                case 'call_reject':
+                case 'call_rejected':
+                    echo "📞📞📞 CALL_REJECT RECIBIDO 📞📞📞\n";
+                    print_r($data);
+                    $this->handleCallReject($from, $data);
+                    break;
+                    
+                default:
+                    echo "⚠️⚠️⚠️ Tipo desconocido: {$data['type']} ⚠️⚠️⚠️\n";
+                    echo "📦 Datos completos:\n";
+                    print_r($data);
+                    
+                    $from->send(json_encode([
+                        'type' => 'error',
+                        'message' => 'Tipo no soportado: ' . $data['type']
                     ]));
-                } catch (\Exception $e) {
-                    echo "❌ Error enviando typing: {$e->getMessage()}\n";
+            }
+            
+            return; // ⭐⭐ IMPORTANTE: Salir después de procesar JSON
+        }
+
+        // 🔹 Si no es JSON → Es binario (audio)
+        echo date('H:i:s') . " 🎵 Mensaje binario recibido: " . strlen($msg) . " bytes\n";
+        $this->logToFile("🎵 Mensaje binario recibido: " . strlen($msg) . " bytes");
+
+        foreach ($this->clients as $client) {
+            if ($from !== $client) {
+                $client->send($msg);
+            }
+        }
+        
+    } catch (\JsonException $e) {
+        echo "❌ JSON inválido: {$e->getMessage()}\n";
+    } catch (\Exception $e) {
+        echo "❌ Error: {$e->getMessage()}\n";
+    }
+}
+    /**
+     * Manejar aceptación de llamada
+     */
+    private function handleCallAccepted($from, $data)
+    {
+        $userId = $this->getUserIdFromConnection($from);
+        $toUserId = $data['to'] ?? null;
+        $sessionId = $data['session_id'] ?? null;
+        $chatId = $data['chat_id'] ?? null;
+
+        if (!$userId || !$toUserId || !$sessionId) {
+            echo "❌ Datos incompletos en call_accepted\n";
+            return;
+        }
+
+        echo "✅ Llamada aceptada por {$userId} para sesión {$sessionId}\n";
+
+        $toConnection = $this->findConnectionByUserId($toUserId);
+
+        if ($toConnection) {
+            $toConnection->send(json_encode([
+                'type' => 'call_accepted',
+                'session_id' => $sessionId,
+                'from' => $userId,
+                'to' => $toUserId,
+                'chat_id' => $chatId,
+                'timestamp' => date('Y-m-d H:i:s')
+            ]));
+
+            echo "📤 call_accepted enviado a {$toUserId}\n";
+        } else {
+            echo "❌ Destinatario {$toUserId} no encontrado\n";
+        }
+    }
+    /**
+     * Manejar indicador de typing
+     */
+    private function handleTyping($from, $data)
+    {
+        $userId = $this->getUserIdFromConnection($from);
+        $chatId = $data['chat_id'] ?? null;
+        $isTyping = $data['isTyping'] ?? false;
+
+        if (!$userId || !$chatId) {
+            echo "❌ Datos incompletos en typing\n";
+            return;
+        }
+
+        // Enviar a todos en el chat excepto al remitente
+        if (isset($this->sessions[$chatId])) {
+            foreach ($this->sessions[$chatId] as $client) {
+                if ($client !== $from) {
+                    try {
+                        $client->send(json_encode([
+                            'type' => 'typing',
+                            'chat_id' => $chatId,
+                            'user_id' => $userId,
+                            'isTyping' => $isTyping,
+                            'timestamp' => date('Y-m-d H:i:s')
+                        ]));
+                    } catch (\Exception $e) {
+                        echo "❌ Error enviando typing: {$e->getMessage()}\n";
+                    }
                 }
             }
         }
+
+        echo "⌨️ Typing de {$userId} en chat {$chatId}: " . ($isTyping ? 'SÍ' : 'NO') . "\n";
     }
-    
-    echo "⌨️ Typing de {$userId} en chat {$chatId}: " . ($isTyping ? 'SÍ' : 'NO') . "\n";
-}
     private function handleCallRequest($from, $data)
     {
         $userId = $this->getUserIdFromConnection($from);
