@@ -2352,11 +2352,26 @@ echo "\n";
 echo "========================================\n";
 echo "🚀 INICIANDO SERVIDOR WEBSOCKET MEJORADO\n";
 echo "========================================\n\n";
-
 try {
 
     require_once __DIR__ . '/AudioCallServer.php';
 
+    // Función de logging
+    function logToFilegral($message)
+    {
+        $logFile = __DIR__ . '/websocket_debug_gral.log';
+        $timestamp = date('Y-m-d H:i:s');
+        $formattedMessage = "[$timestamp] " . $message . "\n";
+        file_put_contents($logFile, $formattedMessage, FILE_APPEND | LOCK_EX);
+
+        if (php_sapi_name() === 'cli') {
+            echo $formattedMessage;
+        }
+    }
+
+    logToFilegral("================================================");
+    logToFilegral("🚀 INICIANDO SERVIDOR WEBSOCKET UNIFICADO");
+    logToFilegral("================================================");
 
     $loop = \React\EventLoop\Factory::create();
     $webSock = new \React\Socket\Server('0.0.0.0:9090', $loop);
@@ -2365,96 +2380,150 @@ try {
     $audioApp = new AudioCallApp\AudioCallServer();   // Audio/TURN
 
     // Servidor WS unificado
-    // En la parte final de tu ws-server.php, donde creas el servidor:
     $wsServer = new \Ratchet\WebSocket\WsServer(
         new class($chatApp, $audioApp) implements \Ratchet\MessageComponentInterface {
             private $chatApp;
             private $audioApp;
+            private $serverStartTime;
 
             public function __construct($chatApp, $audioApp)
             {
                 $this->chatApp  = $chatApp;
                 $this->audioApp = $audioApp;
+                $this->serverStartTime = time();
+                
+                logToFilegral("🔄 Servidor unificado creado");
+                logToFilegral("   - ChatApp: " . get_class($chatApp));
+                logToFilegral("   - AudioApp: " . get_class($audioApp));
             }
 
             public function onOpen(\Ratchet\ConnectionInterface $conn)
             {
+                logToFilegral("🔗 Conexión #{$conn->resourceId} abierta en servidor unificado");
+                
                 // Abrir en ambos
-                $this->chatApp->onOpen($conn);
-                $this->audioApp->onOpen($conn);
+                try {
+                    $this->chatApp->onOpen($conn);
+                } catch (\Exception $e) {
+                    logToFilegral("❌ Error en chatApp->onOpen: " . $e->getMessage());
+                }
+                
+                try {
+                    $this->audioApp->onOpen($conn);
+                } catch (\Exception $e) {
+                    logToFilegral("❌ Error en audioApp->onOpen: " . $e->getMessage());
+                }
             }
 
             public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
             {
-                echo "📨 MESSAGE RECEIVED IN UNIFIED SERVER\n";
-
-                // ⭐⭐ DECIDIR A QUÉ SERVIDOR ENVIAR SEGÚN EL TIPO DE MENSAJE ⭐⭐
+                $connId = $from->resourceId;
+                $msgPreview = is_string($msg) ? substr($msg, 0, 200) : "[BINARIO " . strlen($msg) . " bytes]";
+                
+                logToFilegral("📨 Conexión #{$connId} → {$msgPreview}");
+                
                 try {
                     if (is_string($msg) && json_decode($msg, true) !== null) {
                         $data = json_decode($msg, true);
+                        $msgType = $data['type'] ?? 'unknown';
+                        
+                        logToFilegral("🔍 Tipo de mensaje detectado: {$msgType}");
+                        logToFilegral("📊 Detalles: " . json_encode([
+                            'connection_id' => $connId,
+                            'type' => $msgType,
+                            'data_length' => strlen($msg)
+                        ]));
 
-                        echo "🔍 Tipo de mensaje detectado: " . ($data['type'] ?? 'unknown') . "\n";
+                        // Lista de tipos que van al SignalServer (chat/llamadas)
+                        $chatTypes = [
+                            'identify',
+                            'auth',
+                            'join_chat',
+                            'chat_message',
+                            'file_upload',
+                            'image_upload',
+                            'mark_as_read',
+                            'typing',
+                            'init_call',
+                            'call_request',
+                            'call_offer',
+                            'call_answer',
+                            'call_accepted',
+                            'call_candidate',
+                            'call_ended',
+                            'call_reject',
+                            'ping',
+                            'heartbeat',
+                            'get_online_users',
+                            'get_user_status'
+                        ];
 
-                        // Si es mensaje de llamada o chat, enviar a SignalServer
-                        if (isset($data['type'])) {
-                            $type = $data['type'];
-
-                            // Lista de tipos que van al SignalServer (chat/llamadas)
-                            $chatTypes = [
-                                'identify',
-                                'auth',
-                                'join_chat',
-                                'chat_message',
-                                'file_upload',
-                                'image_upload',
-                                'mark_as_read',
-                                'typing',
-                                'init_call',
-                                'call_request',
-                                'call_offer',
-                                'call_answer',
-                                'call_accepted',
-                                'call_candidate',
-                                'call_ended',
-                                'call_reject',
-                                'ping',
-                                'heartbeat',
-                                'get_online_users',
-                                'get_user_status'
-                            ];
-
-                            if (in_array($type, $chatTypes)) {
-                                echo "✅ Enviando a SignalServer (tipo: {$type})\n";
-                                $this->chatApp->onMessage($from, $msg);
-                            } else {
-                                echo "✅ Enviando a AudioCallServer (tipo: {$type})\n";
-                                $this->audioApp->onMessage($from, $msg);
-                            }
+                        if (in_array($msgType, $chatTypes)) {
+                            logToFilegral("✅ Enviando a SignalServer (tipo: {$msgType})");
+                            $this->chatApp->onMessage($from, $msg);
                         } else {
-                            // Si no tiene tipo, enviar a AudioCallServer por defecto
-                            echo "✅ Enviando a AudioCallServer (sin tipo)\n";
+                            logToFilegral("✅ Enviando a AudioCallServer (tipo: {$msgType})");
                             $this->audioApp->onMessage($from, $msg);
                         }
                     } else {
                         // Si no es JSON, es audio binario → AudioCallServer
-                        echo "🎵 Audio binario → AudioCallServer\n";
+                        logToFilegral("🎵 Audio binario → AudioCallServer (" . strlen($msg) . " bytes)");
                         $this->audioApp->onMessage($from, $msg);
                     }
                 } catch (\Exception $e) {
-                    echo "❌ Error routing message: " . $e->getMessage() . "\n";
+                    logToFilegral("❌❌❌ ERROR routing message: " . $e->getMessage());
+                    logToFilegral("📂 Archivo: " . $e->getFile() . ":" . $e->getLine());
+                    logToFilegral("🧵 Trace: " . $e->getTraceAsString());
+                    
+                    // Enviar error al cliente
+                    try {
+                        $from->send(json_encode([
+                            'type' => 'server_error',
+                            'message' => 'Error procesando mensaje',
+                            'error' => $e->getMessage(),
+                            'timestamp' => date('Y-m-d H:i:s')
+                        ]));
+                    } catch (\Exception $sendError) {
+                        logToFilegral("❌ No se pudo enviar error al cliente: " . $sendError->getMessage());
+                    }
                 }
             }
 
             public function onClose(\Ratchet\ConnectionInterface $conn)
             {
-                $this->chatApp->onClose($conn);
-                $this->audioApp->onClose($conn);
+                $connId = $conn->resourceId;
+                logToFilegral("❌ Conexión #{$connId} cerrada en servidor unificado");
+                
+                try {
+                    $this->chatApp->onClose($conn);
+                } catch (\Exception $e) {
+                    logToFilegral("❌ Error en chatApp->onClose: " . $e->getMessage());
+                }
+                
+                try {
+                    $this->audioApp->onClose($conn);
+                } catch (\Exception $e) {
+                    logToFilegral("❌ Error en audioApp->onClose: " . $e->getMessage());
+                }
             }
 
             public function onError(\Ratchet\ConnectionInterface $conn, \Exception $e)
             {
-                $this->chatApp->onError($conn, $e);
-                $this->audioApp->onError($conn, $e);
+                $connId = $conn->resourceId;
+                logToFilegral("⚠️ ERROR en conexión #{$connId}: " . $e->getMessage());
+                logToFilegral("📂 Archivo: " . $e->getFile() . ":" . $e->getLine());
+                
+                try {
+                    $this->chatApp->onError($conn, $e);
+                } catch (\Exception $chatError) {
+                    logToFilegral("❌ Error en chatApp->onError: " . $chatError->getMessage());
+                }
+                
+                try {
+                    $this->audioApp->onError($conn, $e);
+                } catch (\Exception $audioError) {
+                    logToFilegral("❌ Error en audioApp->onError: " . $audioError->getMessage());
+                }
             }
         }
     );
@@ -2464,29 +2533,71 @@ try {
 
     // Timer para notificaciones
     $loop->addPeriodicTimer(2, function () use ($chatApp) {
-        echo date('H:i:s') . " 🔍 Verificando notificaciones...\n";
-        $chatApp->checkDatabaseNotifications();
+        logToFilegral("🔍 Verificando notificaciones pendientes...");
+        try {
+            $chatApp->checkDatabaseNotifications();
+        } catch (\Exception $e) {
+            logToFilegral("❌ Error en checkDatabaseNotifications: " . $e->getMessage());
+        }
     });
 
     // Timer para limpieza
     $loop->addPeriodicTimer(30, function () use ($chatApp) {
-        $chatApp->periodicCleanup();
+        logToFilegral("🧹 Ejecutando limpieza periódica...");
+        try {
+            $chatApp->periodicCleanup();
+        } catch (\Exception $e) {
+            logToFilegral("❌ Error en periodicCleanup: " . $e->getMessage());
+        }
     });
 
-    echo "✅ Servidor WebSocket unificado configurado\n";
-    echo "📡 Escuchando en: ws://0.0.0.0:9090\n";
-    echo "🔄 Timer de BD: cada 2 segundos\n";
-    echo "🧹 Limpieza: cada 30 segundos\n";
-    echo "⏰ Iniciado: " . date('Y-m-d H:i:s') . "\n";
+    // Timer para estadísticas
+  /*  $loop->addPeriodicTimer(60, function () use ($chatApp) {
+        logToFilegral("📊 Estadísticas del servidor (cada 60 segundos)");
+        try {
+            if (method_exists($chatApp, 'getStats')) {
+                $stats = $chatApp->getStats();
+                logToFilegral("   - Estadísticas: " . json_encode($stats));
+            }
+        } catch (\Exception $e) {
+            logToFile("❌ Error obteniendo estadísticas: " . $e->getMessage());
+        }
+    });*/
+
+    // Log inicial
+    logToFilegral("✅ Servidor WebSocket unificado configurado");
+    logToFilegral("📡 Escuchando en: ws://0.0.0.0:9090");
+    logToFilegral("🔄 Timer de BD: cada 2 segundos");
+    logToFilegral("🧹 Limpieza: cada 30 segundos");
+    logToFilegral("📊 Estadísticas: cada 60 segundos");
+    logToFilegral("⏰ Iniciado: " . date('Y-m-d H:i:s'));
+    logToFilegral("================================================");
+    logToFilegral("🟢 Servidor en ejecución (Ctrl+C para detener)");
+    logToFilegral("================================================");
+
+    // También mostrar en consola
+    echo "\n";
     echo "========================================\n";
-    echo "🟢 Servidor en ejecución (Ctrl+C para detener)\n";
+    echo "🚀 SERVIDOR WEBSOCKET INICIADO\n";
+    echo "========================================\n";
+    echo "📡 Escuchando en: ws://0.0.0.0:9090\n";
+    echo "📝 Logging en: " . __DIR__ . "/websocket_debug.log\n";
+    echo "⏰ Iniciado: " . date('Y-m-d H:i:s') . "\n";
     echo "========================================\n\n";
 
     $loop->run();
 } catch (\Exception $e) {
-    echo "\n❌❌❌ ERROR CRÍTICO ❌❌❌\n";
-    echo "Mensaje: " . $e->getMessage() . "\n";
-    echo "Archivo: " . $e->getFile() . "\n";
-    echo "Línea: " . $e->getLine() . "\n";
+    $errorMessage = "\n❌❌❌ ERROR CRÍTICO AL INICIAR SERVIDOR ❌❌❌\n";
+    $errorMessage .= "Mensaje: " . $e->getMessage() . "\n";
+    $errorMessage .= "Archivo: " . $e->getFile() . "\n";
+    $errorMessage .= "Línea: " . $e->getLine() . "\n";
+    $errorMessage .= "Trace:\n" . $e->getTraceAsString() . "\n";
+    
+    // Log al archivo
+    logToFilegral($errorMessage);
+    
+    // Mostrar en consola
+    echo $errorMessage;
+    
     exit(1);
 }
