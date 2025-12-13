@@ -2129,24 +2129,25 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
     }
 
-    private function broadcastToChat($chatId, $message, $excludeConnectionId = null)
-    {
-        if (!isset($this->sessions[$chatId])) return 0;
+  private function broadcastToChat($chatId, $message, $excludeConnection = null)
+{
+    if (!isset($this->sessions[$chatId])) return 0;
 
-        $sentCount = 0;
-        foreach ($this->sessions[$chatId] as $conn) {
-            if ($excludeConnectionId && $conn->resourceId == $excludeConnectionId) continue;
+    $sentCount = 0;
+    foreach ($this->sessions[$chatId] as $conn) {
+        // ⭐⭐ CORRECCIÓN: Comparar objetos de conexión en lugar de IDs
+        if ($excludeConnection && $conn === $excludeConnection) continue;
 
-            try {
-                $conn->send(json_encode($message));
-                $sentCount++;
-            } catch (\Exception $e) {
-                echo "❌ Error enviando mensaje: {$e->getMessage()}\n";
-            }
+        try {
+            $conn->send(json_encode($message));
+            $sentCount++;
+        } catch (\Exception $e) {
+            echo "❌ Error enviando mensaje: {$e->getMessage()}\n";
         }
-
-        return $sentCount;
     }
+
+    return $sentCount;
+}
 
     private function handleTest($from, $data)
     {
