@@ -491,7 +491,29 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 $this->logToFile("🎯 Tipo recibido: " . $data['type']);
 
                 switch ($data['type']) {
-
+   case 'init_call':
+        $this->handleInitCall($from, $data);
+        break;
+        
+    case 'call_offer':
+        $this->handleCallOffer($from, $data);
+        break;
+        
+    case 'call_answer':
+        $this->handleCallAnswer($from, $data);
+        break;
+        
+    case 'call_candidate':
+        $this->handleCallCandidate($from, $data);
+        break;
+        
+    case 'call_ended':
+        $this->handleCallEnded($from, $data);
+        break;
+        
+    case 'call_reject':
+        $this->handleCallReject($from, $data);
+        break;
                     case 'ping':
                         $this->handlePing($from);
                         break;
