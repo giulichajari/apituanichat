@@ -7,16 +7,15 @@ use Ratchet\ConnectionInterface;
 
 class AudioCallServer implements MessageComponentInterface
 {
-    protected $clients;       // SplObjectStorage para las conexiones
-    protected $clientData;    // Array asociativo para IDs, userId, etc.
+    protected $clients;
+    protected $clientData;
     protected $turnConfig;
 
     public function __construct()
     {
         $this->clients = new \SplObjectStorage();
-        $this->clientData = []; // Mapa de conexiones
+        $this->clientData = [];
 
-        // 🔥 CONFIGURACIÓN TURN
         $this->turnConfig = [
             'server' => 'tuanichat.com',
             'port' => 3478,
@@ -31,7 +30,7 @@ class AudioCallServer implements MessageComponentInterface
 
     public function onOpen(ConnectionInterface $conn)
     {
-        $connId = spl_object_id($conn); // ID único para cada conexión
+        $connId = spl_object_id($conn);
         $this->clients->attach($conn);
         $this->clientData[$connId] = [
             'resourceId' => $connId,
@@ -75,27 +74,37 @@ class AudioCallServer implements MessageComponentInterface
     {
         $connId = spl_object_id($from);
 
-        $data = json_decode($msg, true);
-        if (!$data) {
-            // Audio binario
+        // ⭐⭐ IMPORTANTE: Solo procesar si es audio binario
+        // Los mensajes JSON son manejados por SignalServer
+        if (!is_string($msg)) {
+            // Es binario, probablemente audio
             $this->relayAudio($from, $msg);
             return;
         }
 
-        switch ($data['type'] ?? '') {
-            case 'get_turn_config':
-                $this->sendTurnConfig($from, $connId);
-                break;
-
-            case 'offer':
-            case 'answer':
-            case 'candidate':
-                $this->relayWebRTCMessage($from, $data);
-                break;
-
-            default:
-                echo "⚠️ Tipo desconocido: {$data['type']}\n";
+        // Intentar decodificar JSON
+        $data = json_decode($msg, true);
+        
+        if ($data === null) {
+            // No es JSON, es audio binario
+            $this->relayAudio($from, $msg);
+            return;
         }
+
+        // Si es JSON, solo procesar get_turn_config
+        if (isset($data['type']) && $data['type'] === 'get_turn_config') {
+            $this->sendTurnConfig($from, $connId);
+            return;
+        }
+
+        // ⭐⭐ CORRECCIÓN: NO imprimir "Tipo desconocido" para mensajes que no son de audio
+        // Estos mensajes son manejados por SignalServer
+        // Solo loguear para debug
+        if (isset($data['type'])) {
+            echo "🎧 AudioCallServer ignorando mensaje de tipo: {$data['type']} (manejado por SignalServer)\n";
+        }
+        
+        // No hacer nada más, estos mensajes son para SignalServer
     }
 
     private function relayWebRTCMessage(ConnectionInterface $from, array $data)
