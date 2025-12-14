@@ -1000,11 +1000,6 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
         if (!$userId) {
             echo "❌ ERROR: No se pudo determinar userId\n";
-            $from->send(json_encode([
-                'type' => 'call_error',
-                'message' => 'No se pudo identificar al usuario',
-                'session_id' => $data['session_id'] ?? null
-            ]));
             return;
         }
 
@@ -1012,31 +1007,32 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $toUserId = isset($data['to']) ? (int)$data['to'] : null;
         $chatId = $data['chat_id'] ?? null;
         $callerName = $data['caller_name'] ?? 'Usuario';
-        $sdpOffer = $data['sdp'] ?? null; // <-- Oferta SDP del llamante
+        $sdpOffer = $data['sdp'] ?? null;
+
+        // ⭐⭐ LOG DETALLADO DEL SDP ⭐⭐
+        echo "🔍 Verificando SDP en datos recibidos:\n";
+        echo "  - sdpOffer existe: " . ($sdpOffer ? 'SÍ' : 'NO') . "\n";
+        echo "  - Tipo de sdpOffer: " . gettype($sdpOffer) . "\n";
+        if ($sdpOffer && is_array($sdpOffer)) {
+            echo "  - sdpOffer type: " . ($sdpOffer['type'] ?? 'NO HAY TYPE') . "\n";
+            echo "  - sdpOffer sdp length: " . strlen($sdpOffer['sdp'] ?? '') . " caracteres\n";
+        }
 
         if (!$userId || !$toUserId || !$chatId || !$sdpOffer) {
             echo "❌ Datos incompletos para iniciar llamada\n";
-            $from->send(json_encode([
-                'type' => 'call_error',
-                'message' => 'Datos incompletos para iniciar llamada',
-                'session_id' => $sessionId,
-                'missing' => [
-                    'from' => !$userId,
-                    'to' => !$toUserId,
-                    'chat_id' => !$chatId,
-                    'sdp' => !$sdpOffer
-                ]
-            ]));
+            echo "  userId: " . ($userId ? 'OK' : 'FALTA') . "\n";
+            echo "  toUserId: " . ($toUserId ? 'OK' : 'FALTA') . "\n";
+            echo "  chatId: " . ($chatId ? 'OK' : 'FALTA') . "\n";
+            echo "  sdpOffer: " . ($sdpOffer ? 'OK' : 'FALTA') . "\n";
             return;
         }
 
-        // Buscar conexión del destinatario
         $toConnection = $this->findConnectionByUserId($toUserId);
 
         if ($toConnection) {
             echo "✅ Destinatario {$toUserId} encontrado (conexión #{$toConnection->resourceId})\n";
 
-            // ⭐⭐ CORRECCIÓN: INCLUIR EL SDP EN EL MENSAJE incoming_call ⭐⭐
+            // ⭐⭐ PREPARAR MENSAJE incoming_call CON SDP ⭐⭐
             $incomingCallData = [
                 'type' => 'incoming_call',
                 'session_id' => $sessionId,
@@ -1044,15 +1040,24 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 'to' => $toUserId,
                 'chat_id' => $chatId,
                 'caller_name' => $callerName,
-                'sdp' => $sdpOffer, // ⭐⭐ ¡ESTO ES LO QUE FALTA! ⭐⭐
+                'sdp' => $sdpOffer, // ⭐⭐ ESTO ES LO IMPORTANTE ⭐⭐
                 'timestamp' => $data['timestamp'] ?? date('Y-m-d H:i:s')
             ];
 
-            echo "📤 Enviando incoming_call CON SDP incluido\n";
-            $toConnection->send(json_encode($incomingCallData));
-            echo "✅ Incoming call enviado al destinatario (con SDP)\n";
+            // ⭐⭐ LOG DEL MENSAJE QUE SE ENVIARÁ ⭐⭐
+            echo "📤 Preparando mensaje incoming_call:\n";
+            echo "  - Incluye sdp: " . (isset($incomingCallData['sdp']) ? 'SÍ' : 'NO') . "\n";
+            if (isset($incomingCallData['sdp'])) {
+                echo "  - sdp type: " . ($incomingCallData['sdp']['type'] ?? 'unknown') . "\n";
+            }
 
-            // ⭐⭐ OPCIONAL: También enviar como call_offer por compatibilidad ⭐⭐
+            $jsonMessage = json_encode($incomingCallData);
+            echo "📤 JSON a enviar (primeros 300 chars): " . substr($jsonMessage, 0, 300) . "...\n";
+
+            $toConnection->send($jsonMessage);
+            echo "✅ incoming_call enviado al destinatario (CON SDP)\n";
+
+            // También enviar como call_offer por compatibilidad
             $sdpData = [
                 'type' => 'call_offer',
                 'session_id' => $sessionId,
@@ -1063,30 +1068,21 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             ];
 
             $toConnection->send(json_encode($sdpData));
-            echo "📤 Oferta SDP también enviada por separado\n";
+            echo "📤 call_offer también enviado\n";
 
-            // Confirmar al llamante que la llamada fue iniciada
+            // Confirmación al llamante
             $from->send(json_encode([
                 'type' => 'call_initiated',
                 'session_id' => $sessionId,
                 'to' => $toUserId,
                 'chat_id' => $chatId,
                 'status' => 'ringing',
-                'timestamp' => date('Y-m-d H:i:s'),
-                'message' => 'Llamando...',
-                'caller_name' => $callerName
+                'timestamp' => date('Y-m-d H:i:s')
             ]));
+
             echo "✅ Confirmación enviada al llamante\n";
         } else {
-            // Destinatario no conectado
             echo "❌ Destinatario {$toUserId} no conectado\n";
-            $from->send(json_encode([
-                'type' => 'user_offline',
-                'session_id' => $sessionId,
-                'message' => 'El usuario no está disponible',
-                'status' => 'offline',
-                'to' => $toUserId
-            ]));
         }
 
         echo "📞 ========== LLAMADA PROCESADA ==========\n\n";
