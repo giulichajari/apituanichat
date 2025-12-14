@@ -263,7 +263,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     protected $statusManager;
     protected $userTimers = [];
     protected $chatModel;
-    
+
     // NUEVO: Para búsqueda rápida
     private $userIdByConnectionId = []; // connection_id => user_id
     private $connectionById = []; // connection_id => connection
@@ -275,33 +275,33 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $this->initializeChatModel();
         echo "🚀 SignalServer inicializado\n";
     }
- private function getUserId(ConnectionInterface $conn)
-{
-    $connId = $conn->resourceId;
-    
-    // Opción 1: Buscar en cache rápido
-    if (isset($this->userIdByConnectionId[$connId])) {
-        return $this->userIdByConnectionId[$connId];
-    }
-    
-    // Opción 2: Buscar en propiedades de la conexión
-    if (isset($conn->userId)) {
-        $userId = (int)$conn->userId;
-        $this->userIdByConnectionId[$connId] = $userId;
-        return $userId;
-    }
-    
-    // Opción 3: Buscar en userConnections
-    foreach ($this->userConnections as $userId => $connections) {
-        if (isset($connections[$connId])) {
-            $this->userIdByConnectionId[$connId] = (int)$userId;
-            $conn->userId = (int)$userId; // Cachear para futuro
-            return (int)$userId;
+    private function getUserId(ConnectionInterface $conn)
+    {
+        $connId = $conn->resourceId;
+
+        // Opción 1: Buscar en cache rápido
+        if (isset($this->userIdByConnectionId[$connId])) {
+            return $this->userIdByConnectionId[$connId];
         }
+
+        // Opción 2: Buscar en propiedades de la conexión
+        if (isset($conn->userId)) {
+            $userId = (int)$conn->userId;
+            $this->userIdByConnectionId[$connId] = $userId;
+            return $userId;
+        }
+
+        // Opción 3: Buscar en userConnections
+        foreach ($this->userConnections as $userId => $connections) {
+            if (isset($connections[$connId])) {
+                $this->userIdByConnectionId[$connId] = (int)$userId;
+                $conn->userId = (int)$userId; // Cachear para futuro
+                return (int)$userId;
+            }
+        }
+
+        return null;
     }
-    
-    return null;
-}
 
     // En SignalServer class
     private function notifyNewMessage($chatId, $messageData, $senderId = null)
@@ -403,75 +403,75 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         ]));
     }
 
-   public function onClose(\Ratchet\ConnectionInterface $conn)
-{
-    $connId = $conn->resourceId;
-    $userId = $this->getUserId($conn);
-    
-    echo date('H:i:s') . " ❌ Conexión #{$connId} cerrada";
-    if ($userId) {
-        echo " (usuario {$userId})";
-    }
-    echo "\n";
+    public function onClose(\Ratchet\ConnectionInterface $conn)
+    {
+        $connId = $conn->resourceId;
+        $userId = $this->getUserId($conn);
 
-    // Limpiar timers
-    if (isset($this->userTimers[$connId])) {
-        $timer = $this->userTimers[$connId];
-        if ($timer && $timer instanceof \React\EventLoop\TimerInterface) {
-            \React\EventLoop\Loop::cancelTimer($timer);
+        echo date('H:i:s') . " ❌ Conexión #{$connId} cerrada";
+        if ($userId) {
+            echo " (usuario {$userId})";
         }
-        unset($this->userTimers[$connId]);
-    }
+        echo "\n";
 
-    // Remover de sesiones de chat
-    foreach ($this->sessions as $chatId => $connections) {
-        if (isset($connections[$connId])) {
-            unset($this->sessions[$chatId][$connId]);
-            
-            if ($userId) {
-                $this->notifyUserLeftChat($chatId, $userId);
+        // Limpiar timers
+        if (isset($this->userTimers[$connId])) {
+            $timer = $this->userTimers[$connId];
+            if ($timer && $timer instanceof \React\EventLoop\TimerInterface) {
+                \React\EventLoop\Loop::cancelTimer($timer);
             }
-            
-            echo "👋 Removido de chat {$chatId}\n";
-            
-            // Si no hay más conexiones en este chat, limpiar
-            if (empty($this->sessions[$chatId])) {
-                unset($this->sessions[$chatId]);
-            }
+            unset($this->userTimers[$connId]);
         }
-    }
 
-    // Marcar como offline
-    if ($userId) {
-        // Remover de userConnections
-        if (isset($this->userConnections[$userId][$connId])) {
-            unset($this->userConnections[$userId][$connId]);
-            
-            // Si no quedan más conexiones para este usuario, limpiar
-            if (empty($this->userConnections[$userId])) {
-                unset($this->userConnections[$userId]);
-                
-                // Marcar como offline en Redis
-                $offlineData = $this->statusManager->setOffline($connId, true);
-                
-                if ($offlineData) {
-                    $this->notifyUserStatusChange($offlineData['user_id'], 'offline', $offlineData);
+        // Remover de sesiones de chat
+        foreach ($this->sessions as $chatId => $connections) {
+            if (isset($connections[$connId])) {
+                unset($this->sessions[$chatId][$connId]);
+
+                if ($userId) {
+                    $this->notifyUserLeftChat($chatId, $userId);
                 }
-                
-                echo "📢 Usuario {$userId} completamente desconectado\n";
-            } else {
-                echo "ℹ️ Usuario {$userId} aún tiene otras conexiones activas\n";
+
+                echo "👋 Removido de chat {$chatId}\n";
+
+                // Si no hay más conexiones en este chat, limpiar
+                if (empty($this->sessions[$chatId])) {
+                    unset($this->sessions[$chatId]);
+                }
             }
         }
+
+        // Marcar como offline
+        if ($userId) {
+            // Remover de userConnections
+            if (isset($this->userConnections[$userId][$connId])) {
+                unset($this->userConnections[$userId][$connId]);
+
+                // Si no quedan más conexiones para este usuario, limpiar
+                if (empty($this->userConnections[$userId])) {
+                    unset($this->userConnections[$userId]);
+
+                    // Marcar como offline en Redis
+                    $offlineData = $this->statusManager->setOffline($connId, true);
+
+                    if ($offlineData) {
+                        $this->notifyUserStatusChange($offlineData['user_id'], 'offline', $offlineData);
+                    }
+
+                    echo "📢 Usuario {$userId} completamente desconectado\n";
+                } else {
+                    echo "ℹ️ Usuario {$userId} aún tiene otras conexiones activas\n";
+                }
+            }
+        }
+
+        // Limpiar estructuras de búsqueda rápida
+        unset($this->userIdByConnectionId[$connId]);
+        unset($this->connectionById[$connId]);
+
+        // Remover del almacenamiento principal
+        $this->clients->detach($conn);
     }
-
-    // Limpiar estructuras de búsqueda rápida
-    unset($this->userIdByConnectionId[$connId]);
-    unset($this->connectionById[$connId]);
-
-    // Remover del almacenamiento principal
-    $this->clients->detach($conn);
-}
 
     public function onError(\Ratchet\ConnectionInterface $conn, \Exception $e)
     {
@@ -940,52 +940,52 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     // ===================== HANDLERS PRINCIPALES =====================
 
 
-// En tu ws-server.php, línea 793 y alrededor
+    // En tu ws-server.php, línea 793 y alrededor
 
- private function findConnectionByUserId($userId)
-{
-    $userId = (int)$userId;
-    
-    echo "🔍 Buscando conexiones para usuario {$userId}\n";
-    
-    if (!isset($this->userConnections[$userId])) {
-        echo "❌ Usuario {$userId} no tiene conexiones registradas\n";
-        
-        // DEBUG: Mostrar usuarios conectados
-        echo "👥 Usuarios actualmente conectados:\n";
-        foreach ($this->userConnections as $uid => $connections) {
-            if (!empty($connections)) {
-                echo "  - Usuario {$uid}: " . count($connections) . " conexión(es)\n";
+    private function findConnectionByUserId($userId)
+    {
+        $userId = (int)$userId;
+
+        echo "🔍 Buscando conexiones para usuario {$userId}\n";
+
+        if (!isset($this->userConnections[$userId])) {
+            echo "❌ Usuario {$userId} no tiene conexiones registradas\n";
+
+            // DEBUG: Mostrar usuarios conectados
+            echo "👥 Usuarios actualmente conectados:\n";
+            foreach ($this->userConnections as $uid => $connections) {
+                if (!empty($connections)) {
+                    echo "  - Usuario {$uid}: " . count($connections) . " conexión(es)\n";
+                }
+            }
+
+            return null;
+        }
+
+        $connections = $this->userConnections[$userId];
+
+        if (empty($connections)) {
+            echo "⚠️ Usuario {$userId} tiene array de conexiones pero está vacío\n";
+            return null;
+        }
+
+        // Tomar la primera conexión activa
+        foreach ($connections as $connId => $connection) {
+            // Verificar que la conexión aún esté activa
+            if ($connection instanceof ConnectionInterface) {
+                echo "✅ Conexión encontrada: #{$connId} para usuario {$userId}\n";
+                return $connection;
+            } else {
+                echo "⚠️ Conexión #{$connId} para usuario {$userId} no es válida, limpiando...\n";
+                unset($this->userConnections[$userId][$connId]);
+                unset($this->userIdByConnectionId[$connId]);
+                unset($this->connectionById[$connId]);
             }
         }
-        
+
+        echo "❌ No se encontraron conexiones válidas para usuario {$userId}\n";
         return null;
     }
-    
-    $connections = $this->userConnections[$userId];
-    
-    if (empty($connections)) {
-        echo "⚠️ Usuario {$userId} tiene array de conexiones pero está vacío\n";
-        return null;
-    }
-    
-    // Tomar la primera conexión activa
-    foreach ($connections as $connId => $connection) {
-        // Verificar que la conexión aún esté activa
-        if ($connection instanceof ConnectionInterface) {
-            echo "✅ Conexión encontrada: #{$connId} para usuario {$userId}\n";
-            return $connection;
-        } else {
-            echo "⚠️ Conexión #{$connId} para usuario {$userId} no es válida, limpiando...\n";
-            unset($this->userConnections[$userId][$connId]);
-            unset($this->userIdByConnectionId[$connId]);
-            unset($this->connectionById[$connId]);
-        }
-    }
-    
-    echo "❌ No se encontraron conexiones válidas para usuario {$userId}\n";
-    return null;
-}
 
 
 
@@ -1036,7 +1036,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         if ($toConnection) {
             echo "✅ Destinatario {$toUserId} encontrado (conexión #{$toConnection->resourceId})\n";
 
-            // Notificar al destinatario de la llamada entrante
+            // ⭐⭐ CORRECCIÓN: INCLUIR EL SDP EN EL MENSAJE incoming_call ⭐⭐
             $incomingCallData = [
                 'type' => 'incoming_call',
                 'session_id' => $sessionId,
@@ -1044,23 +1044,26 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 'to' => $toUserId,
                 'chat_id' => $chatId,
                 'caller_name' => $callerName,
+                'sdp' => $sdpOffer, // ⭐⭐ ¡ESTO ES LO QUE FALTA! ⭐⭐
                 'timestamp' => $data['timestamp'] ?? date('Y-m-d H:i:s')
             ];
 
+            echo "📤 Enviando incoming_call CON SDP incluido\n";
             $toConnection->send(json_encode($incomingCallData));
-            echo "📤 Incoming call enviado al destinatario\n";
+            echo "✅ Incoming call enviado al destinatario (con SDP)\n";
 
-            // Enviar la oferta SDP al destinatario
+            // ⭐⭐ OPCIONAL: También enviar como call_offer por compatibilidad ⭐⭐
             $sdpData = [
                 'type' => 'call_offer',
                 'session_id' => $sessionId,
                 'from' => $userId,
                 'to' => $toUserId,
-                'sdp' => $sdpOffer
+                'sdp' => $sdpOffer,
+                'timestamp' => date('Y-m-d H:i:s')
             ];
 
             $toConnection->send(json_encode($sdpData));
-            echo "📤 Oferta SDP enviada al destinatario\n";
+            echo "📤 Oferta SDP también enviada por separado\n";
 
             // Confirmar al llamante que la llamada fue iniciada
             $from->send(json_encode([
@@ -1168,67 +1171,67 @@ class SignalServer implements \Ratchet\MessageComponentInterface
      * Transmite mensaje a todos en un chat
      */
 
-  private function handleAuth($from, $data)
-{
-    echo "🔐 ========== AUTENTICACIÓN ==========\n";
+    private function handleAuth($from, $data)
+    {
+        echo "🔐 ========== AUTENTICACIÓN ==========\n";
 
-    if (!isset($data['user_id'])) {
-        echo "❌ ERROR: Falta user_id\n";
-        return;
-    }
+        if (!isset($data['user_id'])) {
+            echo "❌ ERROR: Falta user_id\n";
+            return;
+        }
 
-    $userId = (int)$data['user_id'];
-    $connId = $from->resourceId;
+        $userId = (int)$data['user_id'];
+        $connId = $from->resourceId;
 
-    echo "✅ Autenticando usuario {$userId} en conexión #{$connId}\n";
+        echo "✅ Autenticando usuario {$userId} en conexión #{$connId}\n";
 
-    // 1. Limpiar conexiones anteriores para este userId
-    if (isset($this->userConnections[$userId])) {
-        foreach ($this->userConnections[$userId] as $oldConnId => $oldConn) {
-            if ($oldConnId != $connId) {
-                echo "  🧹 Removiendo conexión anterior #{$oldConnId}\n";
-                
-                // Notificar cierre de sesión anterior
-                $oldConn->close();
-                
-                // Limpiar estructuras
-                unset($this->userIdByConnectionId[$oldConnId]);
-                unset($this->connectionById[$oldConnId]);
+        // 1. Limpiar conexiones anteriores para este userId
+        if (isset($this->userConnections[$userId])) {
+            foreach ($this->userConnections[$userId] as $oldConnId => $oldConn) {
+                if ($oldConnId != $connId) {
+                    echo "  🧹 Removiendo conexión anterior #{$oldConnId}\n";
+
+                    // Notificar cierre de sesión anterior
+                    $oldConn->close();
+
+                    // Limpiar estructuras
+                    unset($this->userIdByConnectionId[$oldConnId]);
+                    unset($this->connectionById[$oldConnId]);
+                }
             }
         }
+
+        // 2. Actualizar todas las estructuras de datos
+        $this->userIdByConnectionId[$connId] = $userId;
+        $this->connectionById[$connId] = $from;
+
+        if (!isset($this->userConnections[$userId])) {
+            $this->userConnections[$userId] = [];
+        }
+        $this->userConnections[$userId][$connId] = $from;
+
+        // 3. Actualizar propiedades de la conexión
+        $from->userId = $userId;
+        $from->userData = $data['user_data'] ?? [];
+        $from->authenticated = true;
+        $from->authenticatedAt = time();
+
+        // 4. Marcar como online
+        $this->statusManager->setOnline($userId, $connId, $from->userData);
+
+        // 5. Enviar confirmación
+        $from->send(json_encode([
+            'type' => 'auth_success',
+            'user_id' => $userId,
+            'connection_id' => $connId,
+            'timestamp' => time(),
+            'message' => 'Autenticación exitosa'
+        ]));
+
+        echo "✅ Usuario {$userId} autenticado exitosamente\n";
+        echo "📊 Conexiones activas para usuario {$userId}: " . count($this->userConnections[$userId]) . "\n";
+        echo "🔐 ========== AUTENTICACIÓN COMPLETADA ==========\n\n";
     }
-
-    // 2. Actualizar todas las estructuras de datos
-    $this->userIdByConnectionId[$connId] = $userId;
-    $this->connectionById[$connId] = $from;
-    
-    if (!isset($this->userConnections[$userId])) {
-        $this->userConnections[$userId] = [];
-    }
-    $this->userConnections[$userId][$connId] = $from;
-    
-    // 3. Actualizar propiedades de la conexión
-    $from->userId = $userId;
-    $from->userData = $data['user_data'] ?? [];
-    $from->authenticated = true;
-    $from->authenticatedAt = time();
-
-    // 4. Marcar como online
-    $this->statusManager->setOnline($userId, $connId, $from->userData);
-
-    // 5. Enviar confirmación
-    $from->send(json_encode([
-        'type' => 'auth_success',
-        'user_id' => $userId,
-        'connection_id' => $connId,
-        'timestamp' => time(),
-        'message' => 'Autenticación exitosa'
-    ]));
-
-    echo "✅ Usuario {$userId} autenticado exitosamente\n";
-    echo "📊 Conexiones activas para usuario {$userId}: " . count($this->userConnections[$userId]) . "\n";
-    echo "🔐 ========== AUTENTICACIÓN COMPLETADA ==========\n\n";
-}  
 
     private function handleHeartbeat($from, $data)
     {
@@ -2173,25 +2176,25 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
     }
 
-  private function broadcastToChat($chatId, $message, $excludeConnection = null)
-{
-    if (!isset($this->sessions[$chatId])) return 0;
+    private function broadcastToChat($chatId, $message, $excludeConnection = null)
+    {
+        if (!isset($this->sessions[$chatId])) return 0;
 
-    $sentCount = 0;
-    foreach ($this->sessions[$chatId] as $conn) {
-        // ⭐⭐ CORRECCIÓN: Comparar objetos de conexión en lugar de IDs
-        if ($excludeConnection && $conn === $excludeConnection) continue;
+        $sentCount = 0;
+        foreach ($this->sessions[$chatId] as $conn) {
+            // ⭐⭐ CORRECCIÓN: Comparar objetos de conexión en lugar de IDs
+            if ($excludeConnection && $conn === $excludeConnection) continue;
 
-        try {
-            $conn->send(json_encode($message));
-            $sentCount++;
-        } catch (\Exception $e) {
-            echo "❌ Error enviando mensaje: {$e->getMessage()}\n";
+            try {
+                $conn->send(json_encode($message));
+                $sentCount++;
+            } catch (\Exception $e) {
+                echo "❌ Error enviando mensaje: {$e->getMessage()}\n";
+            }
         }
-    }
 
-    return $sentCount;
-}
+        return $sentCount;
+    }
 
     private function handleTest($from, $data)
     {
@@ -2391,7 +2394,7 @@ try {
                 $this->chatApp  = $chatApp;
                 $this->audioApp = $audioApp;
                 $this->serverStartTime = time();
-                
+
                 logToFilegral("🔄 Servidor unificado creado");
                 logToFilegral("   - ChatApp: " . get_class($chatApp));
                 logToFilegral("   - AudioApp: " . get_class($audioApp));
@@ -2400,14 +2403,14 @@ try {
             public function onOpen(\Ratchet\ConnectionInterface $conn)
             {
                 logToFilegral("🔗 Conexión #{$conn->resourceId} abierta en servidor unificado");
-                
+
                 // Abrir en ambos
                 try {
                     $this->chatApp->onOpen($conn);
                 } catch (\Exception $e) {
                     logToFilegral("❌ Error en chatApp->onOpen: " . $e->getMessage());
                 }
-                
+
                 try {
                     $this->audioApp->onOpen($conn);
                 } catch (\Exception $e) {
@@ -2419,14 +2422,14 @@ try {
             {
                 $connId = $from->resourceId;
                 $msgPreview = is_string($msg) ? substr($msg, 0, 200) : "[BINARIO " . strlen($msg) . " bytes]";
-                
+
                 logToFilegral("📨 Conexión #{$connId} → {$msgPreview}");
-                
+
                 try {
                     if (is_string($msg) && json_decode($msg, true) !== null) {
                         $data = json_decode($msg, true);
                         $msgType = $data['type'] ?? 'unknown';
-                        
+
                         logToFilegral("🔍 Tipo de mensaje detectado: {$msgType}");
                         logToFilegral("📊 Detalles: " . json_encode([
                             'connection_id' => $connId,
@@ -2474,7 +2477,7 @@ try {
                     logToFilegral("❌❌❌ ERROR routing message: " . $e->getMessage());
                     logToFilegral("📂 Archivo: " . $e->getFile() . ":" . $e->getLine());
                     logToFilegral("🧵 Trace: " . $e->getTraceAsString());
-                    
+
                     // Enviar error al cliente
                     try {
                         $from->send(json_encode([
@@ -2493,13 +2496,13 @@ try {
             {
                 $connId = $conn->resourceId;
                 logToFilegral("❌ Conexión #{$connId} cerrada en servidor unificado");
-                
+
                 try {
                     $this->chatApp->onClose($conn);
                 } catch (\Exception $e) {
                     logToFilegral("❌ Error en chatApp->onClose: " . $e->getMessage());
                 }
-                
+
                 try {
                     $this->audioApp->onClose($conn);
                 } catch (\Exception $e) {
@@ -2512,13 +2515,13 @@ try {
                 $connId = $conn->resourceId;
                 logToFilegral("⚠️ ERROR en conexión #{$connId}: " . $e->getMessage());
                 logToFilegral("📂 Archivo: " . $e->getFile() . ":" . $e->getLine());
-                
+
                 try {
                     $this->chatApp->onError($conn, $e);
                 } catch (\Exception $chatError) {
                     logToFilegral("❌ Error en chatApp->onError: " . $chatError->getMessage());
                 }
-                
+
                 try {
                     $this->audioApp->onError($conn, $e);
                 } catch (\Exception $audioError) {
@@ -2552,7 +2555,7 @@ try {
     });
 
     // Timer para estadísticas
-  /*  $loop->addPeriodicTimer(60, function () use ($chatApp) {
+    /*  $loop->addPeriodicTimer(60, function () use ($chatApp) {
         logToFilegral("📊 Estadísticas del servidor (cada 60 segundos)");
         try {
             if (method_exists($chatApp, 'getStats')) {
@@ -2592,12 +2595,12 @@ try {
     $errorMessage .= "Archivo: " . $e->getFile() . "\n";
     $errorMessage .= "Línea: " . $e->getLine() . "\n";
     $errorMessage .= "Trace:\n" . $e->getTraceAsString() . "\n";
-    
+
     // Log al archivo
     logToFilegral($errorMessage);
-    
+
     // Mostrar en consola
     echo $errorMessage;
-    
+
     exit(1);
 }
