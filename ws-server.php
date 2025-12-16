@@ -502,86 +502,148 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     // En la clase SignalServer, busca el método onMessage ORIGINAL (no el que está en la línea 150)
     // Debería verse algo así:
 
-    public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
-    {
-        $connId = $from->resourceId;
-        echo date('H:i:s') . " 📨 #{$connId} → " . (is_string($msg) ? substr($msg, 0, 200) : "[BINARIO " . strlen($msg) . " bytes]") . "\n";
+   public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
+{
+    $connId = $from->resourceId;
+    echo date('H:i:s') . " 📨 #{$connId} → " . (is_string($msg) ? substr($msg, 0, 200) : "[BINARIO " . strlen($msg) . " bytes]") . "\n";
 
-        try {
-            if (is_string($msg)) {
-                $data = json_decode($msg, true);
-
-                if ($data === null) {
-                    // No es JSON, audio binario
-                    return;
-                }
-
-                if (!isset($data['type'])) {
-                    return;
-                }
-
-                $msgType = $data['type'];
-                echo "🎯 Tipo de mensaje: {$msgType}\n";
-
-                // ⭐⭐ AGREGAR AQUÍ LOS NUEVOS CASES ⭐⭐
-                switch ($msgType) {
-                    // ... casos existentes ...
-
-                    // ========== LLAMADAS DE VOZ ==========
-                    case 'init_call':
-                        echo "📞📞📞📞📞 INIT_CALL RECIBIDO 📞📞📞📞📞\n";
-                        $this->handleInitCall($from, $data);
-                        break;
-
-                    case 'call_request':
-                        echo "📞📞📞📞📞 CALL_REQUEST RECIBIDO 📞📞📞📞📞\n";
-                        $this->handleCallRequest($from, $data);
-                        break;
-
-                    case 'call_offer':
-                        echo "📞📞📞📞📞 CALL_OFFER RECIBIDO 📞📞📞📞📞\n";
-                        $this->handleCallOffer($from, $data);
-                        break;
-
-                    case 'call_answer':
-                        echo "📞📞📞📞📞 CALL_ANSWER RECIBIDO 📞📞📞📞📞\n";
-                        $this->handleCallAnswer($from, $data);
-                        break;
-
-                    case 'call_accepted':
-                        echo "📞📞📞📞📞 CALL_ACCEPTED RECIBIDO 📞📞📞📞📞\n";
-                        $this->handleCallAccepted($from, $data);
-                        break;
-
-                    case 'call_candidate':
-                        echo "📞📞📞📞📞 CALL_CANDIDATE RECIBIDO 📞📞📞📞📞\n";
-                        $this->handleCallCandidate($from, $data);
-                        break;
-
-                    // ⭐⭐ AGREGAR ESTE NUEVO CASE ⭐⭐
-                    case 'ice_candidate':
-                        echo "🧊🧊🧊🧊🧊 ICE_CANDIDATE RECIBIDO 🧊🧊🧊🧊🧊\n";
-                        $this->handleIceCandidate($from, $data);
-                        break;
-
-                    case 'call_ended':
-                        echo "📞📞📞📞📞 CALL_ENDED RECIBIDO 📞📞📞📞📞\n";
-                        $this->handleCallEnded($from, $data);
-                        break;
-
-                    case 'call_reject':
-                    case 'call_rejected':
-                        echo "📞📞📞📞📞 CALL_REJECT RECIBIDO 📞📞📞📞📞\n";
-                        $this->handleCallReject($from, $data);
-                        break;
-
-                        // ... otros casos existentes ...
-                }
+    try {
+        if (is_string($msg)) {
+            $data = json_decode($msg, true);
+            
+            if ($data === null) {
+                // No es JSON, audio binario
+                echo "🎵 No es JSON, audio binario ignorado\n";
+                return;
             }
-        } catch (\Exception $e) {
-            echo "❌❌❌ ERROR: " . $e->getMessage() . "\n";
+
+            if (!isset($data['type'])) {
+                echo "❌ JSON sin tipo de mensaje\n";
+                return;
+            }
+
+            $msgType = $data['type'];
+            echo "🎯🎯🎯 Tipo de mensaje: {$msgType} 🎯🎯🎯\n";
+
+            // ⭐⭐ SWITCH COMPLETO CON TODOS LOS HANDLERS ⭐⭐
+            switch ($msgType) {
+                // ========== IDENTIFICACIÓN ==========
+                case 'identify':
+                    echo "🆔 Manejando mensaje identify\n";
+                    if (isset($data['user_id'])) {
+                        $userId = (int)$data['user_id'];
+                        $this->connectionUsers[$connId] = $userId;
+                        $this->users[$userId] = $from;
+                        echo "✅ Usuario {$userId} identificado en conexión #{$connId}\n";
+                    }
+                    return;
+
+                case 'auth':
+                    echo "🔐 Manejando mensaje auth\n";
+                    $this->handleAuth($from, $data);
+                    return;
+
+                // ========== CHAT BÁSICO ==========
+                case 'ping':
+                    $this->handlePing($from);
+                    break;
+
+                case 'heartbeat':
+                    $this->handleHeartbeat($from, $data);
+                    break;
+
+                case 'join_chat':
+                    $this->handleJoinChat($from, $data);
+                    break;
+
+                case 'chat_message':
+                    $this->handleChatMessage($from, $data);
+                    break;
+
+                // ========== ARCHIVOS ==========
+                case 'file_upload':
+                case 'image_upload':
+                    $this->handleFileUpload($from, $data);
+                    break;
+
+                case 'mark_as_read':
+                    $this->handleMarkAsRead($from, $data);
+                    break;
+
+                case 'typing':
+                    $this->handleTyping($from, $data);
+                    break;
+
+                // ========== ESTADOS ==========
+                case 'get_online_users':
+                    $this->handleGetOnlineUsers($from, $data);
+                    break;
+
+                case 'get_user_status':
+                    $this->handleGetUserStatus($from, $data);
+                    break;
+
+                // ========== LLAMADAS DE VOZ ==========
+                case 'init_call':
+                    echo "📞📞📞📞📞 INIT_CALL RECIBIDO 📞📞📞📞📞\n";
+                    $this->handleInitCall($from, $data);
+                    break;
+
+                case 'call_request':
+                    echo "📞📞📞📞📞 CALL_REQUEST RECIBIDO 📞📞📞📞📞\n";
+                    $this->handleCallRequest($from, $data);
+                    break;
+
+                case 'call_offer':
+                    echo "📞📞📞📞📞 CALL_OFFER RECIBIDO 📞📞📞📞📞\n";
+                    $this->handleCallOffer($from, $data);
+                    break;
+
+                case 'call_answer':
+                    echo "📞📞📞📞📞 CALL_ANSWER RECIBIDO 📞📞📞📞📞\n";
+                    $this->handleCallAnswer($from, $data);
+                    break;
+
+                case 'call_accepted':
+                    echo "📞📞📞📞📞 CALL_ACCEPTED RECIBIDO 📞📞📞📞📞\n";
+                    $this->handleCallAccepted($from, $data);
+                    break;
+
+                case 'call_candidate':
+                    echo "📞📞📞📞📞 CALL_CANDIDATE RECIBIDO 📞📞📞📞📞\n";
+                    $this->handleCallCandidate($from, $data);
+                    break;
+
+                case 'ice_candidate':
+                    echo "🧊🧊🧊🧊🧊 ICE_CANDIDATE RECIBIDO 🧊🧊🧊🧊🧊\n";
+                    $this->handleIceCandidate($from, $data);
+                    break;
+
+                case 'call_ended':
+                    echo "📞📞📞📞📞 CALL_ENDED RECIBIDO 📞📞📞📞📞\n";
+                    $this->handleCallEnded($from, $data);
+                    break;
+
+                case 'call_reject':
+                case 'call_rejected':
+                    echo "📞📞📞📞📞 CALL_REJECT RECIBIDO 📞📞📞📞📞\n";
+                    $this->handleCallReject($from, $data);
+                    break;
+
+                default:
+                    echo "⚠️⚠️⚠️⚠️⚠️ TIPO DESCONOCIDO: {$msgType} ⚠️⚠️⚠️⚠️⚠️\n";
+                    $from->send(json_encode([
+                        'type' => 'error',
+                        'message' => 'Tipo no soportado: ' . $msgType
+                    ]));
+            }
         }
+    } catch (\Exception $e) {
+        echo "❌❌❌ ERROR en onMessage: " . $e->getMessage() . "\n";
+        echo "📂 Archivo: " . $e->getFile() . ":" . $e->getLine() . "\n";
+        echo "🧵 Trace:\n" . $e->getTraceAsString() . "\n";
     }
+}
     /**
      * Maneja candidatos ICE (compatible con 'ice_candidate')
      */
