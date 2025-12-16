@@ -499,101 +499,33 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             echo $formattedMessage;
         }
     }
+    // En la clase SignalServer, busca el método onMessage ORIGINAL (no el que está en la línea 150)
+    // Debería verse algo así:
+
     public function onMessage(\Ratchet\ConnectionInterface $from, $msg)
     {
         $connId = $from->resourceId;
         echo date('H:i:s') . " 📨 #{$connId} → " . (is_string($msg) ? substr($msg, 0, 200) : "[BINARIO " . strlen($msg) . " bytes]") . "\n";
 
         try {
-            // 1. Si es string, intentar parsear como JSON
             if (is_string($msg)) {
-                // DEBUG: Mostrar el mensaje completo
-                echo "🔍 Mensaje string recibido (primeros 500 chars):\n" . substr($msg, 0, 500) . "\n";
-
                 $data = json_decode($msg, true);
 
-                if ($data === null && json_last_error() !== JSON_ERROR_NONE) {
-                    // No es JSON válido, podría ser audio binario
-                    echo "🎵 No es JSON, asumiendo audio binario: " . strlen($msg) . " bytes\n";
-
-                    foreach ($this->clients as $client) {
-                        if ($from !== $client) {
-                            $client->send($msg);
-                        }
-                    }
+                if ($data === null) {
+                    // No es JSON, audio binario
                     return;
                 }
 
-                // ✅ Es JSON válido
-                echo "✅ JSON válido recibido\n";
-
                 if (!isset($data['type'])) {
-                    echo "❌ JSON sin tipo de mensaje\n";
                     return;
                 }
 
                 $msgType = $data['type'];
-                echo "🎯🎯🎯 Tipo de mensaje: {$msgType} 🎯🎯🎯\n";
-                echo "📦 Datos completos:\n";
-                print_r($data);
+                echo "🎯 Tipo de mensaje: {$msgType}\n";
 
-                // 2. Procesar según el tipo
+                // ⭐⭐ AGREGAR AQUÍ LOS NUEVOS CASES ⭐⭐
                 switch ($msgType) {
-                    // ========== IDENTIFICACIÓN ==========
-                    case 'identify':
-                        echo "🆔 Manejando mensaje identify\n";
-                        if (isset($data['user_id'])) {
-                            $userId = (int)$data['user_id'];
-                            $this->connectionUsers[$connId] = $userId;
-                            $this->users[$userId] = $from;
-                            echo "✅ Usuario {$userId} identificado en conexión #{$connId}\n";
-                        }
-                        return;
-
-                    case 'auth':
-                        echo "🔐 Manejando mensaje auth\n";
-                        $this->handleAuth($from, $data);
-                        return;
-
-                        // ========== CHAT BÁSICO ==========
-                    case 'ping':
-                        $this->handlePing($from);
-                        break;
-
-                    case 'heartbeat':
-                        $this->handleHeartbeat($from, $data);
-                        break;
-
-                    case 'join_chat':
-                        $this->handleJoinChat($from, $data);
-                        break;
-
-                    case 'chat_message':
-                        $this->handleChatMessage($from, $data);
-                        break;
-
-                    // ========== ARCHIVOS ==========
-                    case 'file_upload':
-                    case 'image_upload':
-                        $this->handleFileUpload($from, $data);
-                        break;
-
-                    case 'mark_as_read':
-                        $this->handleMarkAsRead($from, $data);
-                        break;
-
-                    case 'typing':
-                        $this->handleTyping($from, $data);
-                        break;
-
-                    // ========== ESTADOS ==========
-                    case 'get_online_users':
-                        $this->handleGetOnlineUsers($from, $data);
-                        break;
-
-                    case 'get_user_status':
-                        $this->handleGetUserStatus($from, $data);
-                        break;
+                    // ... casos existentes ...
 
                     // ========== LLAMADAS DE VOZ ==========
                     case 'init_call':
@@ -626,6 +558,12 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                         $this->handleCallCandidate($from, $data);
                         break;
 
+                    // ⭐⭐ AGREGAR ESTE NUEVO CASE ⭐⭐
+                    case 'ice_candidate':
+                        echo "🧊🧊🧊🧊🧊 ICE_CANDIDATE RECIBIDO 🧊🧊🧊🧊🧊\n";
+                        $this->handleIceCandidate($from, $data);
+                        break;
+
                     case 'call_ended':
                         echo "📞📞📞📞📞 CALL_ENDED RECIBIDO 📞📞📞📞📞\n";
                         $this->handleCallEnded($from, $data);
@@ -637,32 +575,63 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                         $this->handleCallReject($from, $data);
                         break;
 
-                    default:
-                        echo "⚠️⚠️⚠️⚠️⚠️ TIPO DESCONOCIDO: {$msgType} ⚠️⚠️⚠️⚠️⚠️\n";
-                        $from->send(json_encode([
-                            'type' => 'error',
-                            'message' => 'Tipo no soportado: ' . $msgType
-                        ]));
-                }
-            } else {
-                // Mensaje binario (audio)
-                echo "🎵 Audio binario recibido: " . strlen($msg) . " bytes\n";
-
-                foreach ($this->clients as $client) {
-                    if ($from !== $client) {
-                        $client->send($msg);
-                    }
+                        // ... otros casos existentes ...
                 }
             }
         } catch (\Exception $e) {
-            echo "❌❌❌ ERROR en onMessage: " . $e->getMessage() . "\n";
-            echo "📂 Archivo: " . $e->getFile() . ":" . $e->getLine() . "\n";
-            echo "🧵 Trace:\n" . $e->getTraceAsString() . "\n";
+            echo "❌❌❌ ERROR: " . $e->getMessage() . "\n";
         }
     }
     /**
-     * Manejar aceptación de llamada
+     * Maneja candidatos ICE (compatible con 'ice_candidate')
      */
+    private function handleIceCandidate($from, $data)
+    {
+        $userId = $this->getUserIdFromConnection($from);
+        $toUserId = $data['to'] ?? null;
+        $sessionId = $data['session_id'] ?? null;
+        $candidate = $data['candidate'] ?? null;
+        $chatId = $data['chat_id'] ?? null;
+
+        echo "🧊 Procesando ice_candidate de {$userId} para sesión {$sessionId}\n";
+
+        if (!$userId || !$toUserId || !$sessionId || !$candidate) {
+            echo "❌ Datos incompletos en ice_candidate\n";
+            return;
+        }
+
+        $toConnection = $this->findConnectionByUserId($toUserId);
+
+        if ($toConnection) {
+            // Reenviar manteniendo el mismo tipo 'ice_candidate'
+            $toConnection->send(json_encode([
+                'type' => 'ice_candidate',  // ⭐ Mantener igual
+                'session_id' => $sessionId,
+                'from' => $userId,
+                'to' => $toUserId,
+                'chat_id' => $chatId,
+                'candidate' => $candidate,
+                'timestamp' => date('Y-m-d H:i:s')
+            ]));
+
+            echo "✅ ice_candidate enviado de {$userId} a {$toUserId}\n";
+
+            // También enviar como call_candidate para compatibilidad
+            $toConnection->send(json_encode([
+                'type' => 'call_candidate',  // ⭐ Enviar también como call_candidate
+                'session_id' => $sessionId,
+                'from' => $userId,
+                'to' => $toUserId,
+                'chat_id' => $chatId,
+                'candidate' => $candidate,
+                'timestamp' => date('Y-m-d H:i:s')
+            ]));
+
+            echo "✅ call_candidate (alternativo) también enviado\n";
+        } else {
+            echo "❌ Destinatario {$toUserId} no conectado\n";
+        }
+    }
     private function handleCallAccepted($from, $data)
     {
         $userId = $this->getUserIdFromConnection($from);
@@ -2444,6 +2413,8 @@ try {
                             'mark_as_read',
                             'typing',
                             'init_call',
+                                            'ice_candidate',  // ⭐⭐ AGREGAR ESTO ⭐⭐
+
                             'call_request',
                             'call_offer',
                             'call_answer',

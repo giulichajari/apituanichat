@@ -16,7 +16,7 @@ class AudioCallServer implements MessageComponentInterface
         $this->clients = new \SplObjectStorage();
         $this->clientData = [];
 
-        $this->turnConfig = [
+     $this->turnConfig = [
             'server' => 'tuanichat.com',
             'port' => 3478,
             'tls_port' => 5349,
@@ -26,118 +26,130 @@ class AudioCallServer implements MessageComponentInterface
         ];
 
         echo "🎧 AudioCallServer con TURN inicializado\n";
+        echo "📌 NOTA: Este servidor maneja SOLO audio binario y config TURN\n";
     }
 
     public function onOpen(ConnectionInterface $conn)
     {
-        $connId = spl_object_id($conn);
-        $this->clients->attach($conn);
-        $this->clientData[$connId] = [
-            'resourceId' => $connId,
-            'userId' => null
-        ];
+        $connId = spl_object_hash($conn);
+        $this->clients->attach($conn, [
+            'id' => $connId,
+            'userId' => null,
+            'connected_at' => time()
+        ]);
 
-        echo "🔗 Nueva conexión de audio: #$connId\n";
-
-        // 🔥 ENVIAR CONFIGURACIÓN TURN
-        $this->sendTurnConfig($conn, $connId);
+        echo "🔗 [AUDIO] Nueva conexión: {$connId}\n";
+        
+        // ⭐⭐ ENVIAR CONFIGURACIÓN TURN INMEDIATAMENTE
+        $this->sendTurnConfig($conn);
     }
 
-    private function sendTurnConfig(ConnectionInterface $conn, int $connId)
+    private function sendTurnConfig(ConnectionInterface $conn)
     {
-        if (!$this->turnConfig['enabled']) return;
+        if (!$this->turnConfig['enabled']) {
+            echo "⚠️ [AUDIO] TURN deshabilitado en configuración\n";
+            return;
+        }
 
         $config = [
             'type' => 'turn_config',
-            'turn_servers' => [
-                [
-                    'urls' => [
-                        'turn:' . $this->turnConfig['server'] . ':' . $this->turnConfig['port'] . '?transport=udp',
-                        'turn:' . $this->turnConfig['server'] . ':' . $this->turnConfig['port'] . '?transport=tcp',
-                        'turns:' . $this->turnConfig['server'] . ':' . $this->turnConfig['tls_port'] . '?transport=tcp'
-                    ],
-                    'username' => $this->turnConfig['username'],
-                    'credential' => $this->turnConfig['password']
-                ]
+            'turn' => [
+                'urls' => [
+                    'turn:' . $this->turnConfig['server'] . ':' . $this->turnConfig['port'],
+                    'turns:' . $this->turnConfig['server'] . ':' . $this->turnConfig['tls_port']
+                ],
+                'username' => $this->turnConfig['username'],
+                'credential' => $this->turnConfig['password']
             ],
-            'stun_servers' => [
-                ['urls' => 'stun:stun.l.google.com:19302']
+            'stun' => [
+                'urls' => 'stun:stun.l.google.com:19302'
             ],
-            'server_time' => date('Y-m-d H:i:s')
+            'iceTransportPolicy' => 'all',
+            'rtcpMuxPolicy' => 'require'
         ];
 
         $conn->send(json_encode($config));
-        echo "📤 Configuración TURN enviada a conexión #$connId\n";
+        echo "📤 [AUDIO] Config TURN enviada\n";
     }
 
     public function onMessage(ConnectionInterface $from, $msg)
     {
-        $connId = spl_object_id($from);
+        $connData = $this->clients[$from];
+        $connId = $connData['id'];
 
-        // ⭐⭐ IMPORTANTE: Solo procesar si es audio binario
-        // Los mensajes JSON son manejados por SignalServer
-        if (!is_string($msg)) {
-            // Es binario, probablemente audio
-            $this->relayAudio($from, $msg);
-            return;
-        }
-
-        // Intentar decodificar JSON
-        $data = json_decode($msg, true);
+        // ⭐⭐ SOLO MANEJAR DOS TIPOS DE MENSAJES:
         
-        if ($data === null) {
-            // No es JSON, es audio binario
-            $this->relayAudio($from, $msg);
-            return;
-        }
-
-        // Si es JSON, solo procesar get_turn_config
-        if (isset($data['type']) && $data['type'] === 'get_turn_config') {
-            $this->sendTurnConfig($from, $connId);
-            return;
-        }
-
-        // ⭐⭐ CORRECCIÓN: NO imprimir "Tipo desconocido" para mensajes que no son de audio
-        // Estos mensajes son manejados por SignalServer
-        // Solo loguear para debug
-        if (isset($data['type'])) {
-            echo "🎧 AudioCallServer ignorando mensaje de tipo: {$data['type']} (manejado por SignalServer)\n";
-        }
-        
-        // No hacer nada más, estos mensajes son para SignalServer
-    }
-
-    private function relayWebRTCMessage(ConnectionInterface $from, array $data)
-    {
-        foreach ($this->clients as $client) {
-            if ($from !== $client) {
-                $client->send(json_encode($data));
+        // 1. Solicitud de configuración TURN (JSON)
+        if (is_string($msg)) {
+            $data = json_decode($msg, true);
+            
+            if ($data && isset($data['type']) && $data['type'] === 'get_turn_config') {
+                echo "📨 [AUDIO] Solicitud TURN de {$connId}\n";
+                $this->sendTurnConfig($from);
+                return;
             }
         }
+
+        // 2. Audio binario (relay a otros clientes)
+        // ⭐⭐ IMPORTANTE: Asumimos que TODO lo demás es audio binario
+        echo "🔊 [AUDIO] Relay de datos binarios ({$this->getDataSize($msg)} bytes)\n";
+        $this->relayAudio($from, $msg);
+    }
+
+    private function getDataSize($data)
+    {
+        if (is_string($data)) {
+            return strlen($data);
+        } elseif (is_array($data) || is_object($data)) {
+            return strlen(json_encode($data));
+        }
+        return 0;
     }
 
     private function relayAudio(ConnectionInterface $from, $audioData)
     {
+        $fromId = $this->clients[$from]['id'];
+        $relayedCount = 0;
+
         foreach ($this->clients as $client) {
             if ($from !== $client) {
                 $client->send($audioData);
+                $relayedCount++;
             }
+        }
+
+        if ($relayedCount > 0) {
+            echo "📡 [AUDIO] Datos relayados de {$fromId} a {$relayedCount} clientes\n";
         }
     }
 
     public function onClose(ConnectionInterface $conn)
     {
-        $connId = spl_object_id($conn);
-        $this->clients->detach($conn);
-        unset($this->clientData[$connId]);
-
-        echo "❌ Conexión de audio cerrada: #$connId\n";
+        if ($this->clients->contains($conn)) {
+            $connData = $this->clients[$conn];
+            $duration = time() - $connData['connected_at'];
+            
+            echo "❌ [AUDIO] Conexión cerrada: {$connData['id']} (duración: {$duration}s)\n";
+            $this->clients->detach($conn);
+        }
     }
 
     public function onError(ConnectionInterface $conn, \Exception $e)
     {
-        $connId = spl_object_id($conn);
-        echo "⚠️ Error en audio #$connId: {$e->getMessage()}\n";
+        if ($this->clients->contains($conn)) {
+            $connData = $this->clients[$conn];
+            echo "⚠️ [AUDIO] Error en {$connData['id']}: {$e->getMessage()}\n";
+        }
         $conn->close();
+    }
+    
+    // ⭐⭐ NUEVO: Método para conectar usuarios a sesiones de audio
+    public function associateUser($conn, $userId, $sessionId)
+    {
+        if ($this->clients->contains($conn)) {
+            $this->clients[$conn]['userId'] = $userId;
+            $this->clients[$conn]['sessionId'] = $sessionId;
+            echo "👤 [AUDIO] Usuario {$userId} asociado a sesión {$sessionId}\n";
+        }
     }
 }
