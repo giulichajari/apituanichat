@@ -11,7 +11,9 @@ use App\Routers\PaymentsRouter;
 use App\Routers\RestaurantsRouter;
 use App\Routers\ProductsRouter;
 use App\Routers\StatusRouter;
+use App\Routers\GroupsRouter;
 use EasyProjects\SimpleRouter\Router;
+
 
 
 
@@ -41,7 +43,7 @@ try {
 
     $router->autoload();
     $router->prepareAssets("./App/Views/Assets");
-
+  
     // Registramos routers
     new UsersRouter($router);
     new ProfileRouter($router);
@@ -52,6 +54,7 @@ try {
     new RestaurantsRouter($router);
     new ProductsRouter($router);
     new StatusRouter($router);
+    new GroupsRouter($router);
     // Ejecutamos router
     // Cargar variables de entorno desde la raíz del proyecto
 

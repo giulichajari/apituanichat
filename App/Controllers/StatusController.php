@@ -116,6 +116,7 @@ class StatusController
             $statuses = $this->statusModel->getActiveStatuses($userId, $limit, $offset);
             $total = $this->statusModel->getTotalActiveStatuses();
 
+
             Router::$response->send([
                 "success" => true,
                 "statuses" => $statuses,
@@ -189,36 +190,45 @@ class StatusController
      * Eliminar un estado
      */
     public function deleteStatus()
-    {
-        try {
-            $userId = Router::$request->user->id;
-            $statusId = Router::$request->params->id;
+{
+    try {
 
-            if (empty($statusId)) {
-                Router::$response->status(400)->send([
-                    "error" => "ID de estado no especificado"
-                ]);
-            }
+      $statusId = $_SERVER['REQUEST_URI'];
+$statusId = explode('/', trim($statusId, '/'));
+$statusId = end($statusId);
 
-            $success = $this->statusModel->deleteStatus($statusId, $userId);
 
-            if (!$success) {
-                Router::$response->status(404)->send([
-                    "error" => "Estado no encontrado o no tienes permisos para eliminarlo"
-                ]);
-            }
-
-            Router::$response->send([
-                "success" => true,
-                "message" => "Estado eliminado exitosamente"
+        if (empty($statusId)) {
+            Router::$response->status(400)->send([
+                "error" => "ID de estado no especificado"
             ]);
-
-        } catch (Exception $e) {
-            Router::$response->status(500)->send([
-                "error" => "Error interno del servidor: " . $e->getMessage()
-            ]);
+            return;
         }
+
+        $success = $this->statusModel->deleteStatus( $statusId);
+
+        if (!$success) {
+            Router::$response->status(404)->send([
+                "error" => "Estado no encontrado o no tienes permisos para eliminarlo"
+            ]);
+            return;
+        }
+
+        Router::$response->send([
+            "success" => true,
+            "message" => $statusId
+        ]);
+
+    } catch (Throwable $e) {
+
+        error_log($e->getMessage());
+
+        Router::$response->status(500)->send([
+            "error" => "Error interno del servidor"
+        ]);
     }
+}
+
 
     /**
      * Obtener un estado específico

@@ -50,9 +50,11 @@ class StatusRouter
 
         // Eliminar un estado
         $router->delete(
+        
             '/status/{id}',
             fn() => $tokenMiddleware->strict(),
-            fn() => $statusController->deleteStatus()
+            fn($id) => $statusController->deleteStatus($id),
+        
         );
 
         // Obtener estados expirados (para limpieza)
@@ -76,4 +78,6 @@ class StatusRouter
             fn() => $statusController->getStatusViews()
         );
     }
+
+
 }

@@ -97,6 +97,29 @@ class StatusModel
             return [];
         }
     }
+public function getTotalActiveStatuses(): int
+{
+    try {
+
+        // Limpiar expirados (igual que en getActiveStatuses)
+        $this->cleanupExpiredStatuses();
+
+        $stmt = $this->db->prepare("
+            SELECT COUNT(*) 
+            FROM statuses
+            WHERE expires_at > NOW()
+        ");
+
+        $stmt->execute();
+
+        return (int) $stmt->fetchColumn();
+
+    } catch (PDOException $e) {
+
+        error_log("GetTotalActiveStatuses ERROR: " . $e->getMessage());
+        return 0;
+    }
+}
 
     /**
      * Obtener estados de un usuario específico
@@ -234,24 +257,34 @@ class StatusModel
     /**
      * Eliminar un estado
      */
-    public function deleteStatus(int $statusId, int $userId): bool
+    public function deleteStatus(int $statusId): bool
     {
         try {
             // Verificar que el estado pertenezca al usuario
             $stmt = $this->db->prepare("
                 DELETE FROM statuses 
-                WHERE id = :status_id AND user_id = :user_id
+                WHERE id = :status_id 
             ");
 
             return $stmt->execute([
                 ':status_id' => $statusId,
-                ':user_id' => $userId
-            ]);
+                
+            ]);$this->logError($stmt);
         } catch (PDOException $e) {
             error_log("DeleteStatus ERROR: " . $e->getMessage());
             return false;
         }
     }
+private function logError(string $message): void
+{
+    $file = __DIR__ . '/../../logs/status_errors.log';
+
+    $date = date('Y-m-d H:i:s');
+
+    $log = "[{$date}] {$message}\n";
+
+    file_put_contents($file, $log, FILE_APPEND);
+}
 
     /**
      * Obtener vistas de un estado
