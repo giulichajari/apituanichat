@@ -57,11 +57,11 @@ class GroupsRouter
             fn() => $tokenMiddleware->strict(),
             fn() => $groupsController->addUserToGroup()
         );
-$router->post(
-    '/group/{idGroup}/users',
-    fn($req,$res) => $tokenMiddleware->strict(),
-    fn($req,$res) => $groupsController->addUsersToGroup()
-);
+        $router->post(
+            '/group/{idGroup}/users',
+            fn($req, $res) => $tokenMiddleware->strict(),
+            fn($req, $res) => $groupsController->addUsersToGroup()
+        );
         // Quitar un usuario del grupo
         $router->delete(
             '/group/{idGroup}/user/{idUser}',
@@ -77,7 +77,7 @@ $router->post(
         );
         // Obtener mensajes del grupo
         $router->get(
-            '/group/{idGroup}/messages',
+            '/group/messages/{idGroup}',
             fn() => $tokenMiddleware->strict(),
             fn() => $groupsController->getGroupMessages()
         );

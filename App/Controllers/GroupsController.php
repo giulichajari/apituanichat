@@ -16,45 +16,45 @@ class GroupsController
         $this->groupsModel = $groupsModel ?? new GroupsModel();
         $this->usersModel = $usersModel ?? new UsersModel();
     }
-   public function addUsersToGroup()
-{
-    $data = Router::$request->body;
+    public function addUsersToGroup()
+    {
+        $data = Router::$request->body;
 
-    // Primero URL, si no hay, body
-    $groupId = (int)(
-        Router::$request->params['idGroup']
-        ?? $data->group_id
-        ?? 0
-    );
-
-    $users = $data->users ?? [];
-
-    if ($groupId <= 0) {
-        Router::$response->status(400)->send([
-            "message" => "Invalid group_id"
-        ]);
-        return;
-    }
-
-    if (empty($users)) {
-        Router::$response->status(400)->send([
-            "message" => "No users provided"
-        ]);
-        return;
-    }
-
-    foreach ($users as $userId) {
-        $this->groupsModel->addUserToGroup(
-            $groupId,
-            (int)$userId,
-            0
+        // Primero URL, si no hay, body
+        $groupId = (int)(
+            Router::$request->params['idGroup']
+            ?? $data->group_id
+            ?? 0
         );
-    }
 
-    Router::$response->send([
-        "message" => "Users added"
-    ]);
-}
+        $users = $data->users ?? [];
+
+        if ($groupId <= 0) {
+            Router::$response->status(400)->send([
+                "message" => "Invalid group_id"
+            ]);
+            return;
+        }
+
+        if (empty($users)) {
+            Router::$response->status(400)->send([
+                "message" => "No users provided"
+            ]);
+            return;
+        }
+
+        foreach ($users as $userId) {
+            $this->groupsModel->addUserToGroup(
+                $groupId,
+                (int)$userId,
+                0
+            );
+        }
+
+        Router::$response->send([
+            "message" => "Users added"
+        ]);
+    }
 
 
     // Listar grupos con paginación
@@ -129,13 +129,7 @@ class GroupsController
         $groupId = Router::$request->params->idGroup;
         $userId  = Router::$request->user->id;
 
-        // Verificar miembro
-        if (!$this->groupsModel->isUserInGroup($groupId, $userId)) {
-            Router::$response->status(403)->send([
-                "message" => "No perteneces a este grupo"
-            ]);
-            return;
-        }
+
 
         $messages = $this->groupsModel->getGroupMessages($groupId, $userId);
 
@@ -145,44 +139,57 @@ class GroupsController
         ]);
     }
     public function sendGroupMessage()
-    {
-        $groupId = Router::$request->params->idGroup;
-        $userId  = Router::$request->user->id;
+{
+    $body = Router::$request->body;
 
-        $body = Router::$request->body;
-        $message = trim($body->message ?? '');
+    $groupId = $body->group_id ?? null;
+    $userId  = Router::$request->user->id;
 
-        if (!$message) {
-            Router::$response->status(400)->send([
-                "message" => "El mensaje no puede estar vacío"
-            ]);
-            return;
-        }
+    $message = trim($body->message ?? '');
+    $tipo    = $body->tipo ?? 'texto';
 
-        // Verificar miembro
-        if (!$this->groupsModel->isUserInGroup($groupId, $userId)) {
-            Router::$response->status(403)->send([
-                "message" => "No perteneces a este grupo"
-            ]);
-            return;
-        }
 
-        $saved = $this->groupsModel->createGroupMessage(
-            $groupId,
-            $userId,
-            $message
-        );
-
-        if ($saved) {
-            Router::$response->status(201)->send([
-                "message" => "Mensaje enviado correctamente"
-            ]);
-        } else {
-            Router::$response->status(500)->send([
-                "message" => "Error al guardar mensaje"
-            ]);
-        }
+    if (!$groupId) {
+        Router::$response->status(400)->send([
+            "message" => "Group ID requerido"
+        ]);
+        return;
     }
+
+    if (!$message && $tipo === 'texto') {
+        Router::$response->status(400)->send([
+            "message" => "El mensaje no puede estar vacío"
+        ]);
+        return;
+    }
+
+
+    if (!$this->groupsModel->isUserInGroup($groupId, $userId)) {
+        Router::$response->status(403)->send([
+            "message" => "No perteneces a este grupo"
+        ]);
+        return;
+    }
+
+
+    $saved = $this->groupsModel->createGroupMessage(
+        $groupId,
+        $userId,
+        $message,
+        $tipo
+    );
+
+
+    if ($saved) {
+        Router::$response->status(201)->send([
+            "message" => "Mensaje enviado correctamente"
+        ]);
+    } else {
+        Router::$response->status(500)->send([
+            "message" => "Error al guardar mensaje"
+        ]);
+    }
+}
     // Actualizar un grupo (nombre)
     public function updateGroup()
     {

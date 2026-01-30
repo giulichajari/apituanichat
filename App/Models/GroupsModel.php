@@ -146,9 +146,9 @@ class GroupsModel
             return false;
         }
     }
-public function addMultipleUsers($groupId, array $users)
-{
-    $stmt = $this->db->prepare("
+    public function addMultipleUsers($groupId, array $users)
+    {
+        $stmt = $this->db->prepare("
         INSERT INTO group_users (group_id, user_id, joined_at, left_at, deleted_at)
         VALUES (?, ?, NOW(), NULL, NULL)
         ON DUPLICATE KEY UPDATE
@@ -157,15 +157,15 @@ public function addMultipleUsers($groupId, array $users)
             joined_at = NOW()
     ");
 
-    foreach ($users as $userId) {
-        $stmt->execute([$groupId, $userId]);
-    }
+        foreach ($users as $userId) {
+            $stmt->execute([$groupId, $userId]);
+        }
 
-    return true;
-}
+        return true;
+    }
     public function isUserAdmin($groupId, $userId)
-{
-    $stmt = $this->db->prepare("
+    {
+        $stmt = $this->db->prepare("
         SELECT is_admin
         FROM group_users
         WHERE group_id = ?
@@ -176,10 +176,10 @@ public function addMultipleUsers($groupId, array $users)
         LIMIT 1
     ");
 
-    $stmt->execute([$groupId, $userId]);
+        $stmt->execute([$groupId, $userId]);
 
-    return (bool) $stmt->fetchColumn();
-}
+        return (bool) $stmt->fetchColumn();
+    }
     // Agregar usuario a un grupo
     public function addUserToGroup(int $groupId, int $userId, bool $isAdmin = false): bool
     {
@@ -215,6 +215,9 @@ public function addMultipleUsers($groupId, array $users)
 
     public function getGroupMessages($groupId, $userId)
     {
+
+        error_log("USER: " . $userId);
+error_log("GROUP: " . $groupId);
         $stmt = $this->db->prepare("
         SELECT 
             m.id,
@@ -233,16 +236,28 @@ public function addMultipleUsers($groupId, array $users)
         return $stmt->fetchAll();
     }
 
-    public function createGroupMessage($groupId, $userId, $message)
-    {
-        $stmt = $this->db->prepare("
+ public function createGroupMessage($groupId, $userId, $message, $tipo = 'texto')
+{
+    $stmt = $this->db->prepare("
         INSERT INTO mensajes_grupos
-        (group_id, user_id, contenido)
-        VALUES (?, ?, ?)
+        (
+            group_id,
+            user_id,
+            contenido,
+            tipo,
+            enviado_en,
+            leido
+        )
+        VALUES (?, ?, ?, ?, NOW(), 0)
     ");
 
-        return $stmt->execute([$groupId, $userId, $message]);
-    }
+    return $stmt->execute([
+        $groupId,
+        $userId,
+        $message,
+        $tipo
+    ]);
+}
     // Quitar usuario de un grupo (marcar deleted_at)
     public function removeUserFromGroup(int $groupId, int $userId): bool
     {
