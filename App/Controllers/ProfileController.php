@@ -29,9 +29,34 @@ class ProfileController
                 "message" => "Profile retrieved successfully"
             ]);
         } else if (is_array($profile) && count($profile) === 0) {
-            Router::$response->status(404)->send([
-                "message" => "Profile not found"
+            // ✅ Auto-crear perfil vacío para usuarios existentes (evita 404 en frontend)
+            $user = $this->usersModel->getUser((int)$userId);
+            $email = is_array($user) ? ($user['email'] ?? '') : '';
+            $avatar = is_array($user) ? ($user['avatar'] ?? '') : '';
+
+            $created = $this->profileModel->createProfile((int)$userId, [
+                'bio' => '',
+                'email' => $email,
+                'website' => '',
+                'instagram' => '',
+                'facebook' => '',
+                'twitter' => '',
+                'linkedin' => '',
+                'tiktok' => '',
+                'avatar' => $avatar,
             ]);
+
+            if ($created) {
+                $profile = $this->profileModel->getProfile((int)$userId);
+                Router::$response->status(200)->send([
+                    "data" => $profile ?: [],
+                    "message" => "Profile created automatically"
+                ]);
+            } else {
+                Router::$response->status(500)->send([
+                    "message" => "Error creating profile automatically"
+                ]);
+            }
         } else {
             Router::$response->status(500)->send([
                 "message" => "An error occurred"
