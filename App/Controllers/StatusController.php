@@ -72,9 +72,20 @@ class StatusController
                 ]);
             }
 
-            // URL accesible
-            $baseUrl = $_ENV['BASE_URL'] ?? 'http://localhost:3000';
-            $fileUrl = $baseUrl . '/uploads/statuses/' . $fullFileName;
+            // URL accesible (evitar localhost en VPS).
+            // Si hay proxy (nginx), usar X-Forwarded-Proto.
+            $proto = 'http';
+            if (!empty($_SERVER['HTTP_X_FORWARDED_PROTO'])) {
+                $proto = $_SERVER['HTTP_X_FORWARDED_PROTO'];
+            } elseif (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+                $proto = 'https';
+            }
+
+            $host = $_SERVER['HTTP_HOST'] ?? 'tuanichat.com';
+            $baseUrl = $proto . '://' . $host;
+
+            // En este proyecto, los archivos se guardan bajo /apituanichat/public/uploads/...
+            $fileUrl = $baseUrl . '/apituanichat/public/uploads/statuses/' . $fullFileName;
 
             // Insertar en la base de datos
             $statusId = $this->statusModel->createStatus($userId, $fileType, $fileUrl, $textContent);

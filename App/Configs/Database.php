@@ -12,14 +12,29 @@ class Database
 
     private function __construct()
     {
-        $host = "localhost";
-        $dbname = "tuanichatbd";
-//$user = "tuanichat";
-//$pass = "Argentina1991!";
-     $user = "root";
-   $pass = "";
+        // ✅ Soportar variables de entorno (.env) para VPS
+        // Mantener defaults para entorno local (WAMP).
+        $host = $_ENV['DB_HOST'] ?? 'localhost';
+        $port = $_ENV['DB_PORT'] ?? '3306';
+        $dbname = $_ENV['DB_NAME'] ?? ($_ENV['DB_DATABASE'] ?? 'tuanichatbd');
+        $user = $_ENV['DB_USER'] ?? ($_ENV['DB_USERNAME'] ?? 'root');
+        $pass = $_ENV['DB_PASS'] ?? ($_ENV['DB_PASSWORD'] ?? '');
+        $socket = $_ENV['DB_SOCKET'] ?? null;
+
         try {
-            $this->connection = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8", $user, $pass);
+            $dsn = "mysql:host={$host};dbname={$dbname};charset=utf8mb4";
+            if (!empty($port)) {
+                $dsn .= ";port={$port}";
+            }
+            if (!empty($socket)) {
+                $dsn .= ";unix_socket={$socket}";
+            }
+
+            $this->connection = new PDO($dsn, $user, $pass, [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false,
+            ]);
             $this->connection->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         } catch (PDOException $e) {
             // Guardar en php-error.log

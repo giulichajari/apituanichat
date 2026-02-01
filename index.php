@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/vendor/autoload.php';
 
+use Dotenv\Dotenv;
 use App\Models\RestaurantModel;
 use App\Routers\UsersRouter;
 use App\Routers\ProfileRouter;
@@ -19,6 +20,11 @@ use EasyProjects\SimpleRouter\Router;
 
 
 try {
+    // ✅ Cargar variables de entorno desde .env (si existe)
+    // En el VPS coloca aquí tu DB_HOST/DB_NAME/DB_USER/DB_PASS/JWT_SECRET/etc.
+    $dotenv = Dotenv::createImmutable(__DIR__);
+    $dotenv->safeLoad();
+
     $router = new Router();
     ini_set('display_errors', 0);        // No mostrar errores en pantalla
     ini_set('log_errors', 1);            // Guardar errores en log
