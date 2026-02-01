@@ -753,16 +753,17 @@ class ChatModel
                 (SELECT contenido FROM mensajes m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) as last_message,
                 (SELECT enviado_en FROM mensajes m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) as last_message_time,
                 -- Mensajes no leídos
-                (SELECT COUNT(*) FROM mensajes m WHERE m.chat_id = c.id AND m.leido = 0 AND m.user_id != :currentUserId) as unread_count
+                (SELECT COUNT(*) FROM mensajes m WHERE m.chat_id = c.id AND m.leido = 0 AND m.user_id != ?) as unread_count
             FROM chats c
             JOIN chat_usuarios cu ON cu.chat_id = c.id
-            JOIN chat_usuarios cu2 ON cu2.chat_id = c.id AND cu2.user_id != :currentUserId
+            JOIN chat_usuarios cu2 ON cu2.chat_id = c.id AND cu2.user_id != ?
             JOIN users u ON u.id = cu2.user_id
-            WHERE cu.user_id = :currentUserId
-            ORDER BY c.last_message_at DESC
+            WHERE cu.user_id = ?
+            -- En tu esquema existe chats.last_message_at (dump copiatuani.sql)
+            ORDER BY c.last_message_at DESC, c.id DESC
         ";
             $stmtChats = $this->db->prepare($sqlChats);
-            $stmtChats->execute([':currentUserId' => $currentUserId]);
+            $stmtChats->execute([$currentUserId, $currentUserId, $currentUserId]);
             $existingChats = $stmtChats->fetchAll(PDO::FETCH_ASSOC);
 
             // 3. Crear un mapa rápido de chats por usuario
