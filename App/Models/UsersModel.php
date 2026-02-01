@@ -158,6 +158,21 @@ class UsersModel
         }
     }
 
+    // ✅ Actualizar avatar en tabla users (para que se vea en listas/headers del chat)
+    public function updateUserAvatar(int $userId, string $avatarPath): bool
+    {
+        try {
+            $stmt = $this->db->prepare("UPDATE users SET avatar = :avatar WHERE id = :id");
+            return $stmt->execute([
+                ':avatar' => $avatarPath,
+                ':id' => $userId
+            ]);
+        } catch (PDOException $e) {
+            error_log("updateUserAvatar ERROR: " . $e->getMessage());
+            return false;
+        }
+    }
+
     public function addUser(string $name, string $email, string $password, string $phone = "", string $rol = "user"): int|false
     {
         try {

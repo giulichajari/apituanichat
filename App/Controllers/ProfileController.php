@@ -3,15 +3,18 @@
 namespace App\Controllers;
 
 use App\Models\ProfileModel;
+use App\Models\UsersModel;
 use EasyProjects\SimpleRouter\Router;
 
 class ProfileController
 {
     private ProfileModel $profileModel;
+    private UsersModel $usersModel;
 
     public function __construct()
     {
         $this->profileModel = new ProfileModel();
+        $this->usersModel = new UsersModel();
     }
 
     // Obtener perfil por user_id
@@ -102,7 +105,10 @@ class ProfileController
         }
 
         $file = array_map('trim', $_FILES['avatar']);
-        $targetDir = realpath(__DIR__ . '/../../uploads/avatars') . DIRECTORY_SEPARATOR;
+
+        // Guardar en public/uploads/avatars para que sea accesible vía web:
+        // https://tuanichat.com/apituanichat/public/uploads/avatars/...
+        $targetDir = __DIR__ . '/../../public/uploads/avatars/';
 
         // ✅ Crear directorio si no existe
         if (!is_dir($targetDir)) {
@@ -116,7 +122,11 @@ class ProfileController
             $avatarPath = "/uploads/avatars/" . $filename;
             
             // ✅ CORREGIDO: Llamar SOLO UNA VEZ al método
-            if ($this->profileModel->updateAvatar($userId, $filename)) {
+            // Guardar en profiles y también en users para compatibilidad con listas/headers
+            $okProfile = $this->profileModel->updateAvatar((int)$userId, $avatarPath);
+            $okUser = $this->usersModel->updateUserAvatar((int)$userId, $avatarPath);
+
+            if ($okProfile && $okUser) {
                 Router::$response->status(200)->json([
                     "message" => "Avatar updated successfully",
                     "avatar" => $avatarPath
