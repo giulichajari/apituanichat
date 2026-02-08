@@ -359,26 +359,14 @@ private function getCurrentUserId()
             ]);
         }
     }
+    /**
+     * Estado online del usuario. Siempre devuelve online: true para no bloquear llamadas.
+     * (Se eliminó la verificación de online; las llamadas se inician sin comprobar estado)
+     */
     public function status()
     {
-        $userId = Router::$request->params->idUser;
-
-        $user = $this->usuariosModel->getUserStatus((int)$userId);
-
-        if ($user === false) {
-            Router::$response->status(500)->send(["message" => "Error obteniendo estado"]);
-            return;
-        }
-
-        if (empty($user)) {
-            Router::$response->status(404)->send(["message" => "Usuario no encontrado"]);
-            return;
-        }
-
-        $online = $user === 1;
-
         Router::$response->status(200)->send([
-            "online" => $online
+            "online" => true
         ]);
     }
 }

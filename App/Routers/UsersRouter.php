@@ -26,6 +26,13 @@ class UsersRouter
             fn() => $usersController->getUsers()
         );
 
+        // ⚠️ /user/{idUser}/status DEBE ir ANTES de /user/{idUser} para que coincida
+        $router->get(
+            '/user/{idUser}/status',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $usersController->status()
+        );
+
         $router->get(
             '/user/{idUser}',
             fn() => $tokenMiddleware->strict(),
@@ -65,10 +72,6 @@ class UsersRouter
         $router->post('/reset-password', function () {
             $controller = new UsersController();
             $controller->resetPassword();
-        });
-        $router->get('/user/{idUser}/status', function () {
-            $controller = new UsersController();
-            $controller->status();
         });
     }
 }
