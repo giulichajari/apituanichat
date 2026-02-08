@@ -61,7 +61,7 @@ class GroupsController
     public function getGroups($page = 1)
     {
         $page = intval($page) ?: 1;
-        $currentUserId = $this->getCurrentUserId();
+        $currentUserId = Router::$request->user->id ?? $this->getCurrentUserId();
 
         $groups = $this->groupsModel->getGroupsByUser($currentUserId, $page, 10);
 
@@ -104,7 +104,7 @@ class GroupsController
             return Router::$response->status(400)->send(["message" => "Group name is required"]);
         }
 
-        $createdBy = $this->getCurrentUserId();
+        $createdBy = Router::$request->user->id ?? $this->getCurrentUserId();
         if (!$createdBy) {
             return Router::$response->status(401)->send(["message" => "Unauthorized"]);
         }
