@@ -114,7 +114,7 @@ class ProductController
         ];
 
         $products = $this->productModel->getProducts($filters, $userId);
-        $total = $this->productModel->getProductsCount($filters);
+        $total = $this->productModel->getProductsCount($filters, $userId);
 
         Router::$response->status(200)->send([
             "success" => true,

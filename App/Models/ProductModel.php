@@ -85,8 +85,13 @@ public function getProductBySku($sku)
         $whereConditions = ["p.is_active = 1"];
         $params = [];
 
-        // Solo mostrar productos aprobados para usuarios no admin
-        if (!$this->isAdmin($userId)) {
+        // Mostrar productos aprobados; si hay userId, también los propios (pendientes o no)
+        if ($this->isAdmin($userId)) {
+            // Admin ve todos
+        } elseif ($userId) {
+            $whereConditions[] = "(p.is_approved = 1 OR p.seller_id = ?)";
+            $params[] = $userId;
+        } else {
             $whereConditions[] = "p.is_approved = 1";
         }
 
@@ -161,10 +166,19 @@ public function getProductBySku($sku)
     /**
      * Contar productos con filtros
      */
-    public function getProductsCount(array $filters = []): int
+    public function getProductsCount(array $filters = [], ?int $userId = null): int
     {
-        $whereConditions = ["p.is_active = 1", "p.is_approved = 1"];
+        $whereConditions = ["p.is_active = 1"];
         $params = [];
+
+        if ($this->isAdmin($userId)) {
+            // Admin cuenta todos
+        } elseif ($userId) {
+            $whereConditions[] = "(p.is_approved = 1 OR p.seller_id = ?)";
+            $params[] = $userId;
+        } else {
+            $whereConditions[] = "p.is_approved = 1";
+        }
 
         // Aplicar filtros
         if (!empty($filters['category_id'])) {
