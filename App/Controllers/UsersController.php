@@ -16,11 +16,16 @@ class UsersController
 {
     // ✅ Asegurar que page sea un número
     $page = intval($page) ?: 1;
+    // ✅ Permitir limit por query (ej. para grupos: agregar entre todos los usuarios). Máximo 200.
+    $limit = 10;
+    if (isset(Router::$request->query->limit)) {
+        $limit = min(200, max(1, (int) Router::$request->query->limit));
+    }
     
     // Obtener el ID del usuario actual desde el token JWT
     $currentUserId = $this->getCurrentUserId();
     
-    $users = $this->usuariosModel->getUsers($page,10, $currentUserId);
+    $users = $this->usuariosModel->getUsers($page, $limit, $currentUserId);
     if ($users) {
         // Filtrar para excluir al usuario actual (doble verificación)
         $filteredUsers = array_filter($users, function($user) use ($currentUserId) {

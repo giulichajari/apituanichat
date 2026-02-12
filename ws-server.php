@@ -1038,6 +1038,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $toUserId = isset($data['to']) ? (int)$data['to'] : null;
         $chatId = $data['chat_id'] ?? null;
         $callerName = $data['caller_name'] ?? 'Usuario';
+        $callType = isset($data['call_type']) && $data['call_type'] === 'video' ? 'video' : 'audio';
         $sdpOffer = $data['sdp'] ?? null;
 
         // ⭐⭐ LOG DETALLADO DEL SDP ⭐⭐
@@ -1063,7 +1064,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         if ($toConnection) {
             echo "✅ Destinatario {$toUserId} encontrado (conexión #{$toConnection->resourceId})\n";
 
-            // ⭐⭐ PREPARAR MENSAJE incoming_call CON SDP ⭐⭐
+            // ⭐⭐ PREPARAR MENSAJE incoming_call CON SDP Y call_type (audio/video) ⭐⭐
             $incomingCallData = [
                 'type' => 'incoming_call',
                 'session_id' => $sessionId,
@@ -1071,7 +1072,8 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 'to' => $toUserId,
                 'chat_id' => $chatId,
                 'caller_name' => $callerName,
-                'sdp' => $sdpOffer, // ⭐⭐ ESTO ES LO IMPORTANTE ⭐⭐
+                'call_type' => $callType,
+                'sdp' => $sdpOffer,
                 'timestamp' => $data['timestamp'] ?? date('Y-m-d H:i:s')
             ];
 
@@ -1107,6 +1109,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 'session_id' => $sessionId,
                 'to' => $toUserId,
                 'chat_id' => $chatId,
+                'call_type' => $callType,
                 'status' => 'ringing',
                 'timestamp' => date('Y-m-d H:i:s')
             ]));
