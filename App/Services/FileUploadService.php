@@ -14,7 +14,13 @@ class FileUploadService
         'image/webp' => 'webp',
         'application/pdf' => 'pdf',
         'application/msword' => 'doc',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx'
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
+        'audio/webm' => 'webm',
+        'audio/ogg' => 'ogg',
+        'audio/mp4' => 'mp4',
+        'audio/mpeg' => 'mp3',
+        'audio/wav' => 'wav',
+        'audio/x-wav' => 'wav'
     ];
 
     private $maxFileSize = 10 * 1024 * 1024;
@@ -112,8 +118,16 @@ private function wakeUpWebSocketServer()
                 throw new Exception('Error en la subida del archivo: ' . $file['error']);
             }
 
-            if (!isset($this->allowedTypes[$file['type']])) {
-                throw new Exception('Tipo de archivo no permitido: ' . $file['type']);
+            // Normalizar tipo (trim, minúsculas; quitar codecs)
+            $rawType = isset($file['type']) ? trim((string)$file['type']) : '';
+            $mimeForCheck = trim(strtolower(explode(';', $rawType)[0]));
+            $isAudio = strpos($mimeForCheck, 'audio/') === 0;
+            $isAllowed = isset($this->allowedTypes[$rawType])
+                || isset($this->allowedTypes[$file['type']])
+                || isset($this->allowedTypes[$mimeForCheck])
+                || $isAudio;
+            if (!$isAllowed) {
+                throw new Exception('Tipo de archivo no permitido: ' . $rawType);
             }
 
             $chatModel = new ChatModel();
@@ -160,7 +174,7 @@ private function wakeUpWebSocketServer()
             error_log("✅ Archivo guardado en BD - File ID: {$fileId}");
 
             // ✅ PASO 4: CREAR MENSAJE
-            $tipo = strpos($file['type'], 'image/') === 0 ? 'imagen' : 'archivo';
+            $tipo = strpos($file['type'], 'image/') === 0 ? 'imagen' : (strpos($file['type'], 'audio/') === 0 ? 'audio' : 'archivo');
 
             // Si no hay otherUserId, obtenerlo del chat
             if (!$otherUserId) {
@@ -358,8 +372,16 @@ private function wakeUpWebSocketServer()
             throw new Exception('El directorio no tiene permisos de escritura: ' . $chatPath);
         }
 
-        // Generar nombre único
-        $extension = $this->allowedTypes[$file['type']];
+        // Generar nombre único (soporta audio con codecs, ej. audio/webm;codecs=opus)
+        $rawType = isset($file['type']) ? trim($file['type']) : '';
+        $mimeType = trim(strtolower(explode(';', $rawType)[0]));
+        $extension = $this->allowedTypes[$file['type']] ?? $this->allowedTypes[$rawType] ?? $this->allowedTypes[$mimeType] ?? null;
+        if (!$extension && strpos($mimeType, 'audio/') === 0) {
+            $extension = ($mimeType === 'audio/ogg' || strpos($mimeType, 'ogg') !== false) ? 'ogg' : 'webm';
+        }
+        if (!$extension) {
+            throw new Exception('Tipo de archivo no permitido: ' . $rawType);
+        }
         $fileName = uniqid() . '_' . $userId . '.' . $extension;
         $filePath = $chatPath . $fileName;
 
@@ -389,7 +411,9 @@ private function wakeUpWebSocketServer()
                 return ['success' => false, 'message' => 'Error en la subida del archivo'];
             }
 
-            if (!isset($this->allowedTypes[$file['type']])) {
+            $mimeForCheck = isset($file['type']) ? explode(';', $file['type'])[0] : '';
+            $allowed = isset($this->allowedTypes[$file['type']]) || isset($this->allowedTypes[$mimeForCheck]) || strpos($mimeForCheck, 'audio/') === 0;
+            if (!$allowed) {
                 return ['success' => false, 'message' => 'Tipo de archivo no permitido'];
             }
 
@@ -421,7 +445,7 @@ private function wakeUpWebSocketServer()
             }
 
             // Crear mensaje directamente
-            $tipo = strpos($file['type'], 'image/') === 0 ? 'imagen' : 'archivo';
+            $tipo = strpos($file['type'], 'image/') === 0 ? 'imagen' : (strpos($file['type'], 'audio/') === 0 ? 'audio' : 'archivo');
             $messageId = $chatModel->insertMessage([
                 'chat_id' => $chatId,
                 'user_id' => $userId,

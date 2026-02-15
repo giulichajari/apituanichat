@@ -1,0 +1,21 @@
+# Registro en BD: mensajes de audio
+
+Los mensajes de voz se guardan en el servidor usando las mismas tablas que imágenes y archivos.
+
+## Tablas utilizadas
+
+### `mensajes`
+- **chat_id**, **user_id**, **contenido**, **tipo**, **file_id**, **enviado_en**, **leido**, etc.
+- Para audio: `tipo = 'audio'` y `file_id` apunta al archivo en `files`.
+
+### `files`
+- **id**, **name**, **original_name**, **path**, **url**, **size**, **mime_type**, **chat_id**, **user_id**, **created_at**
+- El archivo físico se guarda en `/uploads/chats/{chat_id}/` (ej. `audio_123.webm`).
+
+## Flujo
+
+1. El front sube el audio con `POST /chats/:chat_id/upload` (FormData con `file`, `chat_id`, `other_user_id`, `user_id`, `tipo=audio`).
+2. El backend (FileUploadService) guarda el archivo en disco, inserta una fila en `files` y otra en `mensajes` con `tipo = 'audio'` y el `file_id` correspondiente.
+3. Al listar mensajes (`GET /chats/:chat_id/messages`), cada mensaje de audio viene con los campos de `files` (file_url, file_original_name, file_mime_type, etc.) gracias al `LEFT JOIN files f ON m.file_id = f.id`.
+
+No hace falta crear tablas nuevas: `mensajes.tipo` admite `'audio'` y `files` ya almacena cualquier archivo del chat.
