@@ -15,6 +15,12 @@ class RestaurantsRouter
     ) {
         // IMPORTANTE: Colocar las rutas más específicas PRIMERO
 
+        // Servir imagen de portada (busca en public y en uploads legacy)
+        $router->get(
+            '/restaurants/cover/{filename:.+}',
+            fn($filename) => $restaurantController->serveRestaurantCover($filename)
+        );
+
         // Obtener restaurantes por propietario - DEBE IR ANTES de la ruta con {id}
         $router->get(
             '/restaurants/owner',

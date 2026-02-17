@@ -693,6 +693,36 @@ public function updateCoverImage($id)
     }
 }
 
+    /**
+     * Servir imagen de portada de restaurante (busca en public/uploads y en uploads legacy)
+     */
+    public function serveRestaurantCover(string $filename): void
+    {
+        $filename = basename($filename);
+        if (empty($filename) || preg_match('/\.\./', $filename)) {
+            Router::$response->status(400)->json(["message" => "Filename inválido"]);
+            return;
+        }
+        $base = __DIR__ . '/../..';
+        $paths = [
+            $base . '/public/uploads/restaurants/cover/' . $filename,
+            $base . '/uploads/restaurants/cover/' . $filename,
+        ];
+        foreach ($paths as $filePath) {
+            if (is_file($filePath) && is_readable($filePath)) {
+                $mime = mime_content_type($filePath) ?: 'image/jpeg';
+                header('Content-Type: ' . $mime);
+                header('Cache-Control: public, max-age=86400');
+                readfile($filePath);
+                exit(0);
+            }
+        }
+        http_response_code(404);
+        header('Content-Type: application/json');
+        echo json_encode(["message" => "Imagen no encontrada"]);
+        exit(1);
+    }
+
     public function getFavoriteRestaurants()
     {
         $userId = Router::$request->user->id ?? null;
