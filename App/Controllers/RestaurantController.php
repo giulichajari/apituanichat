@@ -588,9 +588,9 @@ public function updateCoverImage($id)
     }
 
     $file = $_FILES['cover_image'];
-    
-    // Definir la ruta del directorio
-    $baseDir = realpath(__DIR__ . '/../../uploads') . DIRECTORY_SEPARATOR;
+
+    // Guardar en public/uploads para que sea accesible vía web (igual que avatares/dishes)
+    $baseDir = __DIR__ . '/../../public/uploads/';
     $targetDir = $baseDir . 'restaurants/cover/';
 
     error_log("📁 Ruta base: " . $baseDir);

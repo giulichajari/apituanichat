@@ -101,10 +101,11 @@ class OrderController
     }
     private function paymentLog(string $message, $data = null): void
     {
-        $file = __DIR__ . '/../logs/payment.log';
-    
+        $logsDir = realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2);
+        $file = $logsDir . DIRECTORY_SEPARATOR . 'logs' . DIRECTORY_SEPARATOR . 'orders.log';
+
         if (!is_dir(dirname($file))) {
-            mkdir(dirname($file), 0777, true);
+            @mkdir(dirname($file), 0755, true);
         }
     
         $line = "[" . date("Y-m-d H:i:s") . "] " . $message;
