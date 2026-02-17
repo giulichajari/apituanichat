@@ -13,6 +13,12 @@ class ProfileRouter
         ?TokenMiddleware $tokenMiddleware = new TokenMiddleware(),
         ?ProfileController $profileController = new ProfileController()
     ) {
+        // Servir avatar (busca en public y uploads legacy) - sin auth
+        $router->get(
+            '/avatars/{filename:.+}',
+            fn($filename) => $profileController->serveAvatar($filename)
+        );
+
         // Obtener perfil por userId
         $router->get(
             '/profile/{userId}',

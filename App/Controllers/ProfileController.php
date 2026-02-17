@@ -167,4 +167,39 @@ class ProfileController
             ]);
         }
     }
+
+    /**
+     * Servir imagen de avatar (busca en public/uploads y en uploads legacy)
+     */
+    public function serveAvatar($filename): void
+    {
+        try {
+            $filename = basename(urldecode((string)$filename));
+            if (empty($filename) || preg_match('/\.\./', $filename)) {
+                Router::$response->status(400)->json(["message" => "Filename inválido"]);
+                return;
+            }
+            $base = realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2);
+            $paths = [
+                $base . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'avatars' . DIRECTORY_SEPARATOR . $filename,
+                $base . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'avatars' . DIRECTORY_SEPARATOR . $filename,
+            ];
+            foreach ($paths as $filePath) {
+                if (is_file($filePath) && is_readable($filePath)) {
+                    $mime = @mime_content_type($filePath) ?: 'image/jpeg';
+                    if (ob_get_level()) {
+                        ob_end_clean();
+                    }
+                    header('Content-Type: ' . $mime);
+                    header('Cache-Control: public, max-age=86400');
+                    readfile($filePath);
+                    exit(0);
+                }
+            }
+            Router::$response->status(404)->json(["message" => "Avatar no encontrado"]);
+        } catch (\Throwable $e) {
+            error_log("serveAvatar error: " . $e->getMessage());
+            Router::$response->status(500)->json(["message" => "Error al cargar avatar"]);
+        }
+    }
 }
