@@ -4,17 +4,23 @@ namespace App\Controllers;
 
 use App\Models\OrderModel;
 use App\Models\RestaurantModel;
+use App\Models\UsersModel;
 use EasyProjects\SimpleRouter\Router;
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\SMTP;
+use PHPMailer\PHPMailer\Exception;
 
 class OrderController
 {
     private OrderModel $orderModel;
     private RestaurantModel $restaurantModel;
+    private UsersModel $usersModel;
 
     public function __construct()
     {
         $this->orderModel = new OrderModel();
         $this->restaurantModel = new RestaurantModel();
+        $this->usersModel = new UsersModel();
     }
 
     /**
@@ -179,31 +185,76 @@ class OrderController
 
         // Enviar email al comprador con el link de pago
         $buyerEmail = $order['user_email'] ?? null;
+        if (!$buyerEmail && !empty($order['user_id'])) {
+            $buyer = $this->usersModel->getUser((int)$order['user_id']);
+            $buyerEmail = (is_array($buyer) && !empty($buyer['email'])) ? $buyer['email'] : null;
+        }
+        $emailSent = false;
         if ($buyerEmail) {
-            $this->sendPaymentEmail($buyerEmail, $order, $paymentLinkUrl);
+            $emailSent = $this->sendPaymentEmail($buyerEmail, $order, $paymentLinkUrl);
+        } else {
+            error_log("OrderController confirmOrder: No se encontró email para user_id={$order['user_id']}. Pedido #{$orderId}");
         }
 
         Router::$response->status(200)->json([
-            "message" => "Pedido confirmado. Se envió email al comprador con el link de pago.",
+            "message" => $emailSent
+                ? "Pedido confirmado. Se envió email al comprador con el link de pago."
+                : "Pedido confirmado. " . ($buyerEmail ? "No se pudo enviar el email (revisa configuración SMTP)." : "El comprador no tiene email registrado."),
             "data" => $this->orderModel->getById($orderId)
         ]);
     }
 
-    private function sendPaymentEmail(string $to, array $order, string $paymentUrl): void
+    private function sendPaymentEmail(string $to, array $order, string $paymentUrl): bool
     {
         $subject = "Tuani Eats - Completa el pago de tu pedido #{$order['id']}";
         $total = number_format((float)($order['total'] ?? 0), 2);
         $body = "Hola,\n\n";
         $body .= "Tu pedido #{$order['id']} ha sido confirmado por el restaurante.\n\n";
-        $body .= "Total: \${$total} {$order['currency']}\n\n";
+        $body .= "Total: \${$total} " . ($order['currency'] ?? 'ARS') . "\n\n";
         $body .= "Para completar el pago, haz clic en el siguiente enlace:\n";
         $body .= $paymentUrl . "\n\n";
         $body .= "Gracias por usar Tuani Eats.";
 
-        $headers = "From: " . ($_ENV['MAIL_FROM'] ?? 'soporte@tuanichat.com') . "\r\n";
-        $headers .= "Reply-To: " . ($_ENV['MAIL_REPLY'] ?? 'soporte@tuanichat.com') . "\r\n";
-        $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
+        $from = $_ENV['MAIL_FROM'] ?? 'noreply@tuanichat.com';
+        $replyTo = $_ENV['MAIL_REPLY'] ?? 'soporte@tuanichat.com';
 
-        @mail($to, $subject, $body, $headers);
+        // Usar PHPMailer con SMTP si está configurado (WAMP/Windows necesita SMTP)
+        $smtpHost = $_ENV['SMTP_HOST'] ?? null;
+        if ($smtpHost) {
+            try {
+                $mail = new PHPMailer(true);
+                $mail->CharSet = 'UTF-8';
+                $mail->isSMTP();
+                $mail->Host = $smtpHost;
+                $mail->SMTPAuth = !empty($_ENV['SMTP_USER']);
+                if ($mail->SMTPAuth) {
+                    $mail->Username = $_ENV['SMTP_USER'];
+                    $mail->Password = $_ENV['SMTP_PASS'] ?? '';
+                }
+                $mail->SMTPSecure = $_ENV['SMTP_SECURE'] ?? 'tls';
+                $mail->Port = (int)($_ENV['SMTP_PORT'] ?? 587);
+                $mail->setFrom($from, 'Tuani Eats');
+                $mail->addReplyTo($replyTo);
+                $mail->addAddress($to);
+                $mail->Subject = $subject;
+                $mail->Body = $body;
+                $mail->isHTML(false);
+                $mail->send();
+                return true;
+            } catch (Exception $e) {
+                error_log("OrderController sendPaymentEmail PHPMailer: " . $e->getMessage());
+                return false;
+            }
+        }
+
+        // Fallback a mail() nativo (funciona en Linux con sendmail)
+        $headers = "From: $from\r\n";
+        $headers .= "Reply-To: $replyTo\r\n";
+        $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
+        $sent = @mail($to, $subject, $body, $headers);
+        if (!$sent) {
+            error_log("OrderController sendPaymentEmail: mail() falló. Añade SMTP_HOST, SMTP_USER, SMTP_PASS en .env para usar PHPMailer.");
+        }
+        return $sent;
     }
 }
