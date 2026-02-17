@@ -696,31 +696,36 @@ public function updateCoverImage($id)
     /**
      * Servir imagen de portada de restaurante (busca en public/uploads y en uploads legacy)
      */
-    public function serveRestaurantCover(string $filename): void
+    public function serveRestaurantCover($filename): void
     {
-        $filename = basename($filename);
-        if (empty($filename) || preg_match('/\.\./', $filename)) {
-            Router::$response->status(400)->json(["message" => "Filename inválido"]);
-            return;
-        }
-        $base = __DIR__ . '/../..';
-        $paths = [
-            $base . '/public/uploads/restaurants/cover/' . $filename,
-            $base . '/uploads/restaurants/cover/' . $filename,
-        ];
-        foreach ($paths as $filePath) {
-            if (is_file($filePath) && is_readable($filePath)) {
-                $mime = mime_content_type($filePath) ?: 'image/jpeg';
-                header('Content-Type: ' . $mime);
-                header('Cache-Control: public, max-age=86400');
-                readfile($filePath);
-                exit(0);
+        try {
+            $filename = basename(urldecode((string)$filename));
+            if (empty($filename) || preg_match('/\.\./', $filename)) {
+                Router::$response->status(400)->json(["message" => "Filename inválido"]);
+                return;
             }
+            $base = realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2);
+            $paths = [
+                $base . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'restaurants' . DIRECTORY_SEPARATOR . 'cover' . DIRECTORY_SEPARATOR . $filename,
+                $base . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'restaurants' . DIRECTORY_SEPARATOR . 'cover' . DIRECTORY_SEPARATOR . $filename,
+            ];
+            foreach ($paths as $filePath) {
+                if (is_file($filePath) && is_readable($filePath)) {
+                    $mime = @mime_content_type($filePath) ?: 'image/jpeg';
+                    if (ob_get_level()) {
+                        ob_end_clean();
+                    }
+                    header('Content-Type: ' . $mime);
+                    header('Cache-Control: public, max-age=86400');
+                    readfile($filePath);
+                    exit(0);
+                }
+            }
+            Router::$response->status(404)->json(["message" => "Imagen no encontrada"]);
+        } catch (\Throwable $e) {
+            error_log("serveRestaurantCover error: " . $e->getMessage());
+            Router::$response->status(500)->json(["message" => "Error al cargar imagen"]);
         }
-        http_response_code(404);
-        header('Content-Type: application/json');
-        echo json_encode(["message" => "Imagen no encontrada"]);
-        exit(1);
     }
 
     public function getFavoriteRestaurants()
