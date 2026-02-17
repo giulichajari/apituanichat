@@ -107,154 +107,94 @@ class OrderController
      */
     public function confirmOrder($orderId)
     {
+        error_log("==== confirmOrder START orderId={$orderId} ====");
+    
         $orderId = (int)$orderId;
         $userId = Router::$request->user->id ?? null;
-
+    
+        error_log("UserId: " . ($userId ?? 'NULL'));
+    
         if (!$userId) {
+            error_log("No autenticado");
             Router::$response->status(401)->json(["message" => "No autenticado"]);
             return;
         }
-
+    
         if (!$this->orderModel->belongsToRestaurantOwner($orderId, $userId)) {
-            Router::$response->status(403)->json(["message" => "No tienes permisos para confirmar este pedido"]);
+            error_log("No pertenece al restaurante");
+            Router::$response->status(403)->json(["message" => "No tienes permisos"]);
             return;
         }
-
+    
         $order = $this->orderModel->getById($orderId);
+        error_log("Order: " . json_encode($order));
+    
         if (!$order) {
+            error_log("Pedido no encontrado");
             Router::$response->status(404)->json(["message" => "Pedido no encontrado"]);
             return;
         }
-
+    
         $ok = $this->orderModel->confirmOrder($orderId, $order['restaurant_id']);
+        error_log("ConfirmOrder DB result: " . ($ok ? 'OK' : 'FAIL'));
+    
         if (!$ok) {
-            Router::$response->status(400)->json(["message" => "No se pudo confirmar (quizá ya está confirmado)"]);
+            Router::$response->status(400)->json(["message" => "No se pudo confirmar"]);
             return;
         }
-
-        // Crear link de pago Square y guardarlo
-        $restaurant = $this->restaurantModel->getRestaurantById($order['restaurant_id']);
+    
+        // ================== SQUARE ==================
+        error_log("Creando link de pago Square");
+    
         $accessToken = $_ENV['SQUARE_ACCESS_TOKEN'] ?? '';
         $locationId = $_ENV['SQUARE_LOCATION_ID'] ?? '';
-        $amountCents = (int) round((float)$order['total'] * 100);
-        $currency = $order['currency'] ?? 'ARS';
-        $idempotencyKey = uniqid('food_', true);
-
-        $postData = [
-            "idempotency_key" => $idempotencyKey,
-            "quick_pay" => [
-                "name" => "Pedido #{$orderId} Tuani Eats - " . ($restaurant['nombre'] ?? 'Restaurante'),
-                "price_money" => [
-                    "amount" => $amountCents,
-                    "currency" => $currency
-                ],
-                "location_id" => $locationId
-            ]
-        ];
-
-        $ch = curl_init("https://connect.squareupsandbox.com/v2/online-checkout/payment-links");
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            "Content-Type: application/json",
-            "Authorization: Bearer $accessToken",
-            "Square-Version: 2025-03-19"
-        ]);
-        curl_setopt($ch, CURLOPT_POST, 1);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-
-        $response = curl_exec($ch);
-        $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        $result = json_decode($response, true);
-        $paymentLinkUrl = $result['payment_link']['url'] ?? null;
-        $squarePaymentLinkId = $result['payment_link']['id'] ?? null;
-
+    
+        error_log("Square token present: " . (!empty($accessToken) ? 'SI' : 'NO'));
+        error_log("Square location: " . $locationId);
+    
+        // (tu código de Square igual…)
+    
+        error_log("Square HTTP CODE: " . $httpcode);
+        error_log("Square RESPONSE: " . $response);
+    
         if ($httpcode !== 200 && $httpcode !== 201 || !$paymentLinkUrl) {
-            error_log("Square payment link error: " . ($response ?: 'no response'));
+            error_log("ERROR creando link de pago");
             Router::$response->status(500)->json([
-                "message" => "Pedido confirmado pero falló crear link de pago. Contacta soporte.",
-                "data" => $this->orderModel->getById($orderId)
+                "message" => "Falló Square"
             ]);
             return;
         }
-
-        if ($squarePaymentLinkId) {
-            $this->orderModel->updatePaymentLink($orderId, $paymentLinkUrl, $squarePaymentLinkId);
-        }
-
-        // Enviar email al comprador con el link de pago
+    
+        error_log("PaymentLink: " . $paymentLinkUrl);
+    
+        // ================== EMAIL ==================
         $buyerEmail = $order['user_email'] ?? null;
+    
         if (!$buyerEmail && !empty($order['user_id'])) {
             $buyer = $this->usersModel->getUser((int)$order['user_id']);
-            $buyerEmail = (is_array($buyer) && !empty($buyer['email'])) ? $buyer['email'] : null;
+            error_log("Buyer lookup: " . json_encode($buyer));
+    
+            $buyerEmail = (is_array($buyer) && !empty($buyer['email']))
+                ? $buyer['email']
+                : null;
         }
+    
+        error_log("EMAIL FINAL: " . ($buyerEmail ?? 'NULL'));
+    
         $emailSent = false;
+    
         if ($buyerEmail) {
             $emailSent = $this->sendPaymentEmail($buyerEmail, $order, $paymentLinkUrl);
         } else {
-            error_log("OrderController confirmOrder: No se encontró email para user_id={$order['user_id']}. Pedido #{$orderId}");
+            error_log("NO HAY EMAIL PARA ENVIAR");
         }
-
+    
+        error_log("EMAIL SENT RESULT: " . ($emailSent ? 'SI' : 'NO'));
+    
         Router::$response->status(200)->json([
-            "message" => $emailSent
-                ? "Pedido confirmado. Se envió email al comprador con el link de pago."
-                : "Pedido confirmado. " . ($buyerEmail ? "No se pudo enviar el email (revisa configuración SMTP)." : "El comprador no tiene email registrado."),
+            "message" => "Pedido confirmado",
             "data" => $this->orderModel->getById($orderId)
         ]);
     }
-
-    private function sendPaymentEmail(string $to, array $order, string $paymentUrl): bool
-    {
-        $subject = "Tuani Eats - Completa el pago de tu pedido #{$order['id']}";
-        $total = number_format((float)($order['total'] ?? 0), 2);
-        $body = "Hola,\n\n";
-        $body .= "Tu pedido #{$order['id']} ha sido confirmado por el restaurante.\n\n";
-        $body .= "Total: \${$total} " . ($order['currency'] ?? 'ARS') . "\n\n";
-        $body .= "Para completar el pago, haz clic en el siguiente enlace:\n";
-        $body .= $paymentUrl . "\n\n";
-        $body .= "Gracias por usar Tuani Eats.";
-
-        $from = $_ENV['MAIL_FROM'] ?? 'noreply@tuanichat.com';
-        $replyTo = $_ENV['MAIL_REPLY'] ?? 'soporte@tuanichat.com';
-
-        // Usar PHPMailer con SMTP si está configurado (WAMP/Windows necesita SMTP)
-        $smtpHost = $_ENV['SMTP_HOST'] ?? null;
-        if ($smtpHost) {
-            try {
-                $mail = new PHPMailer(true);
-                $mail->CharSet = 'UTF-8';
-                $mail->isSMTP();
-                $mail->Host = $smtpHost;
-                $mail->SMTPAuth = !empty($_ENV['SMTP_USER']);
-                if ($mail->SMTPAuth) {
-                    $mail->Username = $_ENV['SMTP_USER'];
-                    $mail->Password = $_ENV['SMTP_PASS'] ?? '';
-                }
-                $mail->SMTPSecure = $_ENV['SMTP_SECURE'] ?? 'tls';
-                $mail->Port = (int)($_ENV['SMTP_PORT'] ?? 587);
-                $mail->setFrom($from, 'Tuani Eats');
-                $mail->addReplyTo($replyTo);
-                $mail->addAddress($to);
-                $mail->Subject = $subject;
-                $mail->Body = $body;
-                $mail->isHTML(false);
-                $mail->send();
-                return true;
-            } catch (Exception $e) {
-                error_log("OrderController sendPaymentEmail PHPMailer: " . $e->getMessage());
-                return false;
-            }
-        }
-
-        // Fallback a mail() nativo (funciona en Linux con sendmail)
-        $headers = "From: $from\r\n";
-        $headers .= "Reply-To: $replyTo\r\n";
-        $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
-        $sent = @mail($to, $subject, $body, $headers);
-        if (!$sent) {
-            error_log("OrderController sendPaymentEmail: mail() falló. Añade SMTP_HOST, SMTP_USER, SMTP_PASS en .env para usar PHPMailer.");
-        }
-        return $sent;
-    }
+    
 }
