@@ -141,7 +141,21 @@ class OrderController
      * Crea link de pago Square y envía email al comprador.
      */
     public function confirmOrder($orderId)
-{
+    {
+        try {
+            $this->confirmOrderInternal($orderId);
+        } catch (\Throwable $e) {
+            $this->paymentLog("confirmOrder EXCEPTION", $e->getMessage());
+            error_log("OrderController confirmOrder: " . $e->getMessage() . "\n" . $e->getTraceAsString());
+            Router::$response->status(500)->json([
+                "message" => "Error al confirmar el pedido",
+                "detail" => $e->getMessage()
+            ]);
+        }
+    }
+
+    private function confirmOrderInternal($orderId)
+    {
     $this->paymentLog("==== confirmOrder START ====", $orderId);
 
     $orderId = (int)$orderId;
