@@ -244,6 +244,8 @@ class OrderController
         $amountCents = (int) round((float)$order['total'] * 100);
         $currency = $order['currency'] ?? 'USD';
         $idempotencyKey = uniqid('food_', true);
+        // Sanitizar aquí también (por si en servidor .env tiene punto y no está desplegado el código anterior)
+        $locationIdForSquare = preg_replace('/[^a-zA-Z0-9_-]/', '', trim((string) $locationId));
 
         $postData = [
             "idempotency_key" => $idempotencyKey,
@@ -253,7 +255,7 @@ class OrderController
                     "amount" => $amountCents,
                     "currency" => $currency
                 ],
-                "location_id" => $locationId
+                "location_id" => $locationIdForSquare
             ]
         ];
 
