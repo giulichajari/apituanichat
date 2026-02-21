@@ -246,6 +246,7 @@ class OrderController
         $idempotencyKey = uniqid('food_', true);
         // Sanitizar aquí también (por si en servidor .env tiene punto y no está desplegado el código anterior)
         $locationIdForSquare = preg_replace('/[^a-zA-Z0-9_-]/', '', trim((string) $locationId));
+        $this->paymentLog("Square location_id ENVIADO (length " . strlen($locationIdForSquare) . ")", $locationIdForSquare);
 
         $postData = [
             "idempotency_key" => $idempotencyKey,
