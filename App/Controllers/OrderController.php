@@ -223,9 +223,8 @@ class OrderController
         $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_SANDBOX'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
         $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_SANDBOX'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
     }
-    // Square rechaza location_id con punto o espacios al final; quitar cualquier carácter no válido al final
-    $locationId = trim($locationId);
-    $locationId = preg_replace('/[^a-zA-Z0-9_-]+$/', '', $locationId);
+    // Square solo acepta location_id con letras, números, guión y guión bajo; quitar todo lo demás
+    $locationId = preg_replace('/[^a-zA-Z0-9_-]/', '', trim($locationId));
 
     $sandboxEnv = $_ENV['SQUARE_SANDBOX'] ?? '';
     $sandbox = ($sandboxEnv === 'true' || $sandboxEnv === '1') ? true : !$isProd;
