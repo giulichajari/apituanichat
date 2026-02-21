@@ -18,8 +18,8 @@ class OrderModel
     {
         try {
             $stmt = $this->db->prepare("
-                INSERT INTO food_orders (user_id, restaurant_id, items, total, currency, status, payment_link_url, idempotency_key)
-                VALUES (:user_id, :restaurant_id, :items, :total, :currency, 'pending', :payment_link_url, :idempotency_key)
+                INSERT INTO food_orders (user_id, restaurant_id, items, total, currency, status, payment_link_url, idempotency_key, is_delivery, delivery_address, delivery_phone)
+                VALUES (:user_id, :restaurant_id, :items, :total, :currency, 'pending', :payment_link_url, :idempotency_key, :is_delivery, :delivery_address, :delivery_phone)
             ");
             $ok = $stmt->execute([
                 ':user_id' => $data['user_id'],
@@ -28,7 +28,10 @@ class OrderModel
                 ':total' => $data['total'],
                 ':currency' => $data['currency'] ?? 'ARS',
                 ':payment_link_url' => $data['payment_link_url'] ?? null,
-                ':idempotency_key' => $data['idempotency_key'] ?? null
+                ':idempotency_key' => $data['idempotency_key'] ?? null,
+                ':is_delivery' => !empty($data['is_delivery']) ? 1 : 0,
+                ':delivery_address' => $data['delivery_address'] ?? null,
+                ':delivery_phone' => $data['delivery_phone'] ?? null
             ]);
             return $ok ? (int)$this->db->lastInsertId() : null;
         } catch (\PDOException $e) {

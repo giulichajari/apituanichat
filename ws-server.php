@@ -263,6 +263,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     protected $statusManager;
     protected $userTimers = [];
     protected $chatModel;
+    protected $usersModel;
 
     // NUEVO: Para búsqueda rápida
     private $userIdByConnectionId = []; // connection_id => user_id
@@ -273,6 +274,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $this->clients = new \SplObjectStorage();
         $this->statusManager = new UserStatusManager();
         $this->initializeChatModel();
+        $this->initializeUsersModel();
         echo "🚀 SignalServer inicializado\n";
     }
     private function getUserId(ConnectionInterface $conn)
@@ -320,6 +322,31 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
         // También enviar notificación de actualización de lista de chats
         $this->notifyChatListUpdate($chatId, $messageData);
+
+        // Push FCM a destinatarios que no están conectados (app en segundo plano)
+        if ($this->chatModel && $senderId) {
+            $participants = $this->chatModel->getChatParticipantIds((int)$chatId);
+            $senderName = 'Usuario';
+            if ($this->usersModel) {
+                $u = $this->usersModel->getUser((int)$senderId);
+                $senderName = is_array($u) && !empty($u['name']) ? $u['name'] : $senderName;
+            }
+            $preview = $messageData['contenido'] ?? 'Nuevo mensaje';
+            if (mb_strlen($preview) > 80) {
+                $preview = mb_substr($preview, 0, 77) . '...';
+            }
+            foreach ($participants as $participantId) {
+                if ((int)$participantId === (int)$senderId) continue;
+                if (empty($this->userConnections[$participantId])) {
+                    $this->sendFcmToUser($participantId, [
+                        'type' => 'new_message',
+                        'chat_id' => (string)$chatId,
+                        'sender_name' => $senderName,
+                        'body' => $preview,
+                    ]);
+                }
+            }
+        }
     }
 
     private function notifyChatListUpdate($chatId, $messageData)
@@ -384,6 +411,35 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         } catch (Exception $e) {
             echo "❌ Error inicializando ChatModel: " . $e->getMessage() . "\n";
             $this->chatModel = null;
+        }
+    }
+
+    private function initializeUsersModel()
+    {
+        try {
+            if (!class_exists('App\Models\UsersModel')) {
+                $this->usersModel = null;
+                return;
+            }
+            $this->usersModel = new \App\Models\UsersModel();
+        } catch (Exception $e) {
+            $this->usersModel = null;
+        }
+    }
+
+    /** Envía notificación push FCM a un usuario (app en segundo plano) */
+    private function sendFcmToUser($userId, array $data)
+    {
+        if (!$this->usersModel || !class_exists('App\Services\FcmService')) {
+            return;
+        }
+        try {
+            $token = $this->usersModel->getFcmToken((int)$userId);
+            if ($token) {
+                \App\Services\FcmService::sendDataMessage($token, $data);
+            }
+        } catch (\Throwable $e) {
+            error_log("FCM send to user {$userId}: " . $e->getMessage());
         }
     }
 
@@ -784,7 +840,14 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
             echo "📞 Solicitud de llamada de {$userId} a {$toUserId}\n";
         } else {
-            // Usuario offline
+            // Usuario offline: enviar push FCM para que suene aunque la app esté cerrada
+            $this->sendFcmToUser($toUserId, [
+                'type' => 'incoming_call',
+                'caller_name' => $data['caller_name'] ?? 'Usuario',
+                'session_id' => (string)$sessionId,
+                'chat_id' => (string)$chatId,
+                'from' => (string)$userId,
+            ]);
             $from->send(json_encode([
                 'type' => 'call_ended',
                 'session_id' => $sessionId,
@@ -1117,6 +1180,14 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             echo "✅ Confirmación enviada al llamante\n";
         } else {
             echo "❌ Destinatario {$toUserId} no conectado\n";
+            // Push FCM para que suene en el dispositivo aunque la app esté cerrada
+            $this->sendFcmToUser($toUserId, [
+                'type' => 'incoming_call',
+                'caller_name' => $callerName ?? 'Usuario',
+                'session_id' => (string)$sessionId,
+                'chat_id' => (string)$chatId,
+                'from' => (string)$userId,
+            ]);
         }
 
         echo "📞 ========== LLAMADA PROCESADA ==========\n\n";

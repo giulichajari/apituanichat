@@ -46,5 +46,12 @@ class ProfileRouter
             fn() => $tokenMiddleware->strict(),
             fn() => $profileController->updateAvatar()
         );
+
+        // Registrar token FCM para notificaciones push (app Android en segundo plano)
+        $router->post(
+            '/profile/fcm-token',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $profileController->registerFcmToken()
+        );
     }
 }

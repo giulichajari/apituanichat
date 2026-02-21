@@ -253,6 +253,20 @@ class ChatModel
         }
     }
 
+    /** IDs de usuarios que participan en el chat (para enviar FCM a los que no están conectados) */
+    public function getChatParticipantIds(int $chatId): array
+    {
+        try {
+            $stmt = $this->db->prepare("SELECT user_id FROM chat_usuarios WHERE chat_id = ?");
+            $stmt->execute([$chatId]);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            return array_map('intval', array_column($rows, 'user_id'));
+        } catch (Exception $e) {
+            error_log("getChatParticipantIds: " . $e->getMessage());
+            return [];
+        }
+    }
+
 
     // ✅ Buscar chat existente entre dos usuarios
     public function findChatBetweenUsers($user1, $user2)

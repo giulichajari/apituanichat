@@ -173,6 +173,37 @@ class UsersModel
         }
     }
 
+    /** Guardar token FCM para notificaciones push (app en segundo plano) */
+    public function updateFcmToken(int $userId, string $fcmToken): bool
+    {
+        try {
+            $stmt = $this->db->prepare("UPDATE users SET fcm_token = :fcm_token WHERE id = :id");
+            return $stmt->execute([
+                ':fcm_token' => $fcmToken,
+                ':id' => $userId
+            ]);
+        } catch (PDOException $e) {
+            error_log("updateFcmToken ERROR: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /** Obtener token FCM de un usuario (para enviar push cuando no está conectado por WebSocket) */
+    public function getFcmToken(int $userId): ?string
+    {
+        try {
+            $stmt = $this->db->prepare("SELECT fcm_token FROM users WHERE id = :id");
+            $stmt->bindValue(':id', $userId, PDO::PARAM_INT);
+            $stmt->execute();
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            $token = $row['fcm_token'] ?? null;
+            return $token && trim($token) !== '' ? trim($token) : null;
+        } catch (PDOException $e) {
+            error_log("getFcmToken ERROR: " . $e->getMessage());
+            return null;
+        }
+    }
+
     public function addUser(string $name, string $email, string $password, string $phone = "", string $rol = "user"): int|false
     {
         try {

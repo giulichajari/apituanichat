@@ -52,6 +52,18 @@ class OrderController
             return;
         }
 
+        $isDelivery = !empty($body['delivery']);
+        if ($isDelivery) {
+            $addr = trim((string)($body['delivery_address'] ?? ''));
+            $phone = trim((string)($body['delivery_phone'] ?? ''));
+            if ($addr === '' || $phone === '') {
+                Router::$response->status(400)->json([
+                    "message" => "Para delivery son obligatorios dirección y teléfono"
+                ]);
+                return;
+            }
+        }
+
         $orderId = $this->orderModel->create([
             'user_id' => $userId,
             'restaurant_id' => $restaurantId,
@@ -59,7 +71,10 @@ class OrderController
             'total' => $total,
             'currency' => $body['currency'] ?? 'ARS',
             'payment_link_url' => null,
-            'idempotency_key' => null
+            'idempotency_key' => null,
+            'is_delivery' => $isDelivery,
+            'delivery_address' => $isDelivery ? trim((string)($body['delivery_address'] ?? '')) : null,
+            'delivery_phone' => $isDelivery ? trim((string)($body['delivery_phone'] ?? '')) : null
         ]);
 
         if (!$orderId) {
@@ -166,73 +181,86 @@ class OrderController
     // ================== SQUARE ==================
     $accessToken = $_ENV['SQUARE_ACCESS_TOKEN'] ?? '';
     $locationId = $_ENV['SQUARE_LOCATION_ID'] ?? '';
+    $sandbox = (isset($_ENV['SQUARE_SANDBOX']) ? (bool)($_ENV['SQUARE_SANDBOX'] === 'true' || $_ENV['SQUARE_SANDBOX'] === '1') : true);
+    $squareBaseUrl = $sandbox ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com';
 
     $this->paymentLog("Square token present", !empty($accessToken));
     $this->paymentLog("Square location", $locationId);
+    $this->paymentLog("Square sandbox", $sandbox);
 
     $restaurant = $this->restaurantModel->getRestaurantById($order['restaurant_id']);
 
-    $amountCents = (int) round((float)$order['total'] * 100);
-    $currency = $order['currency'] ?? 'ARS';
-    $idempotencyKey = uniqid('food_', true);
+    $paymentLinkUrl = null;
+    $squarePaymentLinkId = null;
+    $squareErrorDetail = null;
 
-    $postData = [
-        "idempotency_key" => $idempotencyKey,
-        "quick_pay" => [
-            "name" => "Pedido #{$orderId} Tuani Eats - " . ($restaurant['nombre'] ?? 'Restaurante'),
-            "price_money" => [
-                "amount" => $amountCents,
-                "currency" => $currency
-            ],
-            "location_id" => $locationId
-        ]
-    ];
+    if (!empty($accessToken) && !empty($locationId)) {
+        $amountCents = (int) round((float)$order['total'] * 100);
+        $currency = $order['currency'] ?? 'ARS';
+        $idempotencyKey = uniqid('food_', true);
 
-    $ch = curl_init("https://connect.squareupsandbox.com/v2/online-checkout/payment-links");
+        $postData = [
+            "idempotency_key" => $idempotencyKey,
+            "quick_pay" => [
+                "name" => "Pedido #{$orderId} Tuani Eats - " . ($restaurant['nombre'] ?? 'Restaurante'),
+                "price_money" => [
+                    "amount" => $amountCents,
+                    "currency" => $currency
+                ],
+                "location_id" => $locationId
+            ]
+        ];
 
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        "Content-Type: application/json",
-        "Authorization: Bearer $accessToken",
-        "Square-Version: 2025-03-19"
-    ]);
-
-    curl_setopt($ch, CURLOPT_POST, 1);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-
-    $response = curl_exec($ch);
-    $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-
-    curl_close($ch);
-
-    $this->paymentLog("Square HTTP CODE", $httpcode);
-    $this->paymentLog("Square RESPONSE", substr($response ?: '', 0, 500));
-
-    $result = json_decode($response, true);
-
-    $paymentLinkUrl = $result['payment_link']['url'] ?? null;
-    $squarePaymentLinkId = $result['payment_link']['id'] ?? null;
-
-    if (($httpcode !== 200 && $httpcode !== 201) || !$paymentLinkUrl) {
-        $this->paymentLog("ERROR creando link de pago");
-        Router::$response->status(500)->json([
-            "message" => "Falló crear link de pago Square"
+        $ch = curl_init($squareBaseUrl . "/v2/online-checkout/payment-links");
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            "Content-Type: application/json",
+            "Authorization: Bearer $accessToken",
+            "Square-Version: 2024-11-20"
         ]);
-        return;
+        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+
+        $response = curl_exec($ch);
+        $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        $this->paymentLog("Square HTTP CODE", $httpcode);
+        $this->paymentLog("Square RESPONSE", substr($response ?: '', 0, 800));
+        if ($curlError) {
+            $this->paymentLog("Square CURL ERROR", $curlError);
+            $squareErrorDetail = $curlError;
+        }
+
+        $result = is_string($response) ? json_decode($response, true) : [];
+        $paymentLinkUrl = $result['payment_link']['url'] ?? null;
+        $squarePaymentLinkId = $result['payment_link']['id'] ?? null;
+
+        if (($httpcode !== 200 && $httpcode !== 201) || !$paymentLinkUrl) {
+            $squareErrorDetail = $squareErrorDetail ?? '';
+            if (!empty($result['errors']) && is_array($result['errors'])) {
+                $first = $result['errors'][0] ?? [];
+                $squareErrorDetail = ($first['code'] ?? '') . ': ' . ($first['detail'] ?? $first['message'] ?? json_encode($first));
+            }
+        }
+    } else {
+        $squareErrorDetail = empty($accessToken) ? 'SQUARE_ACCESS_TOKEN no configurado' : 'SQUARE_LOCATION_ID no configurado';
     }
 
-    $this->orderModel->updatePaymentLink($orderId, $paymentLinkUrl, $squarePaymentLinkId);
+    if ($paymentLinkUrl && $squarePaymentLinkId) {
+        $this->orderModel->updatePaymentLink($orderId, $paymentLinkUrl, $squarePaymentLinkId);
+        $this->paymentLog("PaymentLink", $paymentLinkUrl);
+    }
 
-    $this->paymentLog("PaymentLink", $paymentLinkUrl);
-
-    // ================== EMAIL ==================
+    // ================== EMAIL (siempre si hay comprador: con link o aviso de problema) ==================
 
     $buyerEmail = $order['user_email'] ?? null;
 
     if (!$buyerEmail && !empty($order['user_id'])) {
         $buyer = $this->usersModel->getUser((int)$order['user_id']);
         $this->paymentLog("Buyer lookup", $buyer);
-
         $buyerEmail = $buyer['email'] ?? null;
     }
 
@@ -241,9 +269,22 @@ class OrderController
     $emailSent = false;
 
     if ($buyerEmail) {
-        $emailSent = $this->sendPaymentEmail($buyerEmail, $order, $paymentLinkUrl);
+        if ($paymentLinkUrl) {
+            $emailSent = $this->sendPaymentEmail($buyerEmail, $order, $paymentLinkUrl);
+        } else {
+            $emailSent = $this->sendPaymentEmailConfirmOnly($buyerEmail, $order, $squareErrorDetail);
+        }
     } else {
         $this->paymentLog("NO HAY EMAIL PARA ENVIAR");
+    }
+
+    if (!$paymentLinkUrl) {
+        $this->paymentLog("ERROR creando link de pago", $squareErrorDetail);
+        Router::$response->status(500)->json([
+            "message" => "Falló crear link de pago Square",
+            "detail" => $squareErrorDetail
+        ]);
+        return;
     }
 
     $this->paymentLog("EMAIL SENT RESULT", $emailSent);
@@ -253,6 +294,25 @@ class OrderController
         "data" => $this->orderModel->getById($orderId)
     ]);
 }
+/**
+ * Envía email cuando el pedido está confirmado pero no se pudo generar el link de pago (Square falló).
+ */
+private function sendPaymentEmailConfirmOnly(string $to, array $order, ?string $reason = null): bool
+{
+    $this->paymentLog("sendPaymentEmailConfirmOnly TO", $to);
+
+    $subject = "Tuani Eats - Pedido #{$order['id']} confirmado";
+    $total = number_format((float)($order['total'] ?? 0), 2);
+
+    $body = "Hola,\n\n";
+    $body .= "Tu pedido #{$order['id']} ha sido confirmado por el restaurante.\n\n";
+    $body .= "Total: \${$total} " . ($order['currency'] ?? 'ARS') . "\n\n";
+    $body .= "No pudimos generar el link de pago en este momento. El restaurante te contactará para indicarte cómo completar el pago.\n\n";
+    $body .= "Gracias por usar Tuani Eats.";
+
+    return $this->sendEmail($to, $subject, $body);
+}
+
 private function sendPaymentEmail(string $to, array $order, string $paymentUrl): bool
 {
     $this->paymentLog("sendPaymentEmail TO", $to);
@@ -266,15 +326,18 @@ private function sendPaymentEmail(string $to, array $order, string $paymentUrl):
     $body .= "Pagar aquí:\n$paymentUrl\n\n";
     $body .= "Gracias por usar Tuani Eats.";
 
+    return $this->sendEmail($to, $subject, $body);
+}
+
+private function sendEmail(string $to, string $subject, string $body): bool
+{
     $from = $_ENV['MAIL_FROM'] ?? 'noreply@tuanichat.com';
     $replyTo = $_ENV['MAIL_REPLY'] ?? 'soporte@tuanichat.com';
-
     $smtpHost = $_ENV['SMTP_HOST'] ?? null;
 
     if ($smtpHost) {
         try {
             $mail = new PHPMailer(true);
-
             $mail->CharSet = 'UTF-8';
             $mail->isSMTP();
             $mail->Host = $smtpHost;
@@ -283,22 +346,15 @@ private function sendPaymentEmail(string $to, array $order, string $paymentUrl):
             $mail->Password = $_ENV['SMTP_PASS'];
             $mail->SMTPSecure = $_ENV['SMTP_SECURE'] ?? 'tls';
             $mail->Port = (int)($_ENV['SMTP_PORT'] ?? 587);
-
             $mail->setFrom($from, 'Tuani Eats');
             $mail->addReplyTo($replyTo);
             $mail->addAddress($to);
-
             $mail->Subject = $subject;
             $mail->Body = $body;
-
             $mail->send();
-
             $this->paymentLog("PHPMailer RESULT", "OK");
-
             return true;
-
         } catch (Exception $e) {
-
             $this->paymentLog("PHPMailer ERROR", $e->getMessage());
             return false;
         }
@@ -307,11 +363,8 @@ private function sendPaymentEmail(string $to, array $order, string $paymentUrl):
     $headers = "From: $from\r\n";
     $headers .= "Reply-To: $replyTo\r\n";
     $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
-
     $sent = @mail($to, $subject, $body, $headers);
-
     $this->paymentLog("mail() RESULT", $sent);
-
     return $sent;
 }
 

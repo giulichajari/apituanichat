@@ -169,6 +169,31 @@ class ProfileController
     }
 
     /**
+     * Registrar token FCM del dispositivo para notificaciones push (llamadas y mensajes en segundo plano).
+     * POST /profile/fcm-token con body { "fcm_token": "..." }
+     */
+    public function registerFcmToken()
+    {
+        $user = Router::$request->user ?? null;
+        if (!$user || empty($user->id)) {
+            Router::$response->status(401)->send(["message" => "No autenticado"]);
+            return;
+        }
+        $body = Router::$request->body;
+        $fcmToken = is_object($body) ? ($body->fcm_token ?? null) : ($body['fcm_token'] ?? null);
+        if (!$fcmToken || !is_string($fcmToken) || trim($fcmToken) === '') {
+            Router::$response->status(400)->send(["message" => "fcm_token requerido"]);
+            return;
+        }
+        $ok = $this->usersModel->updateFcmToken((int)$user->id, trim($fcmToken));
+        if ($ok) {
+            Router::$response->status(200)->send(["message" => "Token FCM registrado"]);
+        } else {
+            Router::$response->status(500)->send(["message" => "Error al guardar token"]);
+        }
+    }
+
+    /**
      * Servir imagen de avatar (busca en public/uploads y en uploads legacy)
      */
     public function serveAvatar($filename): void
