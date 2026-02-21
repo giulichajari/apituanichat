@@ -36,7 +36,7 @@ class OrderModel
             return $ok ? (int)$this->db->lastInsertId() : null;
         } catch (\PDOException $e) {
             error_log("❌ OrderModel create: " . $e->getMessage());
-            return null;
+            throw $e;
         }
     }
 
