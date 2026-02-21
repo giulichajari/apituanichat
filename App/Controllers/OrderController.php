@@ -6,8 +6,6 @@ use App\Models\OrderModel;
 use App\Models\RestaurantModel;
 use App\Models\UsersModel;
 use EasyProjects\SimpleRouter\Router;
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\Exception;
 
 class OrderController
 {
@@ -193,9 +191,11 @@ class OrderController
     }
 
     // ================== SQUARE ==================
-    $accessToken = $_ENV['SQUARE_ACCESS_TOKEN'] ?? '';
-    $locationId = $_ENV['SQUARE_LOCATION_ID'] ?? '';
-    $sandbox = (isset($_ENV['SQUARE_SANDBOX']) ? (bool)($_ENV['SQUARE_SANDBOX'] === 'true' || $_ENV['SQUARE_SANDBOX'] === '1') : true);
+    // Soporte: SQUARE_ACCESS_TOKEN / SQUARE_LOCATION_ID o bien _PROD / _SANDBOX según APP_ENV
+    $isProd = (isset($_ENV['APP_ENV']) && strtolower((string)$_ENV['APP_ENV']) === 'production');
+    $accessToken = $_ENV['SQUARE_ACCESS_TOKEN'] ?? ($isProd ? ($_ENV['SQUARE_ACCESS_TOKEN_PROD'] ?? '') : ($_ENV['SQUARE_ACCESS_TOKEN_SANDBOX'] ?? ''));
+    $locationId = $_ENV['SQUARE_LOCATION_ID'] ?? ($isProd ? ($_ENV['SQUARE_LOCATION_ID_PROD'] ?? '') : ($_ENV['SQUARE_LOCATION_ID_SANDBOX'] ?? ''));
+    $sandbox = isset($_ENV['SQUARE_SANDBOX']) ? (bool)($_ENV['SQUARE_SANDBOX'] === 'true' || $_ENV['SQUARE_SANDBOX'] === '1') : !$isProd;
     $squareBaseUrl = $sandbox ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com';
 
     $this->paymentLog("Square token present", !empty($accessToken));
@@ -278,7 +278,7 @@ class OrderController
         $buyerEmail = $buyer['email'] ?? null;
     }
 
-    $this->paymentLog("EMAIL FINAL", $buyerEmail);
+    $this->paymentLog("EMAIL FINAL (comprador del pedido)", ['email' => $buyerEmail, 'user_id' => $order['user_id'] ?? null]);
 
     $emailSent = false;
 
@@ -347,9 +347,9 @@ private function sendEmail(string $to, string $subject, string $body): bool
     $replyTo = $_ENV['MAIL_REPLY'] ?? 'soporte@tuanichat.com';
     $smtpHost = $_ENV['SMTP_HOST'] ?? null;
 
-    if ($smtpHost) {
+    if ($smtpHost && class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
         try {
-            $mail = new PHPMailer(true);
+            $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
             $mail->CharSet = 'UTF-8';
             $mail->isSMTP();
             $mail->Host = $smtpHost;
@@ -366,10 +366,14 @@ private function sendEmail(string $to, string $subject, string $body): bool
             $mail->send();
             $this->paymentLog("PHPMailer RESULT", "OK");
             return true;
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             $this->paymentLog("PHPMailer ERROR", $e->getMessage());
             return false;
         }
+    }
+
+    if ($smtpHost && !class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
+        $this->paymentLog("PHPMailer not found", "fallback to mail()");
     }
 
     $headers = "From: $from\r\n";
