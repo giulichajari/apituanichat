@@ -241,25 +241,9 @@ class OrderController
     $squareErrorDetail = null;
 
     if (!empty($accessToken) && !empty($locationId)) {
-        $orderCurrency = strtoupper((string)($order['currency'] ?? 'ARS'));
-        $orderTotal = (float) $order['total'];
-        // Si la cuenta Square solo acepta USD y la orden está en ARS, convertir con tasa opcional
-        $squareCurrency = 'USD';
-        if ($orderCurrency === 'USD') {
-            $amountCents = (int) round($orderTotal * 100);
-        } elseif ($orderCurrency === 'ARS') {
-            $rate = isset($_ENV['SQUARE_ARS_TO_USD_RATE']) ? (float) $_ENV['SQUARE_ARS_TO_USD_RATE'] : 0;
-            if ($rate > 0) {
-                $amountCents = (int) round($orderTotal * $rate * 100);
-                $this->paymentLog("Square ARS→USD", ['total_ars' => $orderTotal, 'rate' => $rate, 'usd_cents' => $amountCents]);
-            } else {
-                $amountCents = (int) round($orderTotal * 100);
-                $squareCurrency = 'ARS';
-            }
-        } else {
-            $amountCents = (int) round($orderTotal * 100);
-            $squareCurrency = $orderCurrency;
-        }
+        // La app envía el total en dólares y currency USD; Square recibe eso tal cual
+        $amountCents = (int) round((float) $order['total'] * 100);
+        $currency = strtoupper((string)($order['currency'] ?? 'USD'));
         $idempotencyKey = uniqid('food_', true);
         $locationIdForSquare = preg_replace('/[^a-zA-Z0-9_-]/', '', trim((string) $locationId));
         $this->paymentLog("Square location_id ENVIADO (length " . strlen($locationIdForSquare) . ")", $locationIdForSquare);
@@ -270,7 +254,7 @@ class OrderController
                 "name" => "Pedido #{$orderId} Tuani Eats - " . ($restaurant['nombre'] ?? 'Restaurante'),
                 "price_money" => [
                     "amount" => $amountCents,
-                    "currency" => $squareCurrency
+                    "currency" => $currency
                 ],
                 "location_id" => $locationIdForSquare
             ]
