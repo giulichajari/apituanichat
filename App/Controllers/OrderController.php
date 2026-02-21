@@ -232,6 +232,9 @@ class OrderController
     $squarePaymentLinkId = null;
     $squareErrorDetail = null;
 
+    // Sanitizar location_id: quitar puntos o espacios al final (Square rechaza "sq0idp-xxx.")
+        $locationId = rtrim(trim($locationId), ".\t\n\r ");
+
     if (!empty($accessToken) && !empty($locationId)) {
         $amountCents = (int) round((float)$order['total'] * 100);
         $currency = $order['currency'] ?? 'ARS';

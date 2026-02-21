@@ -27,13 +27,13 @@ class OrdersRouter
         $router->get(
             '/orders/restaurant/{restaurantId:\d+}',
             fn() => $tokenMiddleware->strict(),
-            fn($restaurantId) => $orderController->getOrdersByRestaurant($restaurantId)
+            fn() => $orderController->getOrdersByRestaurant((int)(Router::$request->params->restaurantId ?? 0))
         );
 
         $router->patch(
             '/orders/{orderId:\d+}/confirm',
             fn() => $tokenMiddleware->strict(),
-            fn($orderId) => $orderController->confirmOrder($orderId)
+            fn() => $orderController->confirmOrder((int)(Router::$request->params->orderId ?? 0))
         );
     }
 }

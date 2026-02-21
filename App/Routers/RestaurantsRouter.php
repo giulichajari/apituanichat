@@ -18,7 +18,7 @@ class RestaurantsRouter
         // Servir imagen de portada (busca en public y en uploads legacy)
         $router->get(
             '/restaurants/cover/{filename:.+}',
-            fn($filename) => $restaurantController->serveRestaurantCover($filename)
+            fn() => $restaurantController->serveRestaurantCover(Router::$request->params->filename ?? '')
         );
 
         // Obtener restaurantes por propietario - DEBE IR ANTES de la ruta con {id}
@@ -37,7 +37,7 @@ class RestaurantsRouter
         $router->get(
             '/restaurants/{id:\d+}', // SOLO números para IDs
             fn() => $tokenMiddleware->optional(),
-            fn($id) => $restaurantController->getRestaurant($id)
+            fn() => $restaurantController->getRestaurant((int)(Router::$request->params->id ?? 0))
         );
         // Obtener todos los restaurantes
         $router->get(
