@@ -25,10 +25,24 @@ class OrderController
      */
     public function createFoodOrder()
     {
+        try {
+            $this->createFoodOrderInternal();
+        } catch (\Throwable $e) {
+            error_log("OrderController createFoodOrder: " . $e->getMessage() . "\n" . $e->getTraceAsString());
+            Router::$response->status(500)->json([
+                "message" => "Error al crear el pedido",
+                "detail" => $e->getMessage()
+            ]);
+        }
+    }
+
+    private function createFoodOrderInternal()
+    {
         $body = json_decode(file_get_contents('php://input'), true);
 
-        // Comprador = siempre el usuario autenticado (token). No usar userId del body para evitar pedidos asignados a otro usuario.
-        $userId = Router::$request->user->id ?? null;
+        // Comprador = siempre el usuario autenticado (token). Evitar acceso a ->id si user es null.
+        $user = Router::$request->user ?? null;
+        $userId = $user ? ($user->id ?? null) : null;
         $restaurantId = (int)($body['restaurantId'] ?? 0);
         $items = $body['items'] ?? [];
         $total = (float)($body['total'] ?? 0);
