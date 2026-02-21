@@ -27,14 +27,15 @@ class OrderController
     {
         $body = json_decode(file_get_contents('php://input'), true);
 
-        $userId = $body['userId'] ?? Router::$request->user->id ?? null;
+        // Comprador = siempre el usuario autenticado (token). No usar userId del body para evitar pedidos asignados a otro usuario.
+        $userId = Router::$request->user->id ?? null;
         $restaurantId = (int)($body['restaurantId'] ?? 0);
         $items = $body['items'] ?? [];
         $total = (float)($body['total'] ?? 0);
 
         if (!$userId || !$restaurantId || empty($items) || $total <= 0) {
             Router::$response->status(400)->json([
-                "message" => "Campos obligatorios: userId, restaurantId, items, total"
+                "message" => "Campos obligatorios: token (usuario logueado), restaurantId, items, total"
             ]);
             return;
         }
