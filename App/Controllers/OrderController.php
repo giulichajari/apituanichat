@@ -29,10 +29,10 @@ class OrderController
             $this->createFoodOrderInternal();
         } catch (\Throwable $e) {
             error_log("OrderController createFoodOrder: " . $e->getMessage() . "\n" . $e->getTraceAsString());
-            Router::$response->status(500)->json([
+            Router::$response->json([
                 "message" => "Error al crear el pedido",
                 "detail" => $e->getMessage()
-            ]);
+            ], 500);
         }
     }
 
@@ -48,20 +48,20 @@ class OrderController
         $total = (float)($body['total'] ?? 0);
 
         if (!$userId || !$restaurantId || empty($items) || $total <= 0) {
-            Router::$response->status(400)->json([
+            Router::$response->json([
                 "message" => "Campos obligatorios: token (usuario logueado), restaurantId, items, total"
-            ]);
+            ], 400);
             return;
         }
 
         $restaurant = $this->restaurantModel->getRestaurantById($restaurantId);
         if (!$restaurant) {
-            Router::$response->status(404)->json(["message" => "Restaurante no encontrado"]);
+            Router::$response->json(["message" => "Restaurante no encontrado"], 404);
             return;
         }
 
         if ($total <= 0) {
-            Router::$response->status(400)->json(["message" => "El total debe ser mayor a 0"]);
+            Router::$response->json(["message" => "El total debe ser mayor a 0"], 400);
             return;
         }
 
@@ -70,9 +70,9 @@ class OrderController
             $addr = trim((string)($body['delivery_address'] ?? ''));
             $phone = trim((string)($body['delivery_phone'] ?? ''));
             if ($addr === '' || $phone === '') {
-                Router::$response->status(400)->json([
+                Router::$response->json([
                     "message" => "Para delivery son obligatorios dirección y teléfono"
-                ]);
+                ], 400);
                 return;
             }
         }
@@ -91,14 +91,14 @@ class OrderController
         ]);
 
         if (!$orderId) {
-            Router::$response->status(500)->json(["message" => "Error al crear el pedido"]);
+            Router::$response->json(["message" => "Error al crear el pedido"], 500);
             return;
         }
 
-        Router::$response->status(201)->json([
+        Router::$response->json([
             "message" => "Pedido creado. Espera la confirmación del restaurante. Recibirás un email para completar el pago.",
             "orderId" => $orderId
-        ]);
+        ], 201);
     }
 
     /**
@@ -110,22 +110,22 @@ class OrderController
         $userId = Router::$request->user->id ?? null;
 
         if (!$userId) {
-            Router::$response->status(401)->json(["message" => "No autenticado"]);
+            Router::$response->json(["message" => "No autenticado"], 401);
             return;
         }
 
         $restaurant = $this->restaurantModel->getRestaurantById($restaurantId);
         if (!$restaurant || $restaurant['user_id'] != $userId) {
-            Router::$response->status(403)->json(["message" => "No tienes permisos para ver pedidos de este restaurante"]);
+            Router::$response->json(["message" => "No tienes permisos para ver pedidos de este restaurante"], 403);
             return;
         }
 
         $orders = $this->orderModel->getByRestaurant($restaurantId);
 
-        Router::$response->status(200)->json([
+        Router::$response->json([
             "data" => $orders,
             "message" => "Pedidos obtenidos correctamente"
-        ]);
+        ], 200);
     }
     private function paymentLog(string $message, $data = null): void
     {
@@ -160,10 +160,10 @@ class OrderController
         } catch (\Throwable $e) {
             $this->paymentLog("confirmOrder EXCEPTION", $e->getMessage());
             error_log("OrderController confirmOrder: " . $e->getMessage() . "\n" . $e->getTraceAsString());
-            Router::$response->status(500)->json([
+            Router::$response->json([
                 "message" => "Error al confirmar el pedido",
                 "detail" => $e->getMessage()
-            ]);
+            ], 500);
         }
     }
 
@@ -178,13 +178,13 @@ class OrderController
 
     if (!$userId) {
         $this->paymentLog("ERROR: No autenticado");
-        Router::$response->status(401)->json(["message" => "No autenticado"]);
+        Router::$response->json(["message" => "No autenticado"], 401);
         return;
     }
 
     if (!$this->orderModel->belongsToRestaurantOwner($orderId, $userId)) {
         $this->paymentLog("ERROR: No pertenece al restaurante");
-        Router::$response->status(403)->json(["message" => "No tienes permisos"]);
+        Router::$response->json(["message" => "No tienes permisos"], 403);
         return;
     }
 
@@ -193,7 +193,7 @@ class OrderController
 
     if (!$order) {
         $this->paymentLog("ERROR: Pedido no encontrado");
-        Router::$response->status(404)->json(["message" => "Pedido no encontrado"]);
+        Router::$response->json(["message" => "Pedido no encontrado"], 404);
         return;
     }
 
@@ -201,7 +201,7 @@ class OrderController
     $this->paymentLog("ConfirmOrder DB result", $ok);
 
     if (!$ok) {
-        Router::$response->status(400)->json(["message" => "No se pudo confirmar"]);
+        Router::$response->json(["message" => "No se pudo confirmar"], 400);
         return;
     }
 
@@ -314,12 +314,12 @@ class OrderController
 
     $this->paymentLog("EMAIL SENT RESULT", $emailSent);
 
-    Router::$response->status(200)->json([
+    Router::$response->json([
         "message" => "Pedido confirmado",
         "payment_link_sent" => (bool)$paymentLinkUrl,
         "detail" => !$paymentLinkUrl ? ($squareErrorDetail ?? 'Link de pago no disponible') : null,
         "data" => $this->orderModel->getById($orderId)
-    ]);
+    ], 200);
 }
 /**
  * Envía email cuando el pedido está confirmado pero no se pudo generar el link de pago (Square falló).
