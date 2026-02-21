@@ -57,49 +57,49 @@ class RestaurantsRouter
         $router->put(
             '/restaurants/{id}',
             fn() => $tokenMiddleware->strict(),
-            fn($id) => $restaurantController->updateRestaurant($id)
+            fn() => $restaurantController->updateRestaurant((int)(Router::$request->params->id ?? 0))
         );
 
         // Actualizar parcialmente un restaurante
         $router->patch(
             '/restaurants/{id}',
             fn() => $tokenMiddleware->strict(),
-            fn($id) => $restaurantController->partialUpdateRestaurant($id)
+            fn() => $restaurantController->partialUpdateRestaurant((int)(Router::$request->params->id ?? 0))
         );
 
         // Eliminar restaurante
         $router->delete(
             '/restaurants/{id}',
             fn() => $tokenMiddleware->strict(),
-            fn($id) => $restaurantController->deleteRestaurant($id)
+            fn() => $restaurantController->deleteRestaurant((int)(Router::$request->params->id ?? 0))
         );
 
         // Obtener restaurantes por tipo de comida
         $router->get(
             '/restaurants/category/{tipoComida}',
             fn() => $tokenMiddleware->optional(),
-            fn($tipoComida) => $restaurantController->getRestaurantsByCategory($tipoComida)
+            fn() => $restaurantController->getRestaurantsByCategory(Router::$request->params->tipoComida ?? '')
         );
 
         // Buscar restaurantes por nombre o ubicación
         $router->get(
             '/restaurants/search/{query}',
             fn() => $tokenMiddleware->optional(),
-            fn($query) => $restaurantController->searchRestaurants($query)
+            fn() => $restaurantController->searchRestaurants(Router::$request->params->query ?? '')
         );
 
         // Obtener restaurantes por ubicación (ciudad)
         $router->get(
             '/restaurants/location/{ciudad}',
             fn() => $tokenMiddleware->optional(),
-            fn($ciudad) => $restaurantController->getRestaurantsByLocation($ciudad)
+            fn() => $restaurantController->getRestaurantsByLocation(Router::$request->params->ciudad ?? '')
         );
 
         // Subir/actualizar foto de portada
         $router->post(
             '/restaurants/{id}/cover-image',
             fn() => $tokenMiddleware->strict(),
-            fn($id) => $restaurantController->updateCoverImage($id)
+            fn() => $restaurantController->updateCoverImage((int)(Router::$request->params->id ?? 0))
         );
 
         // Obtener restaurantes favoritos del usuario
@@ -113,63 +113,63 @@ class RestaurantsRouter
         $router->post(
             '/restaurants/{id}/favorite',
             fn() => $tokenMiddleware->strict(),
-            fn($id) => $restaurantController->toggleFavorite($id)
+            fn() => $restaurantController->toggleFavorite((int)(Router::$request->params->id ?? 0))
         );
     
 
      $router->get(
             '/restaurants/{restaurantId:\d+}/dishes',
             fn() => $tokenMiddleware->optional(),
-            fn($restaurantId) => $restaurantController->getRestaurantDishes($restaurantId)
+            fn() => $restaurantController->getRestaurantDishes((int)(Router::$request->params->restaurantId ?? 0))
         );
 
         // Obtener un plato específico
         $router->get(
             '/restaurants/{restaurantId:\d+}/dishes/{dishId:\d+}',
             fn() => $tokenMiddleware->optional(),
-            fn($restaurantId, $dishId) => $restaurantController->getRestaurantDish($restaurantId, $dishId)
+            fn() => $restaurantController->getRestaurantDish((int)(Router::$request->params->restaurantId ?? 0), (int)(Router::$request->params->dishId ?? 0))
         );
 
         // Crear nuevo plato
         $router->post(
             '/restaurants/{restaurantId:\d+}/dishes',
             fn() => $tokenMiddleware->strict(),
-            fn($restaurantId) => $restaurantController->createRestaurantDish($restaurantId)
+            fn() => $restaurantController->createRestaurantDish((int)(Router::$request->params->restaurantId ?? 0))
         );
 
         // Actualizar plato completo
         $router->put(
             '/restaurants/{restaurantId:\d+}/dishes/{dishId:\d+}',
             fn() => $tokenMiddleware->strict(),
-            fn($restaurantId, $dishId) => $restaurantController->updateRestaurantDish($restaurantId, $dishId)
+            fn() => $restaurantController->updateRestaurantDish((int)(Router::$request->params->restaurantId ?? 0), (int)(Router::$request->params->dishId ?? 0))
         );
 
         // Actualizar parcialmente un plato
         $router->patch(
             '/restaurants/{restaurantId:\d+}/dishes/{dishId:\d+}',
             fn() => $tokenMiddleware->strict(),
-            fn($restaurantId, $dishId) => $restaurantController->partialUpdateRestaurantDish($restaurantId, $dishId)
+            fn() => $restaurantController->partialUpdateRestaurantDish((int)(Router::$request->params->restaurantId ?? 0), (int)(Router::$request->params->dishId ?? 0))
         );
 
         // Eliminar plato
         $router->delete(
             '/restaurants/{restaurantId:\d+}/dishes/{dishId:\d+}',
             fn() => $tokenMiddleware->strict(),
-            fn($restaurantId, $dishId) => $restaurantController->deleteRestaurantDish($restaurantId, $dishId)
+            fn() => $restaurantController->deleteRestaurantDish((int)(Router::$request->params->restaurantId ?? 0), (int)(Router::$request->params->dishId ?? 0))
         );
 
         // Subir imagen de plato
         $router->post(
             '/restaurants/{restaurantId:\d+}/dishes/{dishId:\d+}/image',
             fn() => $tokenMiddleware->strict(),
-            fn($restaurantId, $dishId) => $restaurantController->updateRestaurantDishImage($restaurantId, $dishId)
+            fn() => $restaurantController->updateRestaurantDishImage((int)(Router::$request->params->restaurantId ?? 0), (int)(Router::$request->params->dishId ?? 0))
         );
 
         // Obtener platos por categoría
         $router->get(
             '/restaurants/{restaurantId:\d+}/dishes/category/{category}',
             fn() => $tokenMiddleware->optional(),
-            fn($restaurantId, $category) => $restaurantController->getRestaurantDishesByCategory($restaurantId, $category)
+            fn() => $restaurantController->getRestaurantDishesByCategory((int)(Router::$request->params->restaurantId ?? 0), Router::$request->params->category ?? '')
         );
     }
 }
