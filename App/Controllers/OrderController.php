@@ -107,7 +107,8 @@ class OrderController
     public function getOrdersByRestaurant($restaurantId)
     {
         $restaurantId = (int)$restaurantId;
-        $userId = Router::$request->user->id ?? null;
+        $user = Router::$request->user ?? null;
+        $userId = $user ? (int)(is_object($user) ? $user->id : ($user['id'] ?? 0)) : null;
 
         if (!$userId) {
             Router::$response->json(["message" => "No autenticado"], 401);
@@ -115,7 +116,12 @@ class OrderController
         }
 
         $restaurant = $this->restaurantModel->getRestaurantById($restaurantId);
-        if (!$restaurant || $restaurant['user_id'] != $userId) {
+        if (!$restaurant) {
+            Router::$response->json(["message" => "Restaurante no encontrado"], 404);
+            return;
+        }
+        $ownerId = (int)($restaurant['user_id'] ?? 0);
+        if ($ownerId !== $userId) {
             Router::$response->json(["message" => "No tienes permisos para ver pedidos de este restaurante"], 403);
             return;
         }
