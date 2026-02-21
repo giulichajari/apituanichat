@@ -242,7 +242,7 @@ class OrderController
 
     if (!empty($accessToken) && !empty($locationId)) {
         $amountCents = (int) round((float)$order['total'] * 100);
-        $currency = $order['currency'] ?? 'ARS';
+        $currency = $order['currency'] ?? 'USD';
         $idempotencyKey = uniqid('food_', true);
 
         $postData = [
