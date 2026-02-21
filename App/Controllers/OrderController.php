@@ -207,10 +207,11 @@ class OrderController
 
     // ================== SQUARE ==================
     // Soporte: SQUARE_ACCESS_TOKEN / SQUARE_LOCATION_ID o bien _PROD / _SANDBOX según APP_ENV
-    $isProd = (isset($_ENV['APP_ENV']) && strtolower((string)$_ENV['APP_ENV']) === 'production');
+    $appEnv = isset($_ENV['APP_ENV']) ? strtolower((string) $_ENV['APP_ENV']) : '';
+    $isProd = ($appEnv === 'production');
     $accessToken = trim((string)($_ENV['SQUARE_ACCESS_TOKEN'] ?? ($isProd ? ($_ENV['SQUARE_ACCESS_TOKEN_PROD'] ?? '') : ($_ENV['SQUARE_ACCESS_TOKEN_SANDBOX'] ?? '')));
     $locationId = trim(rtrim(trim((string)($_ENV['SQUARE_LOCATION_ID'] ?? ($isProd ? ($_ENV['SQUARE_LOCATION_ID_PROD'] ?? '') : ($_ENV['SQUARE_LOCATION_ID_SANDBOX'] ?? ''))), '.'));
-    $sandbox = isset($_ENV['SQUARE_SANDBOX']) ? (bool)($_ENV['SQUARE_SANDBOX'] === 'true' || $_ENV['SQUARE_SANDBOX'] === '1') : !$isProd;
+    $sandbox = isset($_ENV['SQUARE_SANDBOX']) ? ($_ENV['SQUARE_SANDBOX'] === 'true' || $_ENV['SQUARE_SANDBOX'] === '1') : !$isProd;
     $squareBaseUrl = $sandbox ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com';
 
     $this->paymentLog("Square token present", !empty($accessToken));
