@@ -218,11 +218,14 @@ class OrderController
 
     if ($isProd) {
         $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_PROD'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
-        $locationId = trim(rtrim(trim((string) ($_ENV['SQUARE_LOCATION_ID_PROD'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '')), '.'));
+        $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_PROD'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
     } else {
         $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_SANDBOX'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
-        $locationId = trim(rtrim(trim((string) ($_ENV['SQUARE_LOCATION_ID_SANDBOX'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '')), '.'));
+        $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_SANDBOX'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
     }
+    // Square rechaza location_id con punto o espacios al final; quitar cualquier carácter no válido al final
+    $locationId = trim($locationId);
+    $locationId = preg_replace('/[^a-zA-Z0-9_-]+$/', '', $locationId);
 
     $sandboxEnv = $_ENV['SQUARE_SANDBOX'] ?? '';
     $sandbox = ($sandboxEnv === 'true' || $sandboxEnv === '1') ? true : !$isProd;
@@ -237,9 +240,6 @@ class OrderController
     $paymentLinkUrl = null;
     $squarePaymentLinkId = null;
     $squareErrorDetail = null;
-
-    // Sanitizar location_id: quitar puntos o espacios al final (Square rechaza "sq0idp-xxx.")
-        $locationId = rtrim(trim($locationId), ".\t\n\r ");
 
     if (!empty($accessToken) && !empty($locationId)) {
         $amountCents = (int) round((float)$order['total'] * 100);
