@@ -278,19 +278,17 @@ class OrderController
         $this->paymentLog("NO HAY EMAIL PARA ENVIAR");
     }
 
+    // El pedido ya está confirmado en BD. Si Square falló, no devolver 500 para no desloguear al usuario.
     if (!$paymentLinkUrl) {
-        $this->paymentLog("ERROR creando link de pago", $squareErrorDetail);
-        Router::$response->status(500)->json([
-            "message" => "Falló crear link de pago Square",
-            "detail" => $squareErrorDetail
-        ]);
-        return;
+        $this->paymentLog("WARN: link de pago no generado", $squareErrorDetail);
     }
 
     $this->paymentLog("EMAIL SENT RESULT", $emailSent);
 
     Router::$response->status(200)->json([
         "message" => "Pedido confirmado",
+        "payment_link_sent" => (bool)$paymentLinkUrl,
+        "detail" => !$paymentLinkUrl ? ($squareErrorDetail ?? 'Link de pago no disponible') : null,
         "data" => $this->orderModel->getById($orderId)
     ]);
 }
