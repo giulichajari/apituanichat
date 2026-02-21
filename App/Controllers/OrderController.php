@@ -82,7 +82,7 @@ class OrderController
             'restaurant_id' => $restaurantId,
             'items' => $items,
             'total' => $total,
-            'currency' => $body['currency'] ?? 'ARS',
+            'currency' => 'USD',
             'payment_link_url' => null,
             'idempotency_key' => null,
             'is_delivery' => $isDelivery,
