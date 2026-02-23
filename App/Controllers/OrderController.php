@@ -382,6 +382,8 @@ private function sendEmail(string $to, string $subject, string $body): bool
     $replyTo = $_ENV['MAIL_REPLY'] ?? 'soporte@tuanichat.com';
     $smtpHost = $_ENV['SMTP_HOST'] ?? null;
 
+    $this->paymentLog("sendEmail", ['to' => $to, 'smtp' => !empty($smtpHost), 'phpmailer' => class_exists(\PHPMailer\PHPMailer\PHPMailer::class)]);
+
     if ($smtpHost && class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
         try {
             $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
@@ -403,7 +405,8 @@ private function sendEmail(string $to, string $subject, string $body): bool
             return true;
         } catch (\Throwable $e) {
             $this->paymentLog("PHPMailer ERROR", $e->getMessage());
-            return false;
+            $this->paymentLog("SMTP failed, fallback to mail()", null);
+            // Sigue abajo y usa mail()
         }
     }
 
