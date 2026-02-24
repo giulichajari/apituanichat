@@ -40,11 +40,19 @@ class Database
             // Guardar en php-error.log
             error_log("DB CONNECTION ERROR: " . $e->getMessage());
 
-            // Opcional: responder JSON para APIs
-            header('Content-Type: application/json');
-            http_response_code(500);
+            // En CLI (ej. ws-server.php) no hay respuesta HTTP; solo log y salida de texto
+            if (php_sapi_name() === 'cli') {
+                fwrite(STDERR, "ERROR DB: " . $e->getMessage() . "\n");
+                exit(1);
+            }
+
+            // Respuesta JSON para APIs web
+            if (!headers_sent()) {
+                header('Content-Type: application/json');
+                http_response_code(500);
+            }
             echo json_encode(['error' => 'Error en la conexión a la base de datos']);
-            exit();
+            exit(1);
         }
     }
 

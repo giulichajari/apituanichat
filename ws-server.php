@@ -10,7 +10,7 @@ ini_set('error_log', __DIR__ . '/php-error.log');
 
 echo "🔧 DEBUG activado\n";
 echo "📂 Directorio actual: " . __DIR__ . "\n";
-
+error_reporting(E_ALL & ~E_WARNING & ~E_NOTICE);
 // ===================== CARGAR VENDOR =====================
 $autoloadPath = __DIR__ . '/vendor/autoload.php';
 
@@ -19,6 +19,13 @@ if (!file_exists($autoloadPath)) {
 }
 
 require $autoloadPath;
+
+// Cargar .env para que Database use DB_HOST, DB_USER, DB_PASS, etc. (necesario en VPS/Linux)
+if (file_exists(__DIR__ . '/.env')) {
+    $dotenv = \Dotenv\Dotenv::createImmutable(__DIR__);
+    $dotenv->safeLoad();
+}
+
 echo "✅ Vendor autoload cargado\n";
 
 // ===================== CARGAR CHATMODEL =====================
