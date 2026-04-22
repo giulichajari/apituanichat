@@ -67,7 +67,10 @@ class GroupsController
     // Listar grupos con paginación
     public function getGroups($page = 1)
     {
-        $page = intval($page) ?: 1;
+        $page = (int) (Router::$request->params->page ?? $page ?? 1);
+        if ($page <= 0) {
+            $page = 1;
+        }
         $currentUserId = Router::$request->user->id ?? $this->getCurrentUserId();
 
         $groups = $this->groupsModel->getGroupsByUser($currentUserId, $page, 10);
@@ -257,7 +260,9 @@ class GroupsController
                 Router::$response->status(410)->send(["message" => "This group has already been deleted"]);
                 return;
             default:
-                Router::$response->status(500)->send(["message" => "Error deleting group"]);
+                Router::$response->status(500)->send([
+                    "message" => "Error deleting group. Verify soft-delete migration is applied."
+                ]);
         }
     }
 

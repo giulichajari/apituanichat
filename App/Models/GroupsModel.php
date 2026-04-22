@@ -9,10 +9,54 @@ use PDOException;
 class GroupsModel
 {
     private PDO $db;
+    private ?bool $hasGroupsDeletedAt = null;
+    private ?bool $hasGroupsDeletedBy = null;
+    private ?bool $hasGroupUsersDeletedAt = null;
 
     public function __construct()
     {
         $this->db = Database::getInstance()->getConnection();
+    }
+
+    private function columnExists(string $table, string $column): bool
+    {
+        try {
+            $stmt = $this->db->prepare(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name AND COLUMN_NAME = :column_name"
+            );
+            $stmt->execute([
+                ':table_name' => $table,
+                ':column_name' => $column
+            ]);
+            return ((int)$stmt->fetchColumn()) > 0;
+        } catch (PDOException $e) {
+            error_log("ColumnExists ERROR: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    private function hasGroupsDeletedAt(): bool
+    {
+        if ($this->hasGroupsDeletedAt === null) {
+            $this->hasGroupsDeletedAt = $this->columnExists('groups', 'deleted_at');
+        }
+        return $this->hasGroupsDeletedAt;
+    }
+
+    private function hasGroupsDeletedBy(): bool
+    {
+        if ($this->hasGroupsDeletedBy === null) {
+            $this->hasGroupsDeletedBy = $this->columnExists('groups', 'deleted_by');
+        }
+        return $this->hasGroupsDeletedBy;
+    }
+
+    private function hasGroupUsersDeletedAt(): bool
+    {
+        if ($this->hasGroupUsersDeletedAt === null) {
+            $this->hasGroupUsersDeletedAt = $this->columnExists('group_users', 'deleted_at');
+        }
+        return $this->hasGroupUsersDeletedAt;
     }
 
     // Crear un grupo
@@ -64,7 +108,11 @@ class GroupsModel
     public function updateGroup(int $idGroup, string $name): bool
     {
         try {
-            $stmt = $this->db->prepare("UPDATE `groups` SET name = :name WHERE id = :id AND deleted_at IS NULL");
+            $sql = "UPDATE `groups` SET name = :name WHERE id = :id";
+            if ($this->hasGroupsDeletedAt()) {
+                $sql .= " AND deleted_at IS NULL";
+            }
+            $stmt = $this->db->prepare($sql);
             $stmt->execute([
                 ':name' => $name,
                 ':id' => $idGroup
@@ -82,6 +130,11 @@ class GroupsModel
      */
     public function softDeleteGroup(int $groupId, int $actorUserId): string
     {
+        if (!$this->hasGroupsDeletedAt() || !$this->hasGroupUsersDeletedAt()) {
+            error_log('[AUDIT] group_soft_delete blocked: missing soft-delete columns');
+            return 'error';
+        }
+
         try {
             $this->db->beginTransaction();
 
@@ -104,10 +157,17 @@ class GroupsModel
                 return 'forbidden';
             }
 
-            $upd = $this->db->prepare(
-                "UPDATE `groups` SET deleted_at = NOW(), deleted_by = :uid WHERE id = :gid AND deleted_at IS NULL"
-            );
-            $upd->execute([':uid' => $actorUserId, ':gid' => $groupId]);
+            if ($this->hasGroupsDeletedBy()) {
+                $upd = $this->db->prepare(
+                    "UPDATE `groups` SET deleted_at = NOW(), deleted_by = :uid WHERE id = :gid AND deleted_at IS NULL"
+                );
+                $upd->execute([':uid' => $actorUserId, ':gid' => $groupId]);
+            } else {
+                $upd = $this->db->prepare(
+                    "UPDATE `groups` SET deleted_at = NOW() WHERE id = :gid AND deleted_at IS NULL"
+                );
+                $upd->execute([':gid' => $groupId]);
+            }
             if ($upd->rowCount() === 0) {
                 $this->db->rollBack();
                 return 'already_deleted';
@@ -134,7 +194,11 @@ class GroupsModel
     public function getGroupById(int $idGroup): array|false
     {
         try {
-            $stmt = $this->db->prepare("SELECT * FROM `groups` WHERE id = :id AND deleted_at IS NULL");
+            $sql = "SELECT * FROM `groups` WHERE id = :id";
+            if ($this->hasGroupsDeletedAt()) {
+                $sql .= " AND deleted_at IS NULL";
+            }
+            $stmt = $this->db->prepare($sql);
             $stmt->execute([':id' => $idGroup]);
             return $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
         } catch (PDOException $e) {
@@ -147,6 +211,8 @@ class GroupsModel
     {
         try {
             $offset = ($page - 1) * $perPage;
+            $groupsSoftFilter = $this->hasGroupsDeletedAt() ? "AND g.deleted_at IS NULL" : "";
+            $groupUsersSoftFilter = $this->hasGroupUsersDeletedAt() ? "AND gu.deleted_at IS NULL" : "";
 
             $stmt = $this->db->prepare("
             SELECT 
@@ -158,8 +224,8 @@ class GroupsModel
             FROM `group_users` gu
             INNER JOIN `groups` g ON gu.group_id = g.id
             WHERE gu.user_id = :user_id 
-              AND gu.deleted_at IS NULL
-              AND g.deleted_at IS NULL
+              {$groupUsersSoftFilter}
+              {$groupsSoftFilter}
             ORDER BY g.created_at DESC
             LIMIT :limit OFFSET :offset
         ");
@@ -173,11 +239,12 @@ class GroupsModel
 
             // Opcional: traer miembros de cada grupo
             foreach ($groups as &$group) {
+                $membersSoftFilter = $this->hasGroupUsersDeletedAt() ? "AND gu.deleted_at IS NULL" : "";
                 $stmtMembers = $this->db->prepare("
                 SELECT u.id, u.name, u.email, gu.is_admin
                 FROM group_users gu
                 INNER JOIN users u ON gu.user_id = u.id
-                WHERE gu.group_id = :group_id AND gu.deleted_at IS NULL
+                WHERE gu.group_id = :group_id {$membersSoftFilter}
             ");
                 $stmtMembers->execute([':group_id' => $group['id']]);
                 $group['members'] = $stmtMembers->fetchAll(PDO::FETCH_ASSOC);
@@ -208,15 +275,17 @@ class GroupsModel
     }
     public function isUserAdmin($groupId, $userId)
     {
+        $groupsSoftJoin = $this->hasGroupsDeletedAt() ? "AND g.deleted_at IS NULL" : "";
+        $groupUsersSoftFilter = $this->hasGroupUsersDeletedAt() ? "AND gu.deleted_at IS NULL" : "";
         $stmt = $this->db->prepare("
         SELECT gu.is_admin
         FROM group_users gu
-        INNER JOIN `groups` g ON g.id = gu.group_id AND g.deleted_at IS NULL
+        INNER JOIN `groups` g ON g.id = gu.group_id {$groupsSoftJoin}
         WHERE gu.group_id = ?
         AND gu.user_id = ?
         AND gu.is_admin = 1
         AND gu.left_at IS NULL
-        AND gu.deleted_at IS NULL
+        {$groupUsersSoftFilter}
         LIMIT 1
     ");
 
@@ -245,14 +314,16 @@ class GroupsModel
     }
     public function isUserInGroup($groupId, $userId)
     {
+        $groupsSoftJoin = $this->hasGroupsDeletedAt() ? "AND g.deleted_at IS NULL" : "";
+        $groupUsersSoftFilter = $this->hasGroupUsersDeletedAt() ? "AND gu.deleted_at IS NULL" : "";
         $stmt = $this->db->prepare("
         SELECT 1
         FROM group_users gu
-        INNER JOIN `groups` g ON g.id = gu.group_id AND g.deleted_at IS NULL
+        INNER JOIN `groups` g ON g.id = gu.group_id {$groupsSoftJoin}
         WHERE gu.group_id = ?
         AND gu.user_id = ?
         AND gu.left_at IS NULL
-        AND gu.deleted_at IS NULL
+        {$groupUsersSoftFilter}
     ");
 
         $stmt->execute([$groupId, $userId]);
@@ -262,6 +333,7 @@ class GroupsModel
 
     public function getGroupMessages($groupId, $userId)
     {
+        $groupsSoftJoin = $this->hasGroupsDeletedAt() ? "AND g.deleted_at IS NULL" : "";
         $stmt = $this->db->prepare("
         SELECT 
             m.id,
@@ -271,7 +343,7 @@ class GroupsModel
             (m.user_id = ?) AS mine
         FROM mensajes_grupos m
         JOIN users u ON u.id = m.user_id
-        INNER JOIN `groups` g ON g.id = m.group_id AND g.deleted_at IS NULL
+        INNER JOIN `groups` g ON g.id = m.group_id {$groupsSoftJoin}
         WHERE m.group_id = ?
         ORDER BY m.enviado_en ASC
     ");
@@ -306,6 +378,10 @@ class GroupsModel
     // Quitar usuario de un grupo (marcar deleted_at)
     public function removeUserFromGroup(int $groupId, int $userId): bool
     {
+        if (!$this->hasGroupUsersDeletedAt()) {
+            return false;
+        }
+
         try {
             $stmt = $this->db->prepare("
                 UPDATE `group_users` 
@@ -326,12 +402,14 @@ class GroupsModel
     public function getUsersByGroup(int $groupId): array|false
     {
         try {
+            $groupsSoftJoin = $this->hasGroupsDeletedAt() ? "AND g.deleted_at IS NULL" : "";
+            $groupUsersSoftFilter = $this->hasGroupUsersDeletedAt() ? "AND gu.deleted_at IS NULL" : "";
             $stmt = $this->db->prepare("
                 SELECT u.id, u.name, u.email, u.phone, gu.is_admin, gu.joined_at
                 FROM `group_users` gu
                 INNER JOIN `users` u ON gu.user_id = u.id
-                INNER JOIN `groups` g ON g.id = gu.group_id AND g.deleted_at IS NULL
-                WHERE gu.group_id = :group_id AND gu.deleted_at IS NULL
+                INNER JOIN `groups` g ON g.id = gu.group_id {$groupsSoftJoin}
+                WHERE gu.group_id = :group_id {$groupUsersSoftFilter}
                 ORDER BY gu.joined_at ASC
             ");
             $stmt->execute([':group_id' => $groupId]);
