@@ -22,7 +22,7 @@ class GroupsModel
             $this->db->beginTransaction();
 
             // 1️⃣ Crear grupo
-            $stmt = $this->db->prepare("INSERT INTO `groups`  (name, created_by, created_at) VALUES (:name, :created_by, NOW())");
+            $stmt = $this->db->prepare("INSERT INTO `groups` (name, created_by, created_at) VALUES (:name, :created_by, NOW())");
             $stmt->execute([
                 ':name' => $name,
                 ':created_by' => $creatorId
@@ -64,35 +64,77 @@ class GroupsModel
     public function updateGroup(int $idGroup, string $name): bool
     {
         try {
-            $stmt = $this->db->prepare("UPDATE `groups` SET name = :name WHERE id = :id");
+            $stmt = $this->db->prepare("UPDATE `groups` SET name = :name WHERE id = :id AND deleted_at IS NULL");
             $stmt->execute([
                 ':name' => $name,
                 ':id' => $idGroup
             ]);
-            return true;
+            return $stmt->rowCount() > 0;
         } catch (PDOException $e) {
             error_log("UpdateGroup ERROR: " . $e->getMessage());
             return false;
         }
     }
 
-    // Eliminar grupo
-    public function deleteGroup(int $idGroup): bool
+    /**
+     * Borrado lógico: marca el grupo y desvincula miembros activos (group_users.deleted_at).
+     * @return 'ok'|'not_found'|'already_deleted'|'forbidden'|'error'
+     */
+    public function softDeleteGroup(int $groupId, int $actorUserId): string
     {
         try {
-            $stmt = $this->db->prepare("DELETE FROM `groups` WHERE id = :id");
-            return $stmt->execute([':id' => $idGroup]);
+            $this->db->beginTransaction();
+
+            $stmt = $this->db->prepare("SELECT id, deleted_at, created_by FROM `groups` WHERE id = :id FOR UPDATE");
+            $stmt->execute([':id' => $groupId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$row) {
+                $this->db->rollBack();
+                return 'not_found';
+            }
+            if (!empty($row['deleted_at'])) {
+                $this->db->rollBack();
+                return 'already_deleted';
+            }
+
+            $isCreator = (int) $row['created_by'] === $actorUserId;
+            $isAdmin = $this->isUserAdmin($groupId, $actorUserId);
+            if (!$isCreator && !$isAdmin) {
+                $this->db->rollBack();
+                return 'forbidden';
+            }
+
+            $upd = $this->db->prepare(
+                "UPDATE `groups` SET deleted_at = NOW(), deleted_by = :uid WHERE id = :gid AND deleted_at IS NULL"
+            );
+            $upd->execute([':uid' => $actorUserId, ':gid' => $groupId]);
+            if ($upd->rowCount() === 0) {
+                $this->db->rollBack();
+                return 'already_deleted';
+            }
+
+            $mem = $this->db->prepare(
+                "UPDATE `group_users` SET deleted_at = NOW() WHERE group_id = :gid AND deleted_at IS NULL"
+            );
+            $mem->execute([':gid' => $groupId]);
+
+            $this->db->commit();
+            error_log(sprintf('[AUDIT] group_soft_delete group_id=%d deleted_by_user_id=%d', $groupId, $actorUserId));
+            return 'ok';
         } catch (PDOException $e) {
-            error_log("DeleteGroup ERROR: " . $e->getMessage());
-            return false;
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            error_log("SoftDeleteGroup ERROR: " . $e->getMessage());
+            return 'error';
         }
     }
 
-    // Obtener un grupo por ID
+    // Obtener un grupo por ID (solo activos)
     public function getGroupById(int $idGroup): array|false
     {
         try {
-            $stmt = $this->db->prepare("SELECT * FROM `groups` WHERE id = :id");
+            $stmt = $this->db->prepare("SELECT * FROM `groups` WHERE id = :id AND deleted_at IS NULL");
             $stmt->execute([':id' => $idGroup]);
             return $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
         } catch (PDOException $e) {
@@ -117,6 +159,7 @@ class GroupsModel
             INNER JOIN `groups` g ON gu.group_id = g.id
             WHERE gu.user_id = :user_id 
               AND gu.deleted_at IS NULL
+              AND g.deleted_at IS NULL
             ORDER BY g.created_at DESC
             LIMIT :limit OFFSET :offset
         ");
@@ -166,13 +209,14 @@ class GroupsModel
     public function isUserAdmin($groupId, $userId)
     {
         $stmt = $this->db->prepare("
-        SELECT is_admin
-        FROM group_users
-        WHERE group_id = ?
-        AND user_id = ?
-        AND is_admin = 1
-        AND left_at IS NULL
-        AND deleted_at IS NULL
+        SELECT gu.is_admin
+        FROM group_users gu
+        INNER JOIN `groups` g ON g.id = gu.group_id AND g.deleted_at IS NULL
+        WHERE gu.group_id = ?
+        AND gu.user_id = ?
+        AND gu.is_admin = 1
+        AND gu.left_at IS NULL
+        AND gu.deleted_at IS NULL
         LIMIT 1
     ");
 
@@ -202,10 +246,13 @@ class GroupsModel
     public function isUserInGroup($groupId, $userId)
     {
         $stmt = $this->db->prepare("
-        SELECT 1 FROM group_users
-        WHERE group_id = ?
-        AND user_id = ?
-        AND left_at IS NULL
+        SELECT 1
+        FROM group_users gu
+        INNER JOIN `groups` g ON g.id = gu.group_id AND g.deleted_at IS NULL
+        WHERE gu.group_id = ?
+        AND gu.user_id = ?
+        AND gu.left_at IS NULL
+        AND gu.deleted_at IS NULL
     ");
 
         $stmt->execute([$groupId, $userId]);
@@ -215,9 +262,6 @@ class GroupsModel
 
     public function getGroupMessages($groupId, $userId)
     {
-
-        error_log("USER: " . $userId);
-error_log("GROUP: " . $groupId);
         $stmt = $this->db->prepare("
         SELECT 
             m.id,
@@ -227,6 +271,7 @@ error_log("GROUP: " . $groupId);
             (m.user_id = ?) AS mine
         FROM mensajes_grupos m
         JOIN users u ON u.id = m.user_id
+        INNER JOIN `groups` g ON g.id = m.group_id AND g.deleted_at IS NULL
         WHERE m.group_id = ?
         ORDER BY m.enviado_en ASC
     ");
@@ -285,6 +330,7 @@ error_log("GROUP: " . $groupId);
                 SELECT u.id, u.name, u.email, u.phone, gu.is_admin, gu.joined_at
                 FROM `group_users` gu
                 INNER JOIN `users` u ON gu.user_id = u.id
+                INNER JOIN `groups` g ON g.id = gu.group_id AND g.deleted_at IS NULL
                 WHERE gu.group_id = :group_id AND gu.deleted_at IS NULL
                 ORDER BY gu.joined_at ASC
             ");

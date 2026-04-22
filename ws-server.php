@@ -73,7 +73,10 @@ use Ratchet\ConnectionInterface;
 class UserStatusManager
 {
     private $redis;
-    private $expireTime = 60;
+    /** TTL de claves Redis (segundos): debe ser > 2× el intervalo de latido cliente/servidor */
+    private $redisKeyTtlSeconds = 180;
+    /** Sin actualización de last_seen durante este tiempo → limpieza como inactivo */
+    private $staleThresholdSeconds = 90;
 
     public function __construct()
     {
@@ -124,9 +127,10 @@ class UserStatusManager
         ], $userData);
 
         $this->redis->hmset($key, $userData);
-        $this->redis->expire($key, $this->expireTime);
+        $ttl = $this->redisKeyTtlSeconds;
+        $this->redis->expire($key, $ttl);
         $this->redis->set($connectionKey, $userId);
-        $this->redis->expire($connectionKey, $this->expireTime);
+        $this->redis->expire($connectionKey, $ttl);
         $this->redis->zadd('users:online', time(), $userId);
 
         echo "✅ Usuario {$userId} marcado como ONLINE\n";
@@ -139,8 +143,16 @@ class UserStatusManager
 
         $key = "user:online:{$userId}";
         if ($this->redis->exists($key)) {
+            $ttl = $this->redisKeyTtlSeconds;
             $this->redis->hset($key, 'last_seen', time());
-            $this->redis->expire($key, $this->expireTime);
+            $this->redis->expire($key, $ttl);
+            $cid = $this->redis->hget($key, 'connection_id');
+            if ($cid) {
+                $connectionKey = "user:connection:{$cid}";
+                if ($this->redis->exists($connectionKey)) {
+                    $this->redis->expire($connectionKey, $ttl);
+                }
+            }
             $this->redis->zadd('users:online', time(), $userId);
             return true;
         }
@@ -237,7 +249,7 @@ class UserStatusManager
 
         foreach ($onlineUsers as $user) {
             $lastSeen = $user['last_seen'] ?? 0;
-            if (($now - $lastSeen) > $this->expireTime) {
+            if (($now - (int) $lastSeen) > $this->staleThresholdSeconds) {
                 $this->setOffline($user['connection_id'] ?? '', false);
                 $cleaned++;
             }
@@ -802,6 +814,8 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             return;
         }
 
+        $this->statusManager->updateActivity((int) $userId);
+
         // Enviar a todos en el chat excepto al remitente
         if (isset($this->sessions[$chatId])) {
             foreach ($this->sessions[$chatId] as $client) {
@@ -1327,6 +1341,9 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         // 4. Marcar como online
         $this->statusManager->setOnline($userId, $connId, $from->userData);
 
+        // 4b. Latido servidor → mantiene Redis y last_seen si el cliente no envía heartbeat
+        $this->startHeartbeatTimer($from);
+
         // 5. Enviar confirmación
         $from->send(json_encode([
             'type' => 'auth_success',
@@ -1443,6 +1460,9 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
     private function handlePing($from)
     {
+        if (isset($from->userId)) {
+            $this->statusManager->updateActivity($from->userId);
+        }
         $from->send(json_encode([
             'type' => 'pong',
             'timestamp' => time(),
@@ -1465,7 +1485,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             }
         }
 
-        $timer = \React\EventLoop\Loop::addPeriodicTimer(30, function () use ($conn) {
+        $timer = \React\EventLoop\Loop::addPeriodicTimer(25, function () use ($conn) {
             if ($conn->userId) {
                 $this->statusManager->updateActivity($conn->userId);
 
@@ -1862,6 +1882,9 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             $this->logToFile("❌ Datos incompletos");
             return;
         }
+
+        $uidForPresence = isset($from->userId) ? (int) $from->userId : (int) $userId;
+        $this->statusManager->updateActivity($uidForPresence);
 
         // 1. Confirmación inmediata
         if ($tempId) {

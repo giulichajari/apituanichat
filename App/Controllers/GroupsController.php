@@ -36,6 +36,13 @@ class GroupsController
             return;
         }
 
+        if (!$this->groupsModel->getGroupById($groupId)) {
+            Router::$response->status(404)->send([
+                "message" => "Group not found"
+            ]);
+            return;
+        }
+
         if (empty($users)) {
             Router::$response->status(400)->send([
                 "message" => "No users provided"
@@ -126,10 +133,20 @@ class GroupsController
 
     public function getGroupMessages()
     {
-        $groupId = Router::$request->params->idGroup;
-        $userId  = Router::$request->user->id;
+        $groupId = (int) (Router::$request->params->idGroup ?? 0);
+        $userId  = (int) (Router::$request->user->id ?? 0);
 
+        if ($groupId <= 0 || $userId <= 0) {
+            Router::$response->status(400)->send(["message" => "Parámetros inválidos"]);
+            return;
+        }
 
+        if (!$this->groupsModel->isUserInGroup($groupId, $userId)) {
+            Router::$response->status(403)->send([
+                "message" => "No perteneces a este grupo o el grupo ya no está disponible"
+            ]);
+            return;
+        }
 
         $messages = $this->groupsModel->getGroupMessages($groupId, $userId);
 
@@ -208,16 +225,39 @@ class GroupsController
         }
     }
 
-    // Eliminar un grupo
+    // Eliminar un grupo (borrado lógico; solo creador o admin)
     public function deleteGroup()
     {
-        $idGroup = Router::$request->params->idGroup;
-        $deleted = $this->groupsModel->deleteGroup($idGroup);
+        $idGroup = (int) (Router::$request->params->idGroup ?? 0);
+        $userId = (int) (Router::$request->user->id ?? 0);
 
-        if ($deleted) {
-            Router::$response->status(200)->send(["message" => "Group deleted successfully"]);
-        } else {
-            Router::$response->status(500)->send(["message" => "Error deleting group"]);
+        if ($idGroup <= 0 || $userId <= 0) {
+            Router::$response->status(400)->send(["message" => "Invalid request"]);
+            return;
+        }
+
+        $result = $this->groupsModel->softDeleteGroup($idGroup, $userId);
+
+        switch ($result) {
+            case 'ok':
+                Router::$response->status(200)->send([
+                    "success" => true,
+                    "message" => "Group deleted successfully",
+                ]);
+                return;
+            case 'forbidden':
+                Router::$response->status(403)->send([
+                    "message" => "Solo el creador del grupo o un administrador pueden eliminarlo",
+                ]);
+                return;
+            case 'not_found':
+                Router::$response->status(404)->send(["message" => "Group not found"]);
+                return;
+            case 'already_deleted':
+                Router::$response->status(410)->send(["message" => "This group has already been deleted"]);
+                return;
+            default:
+                Router::$response->status(500)->send(["message" => "Error deleting group"]);
         }
     }
 
