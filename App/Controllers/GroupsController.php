@@ -22,7 +22,7 @@ class GroupsController
 
         // Primero URL, si no hay, body
         $groupId = (int)(
-            Router::$request->params['idGroup']
+            Router::$request->params->idGroup
             ?? $data->group_id
             ?? 0
         );
@@ -51,11 +51,17 @@ class GroupsController
         }
 
         foreach ($users as $userId) {
-            $this->groupsModel->addUserToGroup(
+            $added = $this->groupsModel->addUserToGroup(
                 $groupId,
                 (int)$userId,
                 0
             );
+            if (!$added) {
+                Router::$response->status(500)->send([
+                    "message" => "Error adding one or more users to group"
+                ]);
+                return;
+            }
         }
 
         Router::$response->send([

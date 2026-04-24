@@ -297,11 +297,19 @@ class GroupsModel
     public function addUserToGroup(int $groupId, int $userId, bool $isAdmin = false): bool
     {
         try {
-            $stmt = $this->db->prepare("
-                INSERT INTO `group_users` (group_id, user_id, is_admin, joined_at) 
-                VALUES (:group_id, :user_id, :is_admin, NOW())
-                ON DUPLICATE KEY UPDATE deleted_at = NULL, is_admin = VALUES(is_admin)
-            ");
+            if ($this->hasGroupUsersDeletedAt()) {
+                $stmt = $this->db->prepare("
+                    INSERT INTO `group_users` (group_id, user_id, is_admin, joined_at) 
+                    VALUES (:group_id, :user_id, :is_admin, NOW())
+                    ON DUPLICATE KEY UPDATE deleted_at = NULL, is_admin = VALUES(is_admin)
+                ");
+            } else {
+                $stmt = $this->db->prepare("
+                    INSERT INTO `group_users` (group_id, user_id, is_admin, joined_at) 
+                    VALUES (:group_id, :user_id, :is_admin, NOW())
+                    ON DUPLICATE KEY UPDATE is_admin = VALUES(is_admin), joined_at = NOW()
+                ");
+            }
             return $stmt->execute([
                 ':group_id' => $groupId,
                 ':user_id' => $userId,
