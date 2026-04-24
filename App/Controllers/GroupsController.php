@@ -284,15 +284,50 @@ class GroupsController
     // Quitar usuario del grupo
     public function removeUserFromGroup()
     {
-        $idGroup = Router::$request->params->idGroup;
-        $idUser = Router::$request->params->idUser;
+        $idGroup = (int) (Router::$request->params->idGroup ?? 0);
+        $targetUserId = (int) (Router::$request->params->idUser ?? 0);
+        $actorUserId = (int) (Router::$request->user->id ?? 0);
 
-        $removed = $this->groupsModel->removeUserFromGroup($idGroup, $idUser);
-        if ($removed) {
-            Router::$response->status(200)->send(["message" => "User removed from group successfully"]);
-        } else {
-            Router::$response->status(500)->send(["message" => "Error removing user from group"]);
+        if ($idGroup <= 0 || $targetUserId <= 0 || $actorUserId <= 0) {
+            Router::$response->status(400)->send(["message" => "Invalid request"]);
+            return;
         }
+
+        $group = $this->groupsModel->getGroupById($idGroup);
+        if (empty($group)) {
+            Router::$response->status(404)->send(["message" => "Group not found"]);
+            return;
+        }
+
+        $isCreator = ((int) ($group['created_by'] ?? 0)) === $actorUserId;
+        $isSelfLeave = $actorUserId === $targetUserId;
+
+        // Regla de negocio:
+        // - cualquier usuario puede salir por sí mismo
+        // - solo el creador puede quitar a otros usuarios
+        if (!$isSelfLeave && !$isCreator) {
+            Router::$response->status(403)->send([
+                "message" => "Only the group creator can remove other members"
+            ]);
+            return;
+        }
+
+        if (!$this->groupsModel->isUserInGroup($idGroup, $targetUserId)) {
+            Router::$response->status(404)->send(["message" => "User is not in this group"]);
+            return;
+        }
+
+        $removed = $this->groupsModel->removeUserFromGroup($idGroup, $targetUserId);
+        if (!$removed) {
+            Router::$response->status(500)->send(["message" => "Error removing user from group"]);
+            return;
+        }
+
+        Router::$response->status(200)->send([
+            "message" => $isSelfLeave
+                ? "You have left the group successfully"
+                : "User removed from group successfully"
+        ]);
     }
 
     // Listar usuarios de un grupo
