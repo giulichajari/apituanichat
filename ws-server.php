@@ -28,6 +28,15 @@ if (file_exists(__DIR__ . '/.env')) {
 
 echo "✅ Vendor autoload cargado\n";
 
+/** Log de llamadas / señalización al mismo archivo que el servidor unificado (tail -f websocket_debug_gral.log). */
+if (!function_exists('tuani_ws_signal_log')) {
+    function tuani_ws_signal_log($message) {
+        $logFile = __DIR__ . '/websocket_debug_gral.log';
+        $line = '[' . date('Y-m-d H:i:s') . '] [SignalServer/init] ' . $message . "\n";
+        @file_put_contents($logFile, $line, FILE_APPEND | LOCK_EX);
+    }
+}
+
 // ===================== CARGAR CHATMODEL =====================
 // Asegúrate de que esta ruta sea correcta
 $chatModelPath = __DIR__ . '/App/Models/ChatModel.php';
@@ -1109,6 +1118,13 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         echo "\n📞 ========== INICIANDO LLAMADA ==========\n";
         echo "📦 Datos recibidos: " . json_encode($data) . "\n";
 
+        $fromConnId = $from->resourceId ?? '?';
+        $sdpLen = 0;
+        if (!empty($data['sdp']) && is_array($data['sdp']) && isset($data['sdp']['sdp'])) {
+            $sdpLen = strlen((string) $data['sdp']['sdp']);
+        }
+        tuani_ws_signal_log("init_call recibido conn=#{$fromConnId} from=" . ($data['from'] ?? '?') . " to=" . ($data['to'] ?? '?') . " chat_id=" . ($data['chat_id'] ?? '?') . " session=" . ($data['session_id'] ?? '?') . " sdp_len={$sdpLen}");
+
         $userIdFromMessage = isset($data['from']) ? (int)$data['from'] : null;
         $userIdFromConnection = $this->getUserIdFromConnection($from);
         $userId = $userIdFromMessage ?? $userIdFromConnection;
@@ -1140,6 +1156,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             echo "  toUserId: " . ($toUserId ? 'OK' : 'FALTA') . "\n";
             echo "  chatId: " . ($chatId ? 'OK' : 'FALTA') . "\n";
             echo "  sdpOffer: " . ($sdpOffer ? 'OK' : 'FALTA') . "\n";
+            tuani_ws_signal_log("init_call RECHAZADO datos incompletos userId=" . ($userId ?: '0') . " toUserId=" . ($toUserId ?: '0') . " chatId=" . ($chatId !== null && $chatId !== '' ? (string) $chatId : 'empty') . " sdp=" . ($sdpOffer ? 'ok' : 'falta'));
             return;
         }
 
@@ -1147,6 +1164,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
         if ($toConnection) {
             echo "✅ Destinatario {$toUserId} encontrado (conexión #{$toConnection->resourceId})\n";
+            tuani_ws_signal_log("destinatario userId={$toUserId} ENCONTRADO socket conn=#{$toConnection->resourceId} → enviando incoming_call");
 
             // ⭐⭐ PREPARAR MENSAJE incoming_call CON SDP Y call_type (audio/video) ⭐⭐
             $incomingCallData = [
@@ -1173,6 +1191,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
             $toConnection->send($jsonMessage);
             echo "✅ incoming_call enviado al destinatario (CON SDP)\n";
+            tuani_ws_signal_log("incoming_call ENVIADO a conn=#{$toConnection->resourceId} userId={$toUserId} session=" . (string) $sessionId);
 
             // También enviar como call_offer por compatibilidad
             $sdpData = [
@@ -1199,8 +1218,10 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             ]));
 
             echo "✅ Confirmación enviada al llamante\n";
+            tuani_ws_signal_log("call_initiated enviado al llamante conn=#{$fromConnId} session=" . (string) $sessionId);
         } else {
             echo "❌ Destinatario {$toUserId} no conectado\n";
+            tuani_ws_signal_log("destinatario userId={$toUserId} NO conectado (sin entrada en userConnections) → FCM si está configurado");
             // Push FCM para que suene en el dispositivo aunque la app esté cerrada
             $this->sendFcmToUser($toUserId, [
                 'type' => 'incoming_call',
