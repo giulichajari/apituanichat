@@ -2481,7 +2481,17 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     }
 }
 
-// ===================== INICIAR SERVIDOR =====================
+// ===================== INICIAR SERVIDOR (solo si se ejecuta este archivo por CLI) =====================
+// Si se hace require desde master-server.php u otro script, NO volver a bindear 9090 (evita EADDRINUSE y doble loop).
+$__wsServerIsMainCli =
+    php_sapi_name() === 'cli'
+    && isset($_SERVER['SCRIPT_FILENAME'])
+    && realpath($_SERVER['SCRIPT_FILENAME']) === realpath(__FILE__);
+
+if (!$__wsServerIsMainCli) {
+    return;
+}
+
 echo "\n";
 echo "========================================\n";
 echo "🚀 INICIANDO SERVIDOR WEBSOCKET MEJORADO\n";
