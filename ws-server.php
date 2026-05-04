@@ -1024,6 +1024,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         if ($chatId) {
             $this->broadcastToChat($chatId, [
                 'type' => 'call_status',
+                'chat_id' => $chatId,
                 'session_id' => $sessionId,
                 'status' => 'ended',
                 'ended_by' => $userId,
