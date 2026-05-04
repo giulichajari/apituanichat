@@ -32,8 +32,12 @@ echo "✅ Vendor autoload cargado\n";
 if (!function_exists('tuani_ws_signal_log')) {
     function tuani_ws_signal_log($message) {
         $logFile = __DIR__ . '/websocket_debug_gral.log';
-        $line = '[' . date('Y-m-d H:i:s') . '] [SignalServer/init] ' . $message . "\n";
-        @file_put_contents($logFile, $line, FILE_APPEND | LOCK_EX);
+        // Marcador ASCII para: grep TUANI_SIGNAL_INIT websocket_debug_gral.log
+        $line = '[' . date('Y-m-d H:i:s') . '] TUANI_SIGNAL_INIT ' . $message . "\n";
+        $ok = @file_put_contents($logFile, $line, FILE_APPEND | LOCK_EX);
+        if ($ok === false) {
+            error_log('TUANI_SIGNAL_INIT no pudo escribir en ' . $logFile . ' — revisa permisos (www-data / usuario del WS)');
+        }
     }
 }
 
