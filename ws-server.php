@@ -1210,14 +1210,16 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             $toConnection->send(json_encode($sdpData));
             echo "📤 call_offer también enviado\n";
 
-            // Confirmación al llamante
+            // Confirmación al llamante (incluye from / peer_ws_connected para el cliente)
             $from->send(json_encode([
                 'type' => 'call_initiated',
                 'session_id' => $sessionId,
+                'from' => $userId,
                 'to' => $toUserId,
                 'chat_id' => $chatId,
                 'call_type' => $callType,
                 'status' => 'ringing',
+                'peer_ws_connected' => true,
                 'timestamp' => date('Y-m-d H:i:s')
             ]));
 
@@ -1234,6 +1236,19 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 'chat_id' => (string)$chatId,
                 'from' => (string)$userId,
             ]);
+            // Siempre confirmar al llamante por WS (si no, React cree que "no llegó nada")
+            $from->send(json_encode([
+                'type' => 'call_initiated',
+                'session_id' => $sessionId,
+                'from' => $userId,
+                'to' => $toUserId,
+                'chat_id' => $chatId,
+                'call_type' => $callType,
+                'status' => 'recipient_offline',
+                'peer_ws_connected' => false,
+                'timestamp' => date('Y-m-d H:i:s'),
+            ]));
+            tuani_ws_signal_log("call_initiated enviado al llamante (sin WS peer) conn=#{$fromConnId} session=" . (string) $sessionId);
         }
 
         echo "📞 ========== LLAMADA PROCESADA ==========\n\n";
