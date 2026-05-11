@@ -286,8 +286,10 @@ class UserStatusManager
     }
 }
 
+require_once __DIR__ . '/SignalServer.php';
+
 // ===================== CLASE DEL SERVIDOR MEJORADA =====================
-class SignalServer implements \Ratchet\MessageComponentInterface
+class LegacySignalServer implements \Ratchet\MessageComponentInterface
 {
     protected $clients;
     protected $sessions = [];
