@@ -207,6 +207,44 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
     }
 
+    private function isSignalPayloadType($type)
+    {
+        return in_array((string)$type, [
+            'incoming_call',
+            'call_initiated',
+            'call_answer',
+            'ice_candidate',
+            'call_rejected',
+            'call_ended',
+            'call_status',
+        ], true);
+    }
+
+    private function traceSignal($stage, array $context = [])
+    {
+        $parts = [];
+        foreach ($context as $key => $value) {
+            if ($value === null || $value === '') {
+                continue;
+            }
+            if (is_bool($value)) {
+                $value = $value ? '1' : '0';
+            } elseif (is_array($value)) {
+                $value = implode(',', array_map('strval', $value));
+            } elseif (is_object($value)) {
+                $value = method_exists($value, '__toString') ? (string)$value : get_class($value);
+            }
+            $parts[] = $key . '=' . $value;
+        }
+
+        $message = trim($stage . (empty($parts) ? '' : ' ' . implode(' ', $parts)));
+        $this->logToFile($message);
+
+        if (function_exists('tuani_ws_signal_log')) {
+            tuani_ws_signal_log($message);
+        }
+    }
+
     private function sendJson(ConnectionInterface $conn, array $payload, $cleanupOnFailure = true)
     {
         try {
@@ -469,7 +507,21 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
     private function sendToUser($userId, array $payload, ConnectionInterface $excludeConnection = null)
     {
-        return $this->sendToConnections($this->getConnectionsForUser($userId), $payload, $excludeConnection);
+        $targets = $this->getConnectionsForUser($userId);
+        $sent = $this->sendToConnections($targets, $payload, $excludeConnection);
+
+        if ($this->isSignalPayloadType($payload['type'] ?? '')) {
+            $this->traceSignal('route_user', [
+                'type' => $payload['type'] ?? 'unknown',
+                'call_id' => $payload['call_id'] ?? ($payload['session_id'] ?? null),
+                'user_id' => (int)$userId,
+                'target_conn_ids' => array_keys($targets),
+                'exclude_conn_id' => $excludeConnection ? $excludeConnection->resourceId : null,
+                'sent' => $sent,
+            ]);
+        }
+
+        return $sent;
     }
 
     private function sendToUserPreferred($userId, $preferredConnId, array $payload, ConnectionInterface $excludeConnection = null)
@@ -479,6 +531,18 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
         if ($sent === 0 && $preferredConnId !== null) {
             $sent = $this->sendToUser($userId, $payload, $excludeConnection);
+        }
+
+        if ($this->isSignalPayloadType($payload['type'] ?? '')) {
+            $this->traceSignal('route_user_preferred', [
+                'type' => $payload['type'] ?? 'unknown',
+                'call_id' => $payload['call_id'] ?? ($payload['session_id'] ?? null),
+                'user_id' => (int)$userId,
+                'preferred_conn_id' => $preferredConnId,
+                'target_conn_ids' => array_keys($targets),
+                'exclude_conn_id' => $excludeConnection ? $excludeConnection->resourceId : null,
+                'sent' => $sent,
+            ]);
         }
 
         return $sent;
@@ -1279,6 +1343,15 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $chatId = $this->normalizeChatId($data);
         $offer = $this->normalizeSdp($data['sdp'] ?? null, 'offer');
 
+        $this->traceSignal('recv_offer', [
+            'conn_id' => $from->resourceId,
+            'call_id' => $this->normalizeCallId($data),
+            'caller_id' => $callerId,
+            'callee_id' => $calleeId,
+            'chat_id' => $chatId,
+            'has_offer' => $offer !== null,
+        ]);
+
         if (!$callerId || !$calleeId || !$chatId || !$offer) {
             $this->sendError($from, 'init_call requiere from, target_user_id/to, chat_id y sdp offer');
             return;
@@ -1331,7 +1404,13 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             ]);
         }
 
-        tuani_ws_signal_log("offer {$call['call_id']} caller={$callerId} callee={$calleeId} peer_ws=" . ($sentToPeer > 0 ? '1' : '0'));
+        $this->traceSignal('sent_incoming_call', [
+            'call_id' => $call['call_id'],
+            'caller_id' => $callerId,
+            'callee_id' => $calleeId,
+            'peer_ws' => $sentToPeer > 0,
+            'status' => $sentToPeer > 0 ? 'ringing' : 'recipient_offline',
+        ]);
     }
 
     private function handleCallAnswer(ConnectionInterface $from, array $data)
@@ -1339,6 +1418,13 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $calleeId = $this->resolveSenderUserId($from, $data);
         $callId = $this->normalizeCallId($data);
         $answer = $this->normalizeSdp($data['sdp'] ?? null, 'answer');
+
+        $this->traceSignal('recv_answer', [
+            'conn_id' => $from->resourceId,
+            'call_id' => $callId,
+            'callee_id' => $calleeId,
+            'has_answer' => $answer !== null,
+        ]);
 
         if (!$calleeId || !$callId || !$answer) {
             $this->sendError($from, 'call_answer requiere session_id/call_id y sdp answer');
@@ -1374,8 +1460,8 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'timestamp' => $this->nowIso(),
         ];
 
-        $this->sendToUserPreferred($call['caller_id'], $call['caller_conn_id'] ?? null, $payload);
-        $this->sendToUser($call['callee_id'], [
+        $sentToCaller = $this->sendToUserPreferred($call['caller_id'], $call['caller_conn_id'] ?? null, $payload);
+        $sentToOtherCalleeSockets = $this->sendToUser($call['callee_id'], [
             'type' => 'call_ended',
             'call_id' => $callId,
             'session_id' => $callId,
@@ -1385,6 +1471,14 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'reason' => 'answered_elsewhere',
             'timestamp' => $this->nowIso(),
         ], $from);
+
+        $this->traceSignal('sent_answer', [
+            'call_id' => $callId,
+            'callee_id' => $calleeId,
+            'caller_id' => (int)$call['caller_id'],
+            'sent_to_caller' => $sentToCaller,
+            'closed_other_callee_sockets' => $sentToOtherCalleeSockets,
+        ]);
     }
 
     private function handleLegacyAcceptCall(ConnectionInterface $from, array $data)
@@ -1423,6 +1517,16 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $callId = $this->normalizeCallId($data);
         $candidate = $this->normalizeCandidate($data['candidate'] ?? null);
 
+        $this->traceSignal('recv_candidate', [
+            'conn_id' => $from->resourceId,
+            'call_id' => $callId,
+            'from_user_id' => $fromUserId,
+            'target_user_id' => $this->normalizeTargetUserId($data),
+            'sdp_mid' => is_array($candidate) ? ($candidate['sdpMid'] ?? null) : null,
+            'sdp_mline_index' => is_array($candidate) ? ($candidate['sdpMLineIndex'] ?? null) : null,
+            'has_candidate' => $candidate !== null,
+        ]);
+
         if (!$fromUserId || !$callId || !$candidate) {
             $this->sendError($from, 'candidate requiere session_id/call_id y candidate');
             return;
@@ -1454,7 +1558,11 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
 
         if (empty($targets)) {
-            $this->logToFile("⚠️ candidate {$callId} sin destino activo para user {$targetUserId}");
+            $this->traceSignal('candidate_no_target', [
+                'call_id' => $callId,
+                'from_user_id' => $fromUserId,
+                'target_user_id' => $targetUserId,
+            ]);
             return;
         }
 
@@ -1471,7 +1579,14 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'timestamp' => $this->nowIso(),
         ];
 
-        $this->sendToConnections($targets, $payload);
+        $sent = $this->sendToConnections($targets, $payload);
+        $this->traceSignal('sent_candidate', [
+            'call_id' => $callId,
+            'from_user_id' => $fromUserId,
+            'target_user_id' => $targetUserId,
+            'target_conn_ids' => array_keys($targets),
+            'sent' => $sent,
+        ]);
     }
 
     private function markCallEnded($callId, $reason, $endedByUserId = null)
@@ -1494,6 +1609,13 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $calleeId = $this->resolveSenderUserId($from, $data);
         $callId = $this->normalizeCallId($data);
         $reason = trim((string)($data['reason'] ?? 'rejected'));
+
+        $this->traceSignal('recv_reject', [
+            'conn_id' => $from->resourceId,
+            'call_id' => $callId,
+            'callee_id' => $calleeId,
+            'reason' => $reason,
+        ]);
 
         if (!$calleeId || !$callId) {
             return;
@@ -1522,8 +1644,8 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'timestamp' => $this->nowIso(),
         ];
 
-        $this->sendToUserPreferred($call['caller_id'], $call['caller_conn_id'] ?? null, $payload);
-        $this->sendToUser($call['callee_id'], [
+        $sentToCaller = $this->sendToUserPreferred($call['caller_id'], $call['caller_conn_id'] ?? null, $payload);
+        $sentToOtherCalleeSockets = $this->sendToUser($call['callee_id'], [
             'type' => 'call_ended',
             'call_id' => $callId,
             'session_id' => $callId,
@@ -1533,6 +1655,15 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'reason' => $reason,
             'timestamp' => $this->nowIso(),
         ], $from);
+
+        $this->traceSignal('sent_reject', [
+            'call_id' => $callId,
+            'callee_id' => $calleeId,
+            'caller_id' => (int)$call['caller_id'],
+            'sent_to_caller' => $sentToCaller,
+            'closed_other_callee_sockets' => $sentToOtherCalleeSockets,
+            'reason' => $reason,
+        ]);
     }
 
     private function handleCallEnded(ConnectionInterface $from, array $data)
@@ -1540,6 +1671,14 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $endedBy = $this->resolveSenderUserId($from, $data);
         $callId = $this->normalizeCallId($data);
         $reason = trim((string)($data['reason'] ?? 'ended_by_user'));
+
+        $this->traceSignal('recv_call_ended', [
+            'conn_id' => $from->resourceId,
+            'call_id' => $callId,
+            'ended_by' => $endedBy,
+            'target_user_id' => $this->normalizeTargetUserId($data),
+            'reason' => $reason,
+        ]);
 
         if (!$endedBy || !$callId) {
             return;
@@ -1549,7 +1688,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         if (!$call) {
             $targetUserId = $this->normalizeTargetUserId($data);
             if ($targetUserId) {
-                $this->sendToUser($targetUserId, [
+                $sent = $this->sendToUser($targetUserId, [
                     'type' => 'call_ended',
                     'call_id' => $callId,
                     'session_id' => $callId,
@@ -1559,6 +1698,14 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                     'target_user_id' => $targetUserId,
                     'reason' => $reason,
                     'timestamp' => $this->nowIso(),
+                ]);
+
+                $this->traceSignal('forward_call_ended_without_call', [
+                    'call_id' => $callId,
+                    'ended_by' => $endedBy,
+                    'target_user_id' => $targetUserId,
+                    'sent' => $sent,
+                    'reason' => $reason,
                 ]);
             }
             return;
@@ -1586,8 +1733,17 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'timestamp' => $this->nowIso(),
         ];
 
-        $this->sendToUserPreferred($peerUserId, $peerPreferredConnId, $payload);
-        $this->sendToUser($endedBy, $payload, $from);
+        $sentToPeer = $this->sendToUserPreferred($peerUserId, $peerPreferredConnId, $payload);
+        $sentToOwnOtherSockets = $this->sendToUser($endedBy, $payload, $from);
+
+        $this->traceSignal('sent_call_ended', [
+            'call_id' => $callId,
+            'ended_by' => $endedBy,
+            'peer_user_id' => $peerUserId,
+            'sent_to_peer' => $sentToPeer,
+            'sent_to_own_other_sockets' => $sentToOwnOtherSockets,
+            'reason' => $reason,
+        ]);
 
         if (!empty($call['chat_id'])) {
             $this->broadcastToChat($call['chat_id'], [

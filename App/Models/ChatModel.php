@@ -16,12 +16,19 @@ class ChatModel
         $this->db = Database::getInstance()->getConnection();
     }
 
+    private function conn(): PDO
+    {
+        $this->db = Database::getInstance()->getConnection();
+        return $this->db;
+    }
+
 
     public function sendMessage($chatId, $userId, $contenido, $tipo = 'texto', $fileId = null, $otherUserId = null): int
     {
 
 
         try {
+            $db = $this->conn();
             // ✅ Guardar el chatId original para referencia
             $originalChatId = $chatId;
             $this->lastUsedChatId = $chatId;
@@ -97,7 +104,7 @@ class ChatModel
             }
 
             // ✅ CORRECTO - Solo las columnas necesarias
-            $stmt = $this->db->prepare("
+            $stmt = $db->prepare("
     INSERT INTO mensajes (chat_id, user_id, contenido, tipo, file_id) 
     VALUES (:chat_id, :user_id, :contenido, :tipo, :file_id)
 ");
@@ -108,7 +115,7 @@ class ChatModel
                 ':tipo' => $tipo,
                 ':file_id' => $fileId
             ]);
-            $messageId = (int)$this->db->lastInsertId();
+            $messageId = (int)$db->lastInsertId();
 
             // Actualizar last_message_at
             $this->updateChatLastMessage($this->lastUsedChatId);
@@ -126,7 +133,7 @@ class ChatModel
     public function query($sql, $params = [])
     {
         try {
-            $stmt = $this->db->prepare($sql);
+            $stmt = $this->conn()->prepare($sql);
             $stmt->execute($params);
 
             // Determinar si es SELECT, INSERT, UPDATE, DELETE
@@ -141,7 +148,7 @@ class ChatModel
             error_log("❌ Error en query: " . $e->getMessage());
             error_log("📋 SQL: " . $sql);
             error_log("📋 Params: " . json_encode($params));
-            return false;
+            throw $e;
         }
     }
     public function addMessage($messageData)
@@ -175,6 +182,7 @@ class ChatModel
     public function createChat(array $userIds, ?string $chatName = null): int
     {
         try {
+            $db = $this->conn();
             $uniqueUserIds = array_unique($userIds);
             if (count($uniqueUserIds) < 2) {
                 throw new Exception("Se necesitan al menos 2 usuarios diferentes para crear un chat");
@@ -194,15 +202,15 @@ class ChatModel
             // ✅ ELIMINAR beginTransaction() y commit()/rollBack()
 
             // 1. Crear el chat
-            $stmt = $this->db->prepare("
+            $stmt = $db->prepare("
             INSERT INTO chats (name, created_at, last_message_at) 
             VALUES (:name, NOW(), NOW())
         ");
             $stmt->execute([':name' => $chatName]);
-            $chatId = (int)$this->db->lastInsertId();
+            $chatId = (int)$db->lastInsertId();
 
             // 2. Agregar usuarios al chat
-            $stmt = $this->db->prepare("
+            $stmt = $db->prepare("
             INSERT INTO chat_usuarios (chat_id, user_id, added_at) 
             VALUES (?, ?, NOW())
         ");
@@ -224,7 +232,7 @@ class ChatModel
     private function userExists($userId): bool
     {
         try {
-            $stmt = $this->db->prepare("SELECT id FROM users WHERE id = ?");
+            $stmt = $this->conn()->prepare("SELECT id FROM users WHERE id = ?");
             $stmt->execute([$userId]);
             return $stmt->fetch() !== false;
         } catch (Exception $e) {
@@ -238,7 +246,7 @@ class ChatModel
         try {
             if (!$chatId) return null;
 
-            $stmt = $this->db->prepare("
+            $stmt = $this->conn()->prepare("
             SELECT user_id FROM chat_usuarios 
             WHERE chat_id = ? AND user_id != ?
             LIMIT 1
@@ -257,7 +265,7 @@ class ChatModel
     public function getChatParticipantIds(int $chatId): array
     {
         try {
-            $stmt = $this->db->prepare("SELECT user_id FROM chat_usuarios WHERE chat_id = ?");
+            $stmt = $this->conn()->prepare("SELECT user_id FROM chat_usuarios WHERE chat_id = ?");
             $stmt->execute([$chatId]);
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
             return array_map('intval', array_column($rows, 'user_id'));
@@ -272,7 +280,7 @@ class ChatModel
     public function findChatBetweenUsers($user1, $user2)
     {
         try {
-            $stmt = $this->db->prepare("
+            $stmt = $this->conn()->prepare("
             SELECT c.id
             FROM chats c
             INNER JOIN chat_usuarios cu1 ON c.id = cu1.chat_id AND cu1.user_id = ?
@@ -306,7 +314,7 @@ class ChatModel
     public function addUserToChat($chatId, $userId): bool
     {
         try {
-            $stmt = $this->db->prepare("
+            $stmt = $this->conn()->prepare("
             INSERT INTO chat_usuarios (chat_id, user_id, added_at) 
             VALUES (?, ?, NOW())
         ");
@@ -382,7 +390,8 @@ class ChatModel
     public function saveFile(array $fileData): int
     {
         try {
-            $stmt = $this->db->prepare("
+            $db = $this->conn();
+            $stmt = $db->prepare("
                 INSERT INTO files (name, original_name, path, url, size, mime_type, chat_id, user_id, created_at) 
                 VALUES (:name, :original_name, :path, :url, :size, :mime_type, :chat_id, :user_id, NOW())
             ");
@@ -397,7 +406,7 @@ class ChatModel
                 ':user_id' => $fileData['user_id']
             ]);
 
-            return (int)$this->db->lastInsertId();
+            return (int)$db->lastInsertId();
         } catch (PDOException $e) {
             error_log("Error al guardar archivo: " . $e->getMessage());
             throw $e;
@@ -408,7 +417,8 @@ class ChatModel
     public function sendMessageWithFile($chatId, $userId, $contenido, array $fileData): int
     {
         try {
-            $this->db->beginTransaction();
+            $db = $this->conn();
+            $db->beginTransaction();
 
             // 1. Guardar archivo
             $fileId = $this->saveFile($fileData);
@@ -417,10 +427,12 @@ class ChatModel
             $tipo = strpos($fileData['mime_type'], 'image/') === 0 ? 'imagen' : 'archivo';
             $messageId = $this->sendMessage($chatId, $userId, $contenido, $tipo, $fileId);
 
-            $this->db->commit();
+            $db->commit();
             return $messageId;
         } catch (Exception $e) {
-            $this->db->rollBack();
+            if (isset($db) && $db->inTransaction()) {
+                $db->rollBack();
+            }
             error_log("Error en sendMessageWithFile: " . $e->getMessage());
             throw $e;
         }
@@ -433,7 +445,7 @@ class ChatModel
             $limit = (int)($_GET['limit'] ?? 50);
             $offset = (int)($_GET['offset'] ?? 0);
 
-            $stmt = $this->db->prepare("
+            $stmt = $this->conn()->prepare("
                 SELECT 
                     m.*,
                     u.name as user_name,
@@ -654,7 +666,7 @@ class ChatModel
             $userCount = count($userIds);
             $placeholders = str_repeat('?,', $userCount - 1) . '?';
 
-            $stmt = $this->db->prepare("
+            $stmt = $this->conn()->prepare("
                 SELECT c.id, COUNT(cu.user_id) as user_count
                 FROM chats c
                 JOIN chat_usuarios cu ON c.id = cu.chat_id
@@ -682,13 +694,13 @@ class ChatModel
      */
     public function chatExists($chatId): bool
     {
-        $stmt = $this->db->prepare("SELECT id FROM chats WHERE id = ?");
+        $stmt = $this->conn()->prepare("SELECT id FROM chats WHERE id = ?");
         $stmt->execute([$chatId]);
         return $stmt->fetch() !== false;
     }
     public function getChatIdByUsers($userId1, $userId2)
     {
-        $stmt = $this->db->prepare("
+        $stmt = $this->conn()->prepare("
         SELECT c1.chat_id 
         FROM chat_usuarios c1
         INNER JOIN chat_usuarios c2 ON c1.chat_id = c2.chat_id
@@ -710,7 +722,7 @@ class ChatModel
     }
     public function markMessagesAsRead($chatId, $currentUserId)
     {
-        $stmt = $this->db->prepare("
+        $stmt = $this->conn()->prepare("
         UPDATE mensajes 
         SET leido = 1
            
@@ -727,7 +739,7 @@ class ChatModel
      */
     public function userInChat($chatId, $userId): bool
     {
-        $stmt = $this->db->prepare("
+        $stmt = $this->conn()->prepare("
             SELECT 1 FROM chat_usuarios 
             WHERE chat_id = ? AND user_id = ?
         ");
@@ -971,7 +983,7 @@ class ChatModel
     private function updateChatLastMessage($chatId): void
     {
         try {
-            $stmt = $this->db->prepare("
+            $stmt = $this->conn()->prepare("
                 UPDATE chats SET last_message_at = NOW()
                 WHERE id = :chat_id
             ");

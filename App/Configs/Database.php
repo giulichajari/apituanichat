@@ -9,33 +9,23 @@ class Database
 {
     private static ?Database $instance = null;
     private PDO $connection;
+    private array $config;
 
     private function __construct()
     {
         // ✅ Soportar variables de entorno (.env) para VPS
         // Mantener defaults para entorno local (WAMP).
-        $host = $_ENV['DB_HOST'] ?? 'localhost';
-        $port = $_ENV['DB_PORT'] ?? '3306';
-        $dbname = $_ENV['DB_NAME'] ?? ($_ENV['DB_DATABASE'] ?? 'tuanichatbd');
-        $user = $_ENV['DB_USER'] ?? ($_ENV['DB_USERNAME'] ?? 'root');
-        $pass = $_ENV['DB_PASS'] ?? ($_ENV['DB_PASSWORD'] ?? '');
-        $socket = $_ENV['DB_SOCKET'] ?? null;
+        $this->config = [
+            'host' => $_ENV['DB_HOST'] ?? 'localhost',
+            'port' => $_ENV['DB_PORT'] ?? '3306',
+            'dbname' => $_ENV['DB_NAME'] ?? ($_ENV['DB_DATABASE'] ?? 'tuanichatbd'),
+            'user' => $_ENV['DB_USER'] ?? ($_ENV['DB_USERNAME'] ?? 'root'),
+            'pass' => $_ENV['DB_PASS'] ?? ($_ENV['DB_PASSWORD'] ?? ''),
+            'socket' => $_ENV['DB_SOCKET'] ?? null,
+        ];
 
         try {
-            $dsn = "mysql:host={$host};dbname={$dbname};charset=utf8mb4";
-            if (!empty($port)) {
-                $dsn .= ";port={$port}";
-            }
-            if (!empty($socket)) {
-                $dsn .= ";unix_socket={$socket}";
-            }
-
-            $this->connection = new PDO($dsn, $user, $pass, [
-                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                PDO::ATTR_EMULATE_PREPARES => false,
-            ]);
-            $this->connection->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+            $this->connection = $this->createConnection();
         } catch (PDOException $e) {
             // Guardar en php-error.log
             error_log("DB CONNECTION ERROR: " . $e->getMessage());
@@ -56,6 +46,52 @@ class Database
         }
     }
 
+    private function createConnection(): PDO
+    {
+        $dsn = "mysql:host={$this->config['host']};dbname={$this->config['dbname']};charset=utf8mb4";
+        if (!empty($this->config['port'])) {
+            $dsn .= ";port={$this->config['port']}";
+        }
+        if (!empty($this->config['socket'])) {
+            $dsn .= ";unix_socket={$this->config['socket']}";
+        }
+
+        $connection = new PDO($dsn, $this->config['user'], $this->config['pass'], [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false,
+        ]);
+        $connection->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        return $connection;
+    }
+
+    private function isRecoverableConnectionError(PDOException $e): bool
+    {
+        $message = strtolower($e->getMessage());
+        $errorCode = $e->errorInfo[1] ?? null;
+
+        return $errorCode === 2006
+            || $errorCode === 2013
+            || str_contains($message, 'server has gone away')
+            || str_contains($message, 'lost connection');
+    }
+
+    public function refreshConnectionIfNeeded(): PDO
+    {
+        try {
+            $this->connection->query('SELECT 1');
+            return $this->connection;
+        } catch (PDOException $e) {
+            if (!$this->isRecoverableConnectionError($e)) {
+                throw $e;
+            }
+
+            error_log("DB RECONNECT: " . $e->getMessage());
+            $this->connection = $this->createConnection();
+            return $this->connection;
+        }
+    }
+
     public static function getInstance(): Database
     {
         if (self::$instance === null) {
@@ -66,6 +102,6 @@ class Database
 
     public function getConnection(): PDO
     {
-        return $this->connection;
+        return $this->refreshConnectionIfNeeded();
     }
 }
