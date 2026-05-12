@@ -12,6 +12,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     protected $userTimers = [];
     protected $chatModel;
     protected $usersModel;
+    protected $profileModel;
 
     public function __construct()
     {
@@ -19,6 +20,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $this->statusManager = new UserStatusManager();
         $this->initializeChatModel();
         $this->initializeUsersModel();
+        $this->initializeProfileModel();
         echo "🚀 SignalServer refactorizado inicializado\n";
     }
 
@@ -189,6 +191,20 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         } catch (\Throwable $e) {
             $this->usersModel = null;
             $this->logToFile("❌ UsersModel no disponible: {$e->getMessage()}");
+        }
+    }
+
+    private function initializeProfileModel()
+    {
+        try {
+            if (!class_exists('App\Models\ProfileModel')) {
+                $this->profileModel = null;
+                return;
+            }
+            $this->profileModel = new \App\Models\ProfileModel();
+        } catch (\Throwable $e) {
+            $this->profileModel = null;
+            $this->logToFile("❌ ProfileModel no disponible: {$e->getMessage()}");
         }
     }
 
@@ -998,6 +1014,87 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
     }
 
+    private function getUnavailableAutoReplyForUser($userId)
+    {
+        if (!$this->profileModel || !$userId) {
+            return null;
+        }
+
+        try {
+            $profile = $this->profileModel->getProfile((int)$userId);
+            if (!is_array($profile)) {
+                return null;
+            }
+
+            $enabled = !empty($profile['enable_unavailable_auto_reply']);
+            $message = trim((string)($profile['unavailable_auto_reply_message'] ?? ''));
+
+            if (!$enabled || $message === '') {
+                return null;
+            }
+
+            return $message;
+        } catch (\Throwable $e) {
+            $this->logToFile("❌ Error obteniendo auto reply de {$userId}: {$e->getMessage()}");
+            return null;
+        }
+    }
+
+    private function maybeSendUnavailableAutoReply($chatId, $senderId)
+    {
+        if (!$this->chatModel || !$senderId) {
+            return;
+        }
+
+        $participants = $this->getChatParticipantIds($chatId);
+        if (count($participants) !== 2) {
+            return;
+        }
+
+        foreach ($participants as $participantId) {
+            if ((int)$participantId === (int)$senderId) {
+                continue;
+            }
+
+            if (!empty($this->getConnectionsForUser($participantId))) {
+                continue;
+            }
+
+            $autoReplyMessage = $this->getUnavailableAutoReplyForUser($participantId);
+            if ($autoReplyMessage === null) {
+                continue;
+            }
+
+            try {
+                $messageId = $this->chatModel->sendMessage((int)$chatId, (int)$participantId, $autoReplyMessage, 'texto', null, (int)$senderId);
+            } catch (\Throwable $e) {
+                $this->logToFile("❌ Error guardando auto reply en chat {$chatId}: {$e->getMessage()}");
+                return;
+            }
+
+            $messagePayload = [
+                'type' => 'chat_message',
+                'message_id' => $messageId,
+                'chat_id' => (int)$chatId,
+                'user_id' => (int)$participantId,
+                'contenido' => $autoReplyMessage,
+                'tipo' => 'texto',
+                'timestamp' => $this->nowIso(),
+                'leido' => 0,
+                'user_name' => $this->getUserDisplayName($participantId),
+                'status' => 'sent',
+                'action' => 'auto_reply',
+                'is_auto_reply' => true,
+            ];
+
+            $this->broadcastToChat($chatId, $messagePayload);
+            $this->notifyChatListUpdate($chatId, $messagePayload);
+            $this->updateUnreadCounts($chatId, $participantId);
+            $this->logToFile("🤖 Auto reply enviado en chat {$chatId} por usuario {$participantId}");
+            return;
+        }
+    }
+
     private function getUserDisplayName($userId)
     {
         if ($this->usersModel) {
@@ -1099,6 +1196,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $this->notifyChatListUpdate($chatId, $messagePayload);
         $this->updateUnreadCounts($chatId, $userId);
         $this->pushOfflineMessageNotifications($chatId, $messagePayload, $userId);
+        $this->maybeSendUnavailableAutoReply($chatId, $userId);
     }
 
     private function handleFileUpload(ConnectionInterface $from, array $data)

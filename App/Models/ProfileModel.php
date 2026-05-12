@@ -16,12 +16,14 @@ class ProfileModel
     }
 
     // Obtener perfil por user_id
-    public function getProfile(int $userId): array|bool
+    public function getProfile(int $userId)
     {
         try {
             $stmt = $this->db->prepare("
                 SELECT id, user_id, bio, email, website,
-                       instagram, facebook, twitter, linkedin, tiktok, avatar
+                       instagram, facebook, twitter, linkedin, tiktok, avatar,
+                       enable_welcome_message, welcome_message, welcome_link, company_description,
+                       enable_unavailable_auto_reply, unavailable_auto_reply_message
                 FROM profiles
                 WHERE user_id = :user_id
             ");
@@ -39,8 +41,12 @@ class ProfileModel
         try {
             $stmt = $this->db->prepare("
                 INSERT INTO profiles 
-                (user_id, bio, email, website, instagram, facebook, twitter, linkedin, tiktok, avatar)
-                VALUES (:user_id, :bio, :email, :website, :instagram, :facebook, :twitter, :linkedin, :tiktok, :avatar)
+                (user_id, bio, email, website, instagram, facebook, twitter, linkedin, tiktok, avatar,
+                 enable_welcome_message, welcome_message, welcome_link, company_description,
+                 enable_unavailable_auto_reply, unavailable_auto_reply_message)
+                VALUES (:user_id, :bio, :email, :website, :instagram, :facebook, :twitter, :linkedin, :tiktok, :avatar,
+                        :enable_welcome_message, :welcome_message, :welcome_link, :company_description,
+                        :enable_unavailable_auto_reply, :unavailable_auto_reply_message)
             ");
             return $stmt->execute([
                 ':user_id' => $userId,
@@ -52,7 +58,13 @@ class ProfileModel
                 ':twitter' => $data['twitter'] ?? '',
                 ':linkedin' => $data['linkedin'] ?? '',
                 ':tiktok' => $data['tiktok'] ?? '',
-                ':avatar' => $data['avatar'] ?? ''
+                ':avatar' => $data['avatar'] ?? '',
+                ':enable_welcome_message' => (int)($data['enable_welcome_message'] ?? 0),
+                ':welcome_message' => $data['welcome_message'] ?? '',
+                ':welcome_link' => $data['welcome_link'] ?? '',
+                ':company_description' => $data['company_description'] ?? '',
+                ':enable_unavailable_auto_reply' => (int)($data['enable_unavailable_auto_reply'] ?? 0),
+                ':unavailable_auto_reply_message' => $data['unavailable_auto_reply_message'] ?? ''
             ]);
         } catch (PDOException $e) {
             return false;
@@ -73,7 +85,13 @@ class ProfileModel
                     twitter = :twitter,
                     linkedin = :linkedin,
                     tiktok = :tiktok,
-                    avatar = :avatar
+                    avatar = :avatar,
+                    enable_welcome_message = :enable_welcome_message,
+                    welcome_message = :welcome_message,
+                    welcome_link = :welcome_link,
+                    company_description = :company_description,
+                    enable_unavailable_auto_reply = :enable_unavailable_auto_reply,
+                    unavailable_auto_reply_message = :unavailable_auto_reply_message
                 WHERE user_id = :user_id
             ");
             return $stmt->execute([
@@ -86,6 +104,12 @@ class ProfileModel
                 ':linkedin' => $data['linkedin'] ?? '',
                 ':tiktok' => $data['tiktok'] ?? '',
                 ':avatar' => $data['avatar'] ?? '',
+                ':enable_welcome_message' => (int)($data['enable_welcome_message'] ?? 0),
+                ':welcome_message' => $data['welcome_message'] ?? '',
+                ':welcome_link' => $data['welcome_link'] ?? '',
+                ':company_description' => $data['company_description'] ?? '',
+                ':enable_unavailable_auto_reply' => (int)($data['enable_unavailable_auto_reply'] ?? 0),
+                ':unavailable_auto_reply_message' => $data['unavailable_auto_reply_message'] ?? '',
                 ':user_id' => $userId
             ]);
         } catch (PDOException $e) {

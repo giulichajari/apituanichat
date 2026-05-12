@@ -44,6 +44,12 @@ class ProfileController
                 'linkedin' => '',
                 'tiktok' => '',
                 'avatar' => $avatar,
+                'enable_welcome_message' => 0,
+                'welcome_message' => '',
+                'welcome_link' => '',
+                'company_description' => '',
+                'enable_unavailable_auto_reply' => 0,
+                'unavailable_auto_reply_message' => '',
             ]);
 
             if ($created) {
@@ -77,7 +83,13 @@ class ProfileController
             'twitter' => Router::$request->body->twitter ?? '',
             'linkedin' => Router::$request->body->linkedin ?? '',
             'tiktok' => Router::$request->body->tiktok ?? '',
-            'avatar' => Router::$request->body->avatar ?? ''
+            'avatar' => Router::$request->body->avatar ?? '',
+            'enable_welcome_message' => (int)(bool)(Router::$request->body->enable_welcome_message ?? Router::$request->body->enableWelcomeMessage ?? false),
+            'welcome_message' => Router::$request->body->welcome_message ?? Router::$request->body->welcomeMessage ?? '',
+            'welcome_link' => Router::$request->body->welcome_link ?? Router::$request->body->welcomeLink ?? '',
+            'company_description' => Router::$request->body->company_description ?? Router::$request->body->companyDescription ?? '',
+            'enable_unavailable_auto_reply' => (int)(bool)(Router::$request->body->enable_unavailable_auto_reply ?? Router::$request->body->enableUnavailableAutoReply ?? false),
+            'unavailable_auto_reply_message' => Router::$request->body->unavailable_auto_reply_message ?? Router::$request->body->unavailableAutoReplyMessage ?? ''
         ];
 
         if ($this->profileModel->createProfile($userId, $data)) {
@@ -95,16 +107,64 @@ class ProfileController
     public function updateProfile()
     {
         $userId = Router::$request->params->userId;
+        $currentProfile = $this->profileModel->getProfile((int)$userId);
+
+        if ($currentProfile === false) {
+            Router::$response->status(500)->send([
+                "message" => "An error occurred"
+            ]);
+            return;
+        }
+
+        if (empty($currentProfile)) {
+            $user = $this->usersModel->getUser((int)$userId);
+            $email = is_array($user) ? ($user['email'] ?? '') : '';
+            $avatar = is_array($user) ? ($user['avatar'] ?? '') : '';
+
+            $created = $this->profileModel->createProfile((int)$userId, [
+                'bio' => '',
+                'email' => $email,
+                'website' => '',
+                'instagram' => '',
+                'facebook' => '',
+                'twitter' => '',
+                'linkedin' => '',
+                'tiktok' => '',
+                'avatar' => $avatar,
+                'enable_welcome_message' => 0,
+                'welcome_message' => '',
+                'welcome_link' => '',
+                'company_description' => '',
+                'enable_unavailable_auto_reply' => 0,
+                'unavailable_auto_reply_message' => '',
+            ]);
+
+            if (!$created) {
+                Router::$response->status(500)->send([
+                    "message" => "An error occurred"
+                ]);
+                return;
+            }
+
+            $currentProfile = $this->profileModel->getProfile((int)$userId) ?: [];
+        }
+
         $data = [
-            'bio' => Router::$request->body->bio ?? '',
-            'email' => Router::$request->body->email ?? '',
-            'website' => Router::$request->body->website ?? '',
-            'instagram' => Router::$request->body->instagram ?? '',
-            'facebook' => Router::$request->body->facebook ?? '',
-            'twitter' => Router::$request->body->twitter ?? '',
-            'linkedin' => Router::$request->body->linkedin ?? '',
-            'tiktok' => Router::$request->body->tiktok ?? '',
-            'avatar' => Router::$request->body->avatar ?? ''
+            'bio' => $this->requestValue(['bio'], $currentProfile['bio'] ?? ''),
+            'email' => $this->requestValue(['email'], $currentProfile['email'] ?? ''),
+            'website' => $this->requestValue(['website'], $currentProfile['website'] ?? ''),
+            'instagram' => $this->requestValue(['instagram'], $currentProfile['instagram'] ?? ''),
+            'facebook' => $this->requestValue(['facebook'], $currentProfile['facebook'] ?? ''),
+            'twitter' => $this->requestValue(['twitter'], $currentProfile['twitter'] ?? ''),
+            'linkedin' => $this->requestValue(['linkedin'], $currentProfile['linkedin'] ?? ''),
+            'tiktok' => $this->requestValue(['tiktok'], $currentProfile['tiktok'] ?? ''),
+            'avatar' => $this->requestValue(['avatar'], $currentProfile['avatar'] ?? ''),
+            'enable_welcome_message' => (int)(bool)$this->requestValue(['enable_welcome_message', 'enableWelcomeMessage'], (int)($currentProfile['enable_welcome_message'] ?? 0)),
+            'welcome_message' => $this->requestValue(['welcome_message', 'welcomeMessage'], $currentProfile['welcome_message'] ?? ''),
+            'welcome_link' => $this->requestValue(['welcome_link', 'welcomeLink'], $currentProfile['welcome_link'] ?? ''),
+            'company_description' => $this->requestValue(['company_description', 'companyDescription'], $currentProfile['company_description'] ?? ''),
+            'enable_unavailable_auto_reply' => (int)(bool)$this->requestValue(['enable_unavailable_auto_reply', 'enableUnavailableAutoReply'], (int)($currentProfile['enable_unavailable_auto_reply'] ?? 0)),
+            'unavailable_auto_reply_message' => $this->requestValue(['unavailable_auto_reply_message', 'unavailableAutoReplyMessage'], $currentProfile['unavailable_auto_reply_message'] ?? '')
         ];
 
         if ($this->profileModel->updateProfile($userId, $data)) {
@@ -116,6 +176,22 @@ class ProfileController
                 "message" => "An error occurred"
             ]);
         }
+    }
+
+    private function requestValue(array $fieldNames, $default = null)
+    {
+        $body = Router::$request->body ?? null;
+        if (!is_object($body)) {
+            return $default;
+        }
+
+        foreach ($fieldNames as $fieldName) {
+            if (property_exists($body, $fieldName)) {
+                return $body->{$fieldName};
+            }
+        }
+
+        return $default;
     }
 
   public function updateAvatar()
