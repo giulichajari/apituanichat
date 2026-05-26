@@ -104,9 +104,18 @@ class DriverModel
             $this->db->beginTransaction();
             $stmt = $this->db->prepare("
     INSERT INTO ride_requests 
-    (user_id, driver_id, pickup_lat, pickup_lng, dest_lat, dest_lng, pickup_address, dest_address, estimated_fare, status, created_at)
-    VALUES (:user_id, :driver_id, :pickup_lat, :pickup_lng, :dest_lat, :dest_lng, :pickup_address, :dest_address, :estimated_fare, 'pending', NOW())
+    (user_id, driver_id, pickup_lat, pickup_lng, dest_lat, dest_lng, pickup_address, dest_address,
+     estimated_fare, service_type, package_weight_kg, package_length_cm, package_width_cm,
+     package_height_cm, package_type, package_details, status, created_at)
+    VALUES (:user_id, :driver_id, :pickup_lat, :pickup_lng, :dest_lat, :dest_lng, :pickup_address, :dest_address,
+     :estimated_fare, :service_type, :package_weight_kg, :package_length_cm, :package_width_cm,
+     :package_height_cm, :package_type, :package_details, 'pending', NOW())
 ");
+
+            $packageDetails = $data['package_details'] ?? null;
+            if (is_array($packageDetails)) {
+                $packageDetails = json_encode($packageDetails);
+            }
 
             $stmt->execute([
                 ':user_id' => $data['user_id'],
@@ -115,9 +124,16 @@ class DriverModel
                 ':pickup_lng' => $data['pickup_lng'],
                 ':dest_lat' => $data['dest_lat'],
                 ':dest_lng' => $data['dest_lng'],
-                ':pickup_address' => $data['pickup_address'],       // NUEVO
-                ':dest_address' => $data['dest_address'],           // NUEVO
-                ':estimated_fare' => $data['estimated_fare']
+                ':pickup_address' => $data['pickup_address'],
+                ':dest_address' => $data['dest_address'],
+                ':estimated_fare' => $data['estimated_fare'],
+                ':service_type' => $data['service_type'] ?? 'passenger',
+                ':package_weight_kg' => $data['package_weight_kg'] ?? null,
+                ':package_length_cm' => $data['package_length_cm'] ?? null,
+                ':package_width_cm' => $data['package_width_cm'] ?? null,
+                ':package_height_cm' => $data['package_height_cm'] ?? null,
+                ':package_type' => $data['package_type'] ?? null,
+                ':package_details' => $packageDetails,
             ]);
 
 
@@ -164,12 +180,25 @@ class DriverModel
 
             // Mensaje con direcciones
             $fare = number_format($data['estimated_fare'], 2);
+            $serviceType = $data['service_type'] ?? 'passenger';
             $msgData = [
                 "ride_id" => $requestId,
+                "service_type" => $serviceType,
                 "pickup" => $data['pickup_address'],
                 "destination" => $data['dest_address'],
-                "fare" => $fare
+                "fare" => $fare,
             ];
+            if ($serviceType === 'package') {
+                $msgData['package'] = [
+                    'weight_kg' => $data['package_weight_kg'] ?? null,
+                    'dimensions_cm' => [
+                        'length' => $data['package_length_cm'] ?? null,
+                        'width' => $data['package_width_cm'] ?? null,
+                        'height' => $data['package_height_cm'] ?? null,
+                    ],
+                    'type' => $data['package_type'] ?? null,
+                ];
+            }
 
             $msg = json_encode($msgData);
 
@@ -214,7 +243,7 @@ class DriverModel
     }
 
 
-    // Obtener chofer por ID
+    // Obtener chofer por user_id
     public function getDriver(int $id): ?array
     {
         $stmt = $this->db->prepare("SELECT * FROM drivers WHERE user_id = ?");
@@ -222,14 +251,44 @@ class DriverModel
         $driver = $stmt->fetch(PDO::FETCH_ASSOC);
         return $driver ?: null;
     }
+
+    /** Crea perfil vacío en drivers si no existe y devuelve el registro */
+    public function ensureDriverProfile(int $userId, array $seed = []): ?array
+    {
+        $existing = $this->getDriver($userId);
+        if ($existing) {
+            return $existing;
+        }
+
+        if (!$this->createEmptyProfile($userId)) {
+            return $this->getDriver($userId);
+        }
+
+        $defaults = array_merge([
+            'name' => '',
+            'phone' => '',
+            'email' => '',
+            'car_model' => '',
+            'license_plate' => '',
+            'bio' => '',
+            'location' => '',
+            'pais' => '',
+            'preciokm' => 0,
+        ], $seed);
+
+        $this->updateByUserId($userId, $defaults);
+
+        return $this->getDriver($userId);
+    }
     public function updateByUserId(int $userId, array $data): bool
     {
-        $sql = "UPDATE drivers 
-            SET name = ?, phone = ?, email = ?, car_model = ?, license_plate = ?, bio = ?, location = ?,pais=?,preciokm=?
-            WHERE user_id = ?";
+        $stmt = $this->db->prepare("
+            UPDATE drivers
+            SET name = ?, phone = ?, email = ?, car_model = ?, license_plate = ?, bio = ?, location = ?, pais = ?, preciokm = ?
+            WHERE user_id = ?
+        ");
 
-        $stmt = $this->db->prepare($sql);
-        return $stmt->execute([
+        $ok = $stmt->execute([
             $data['name'] ?? '',
             $data['phone'] ?? '',
             $data['email'] ?? '',
@@ -238,9 +297,32 @@ class DriverModel
             $data['bio'] ?? '',
             $data['location'] ?? '',
             $data['pais'] ?? '',
-            $data['preciokm'] ?? '',
-            $userId
+            $data['preciokm'] ?? 0,
+            $userId,
         ]);
+
+        if (!$ok) {
+            return false;
+        }
+
+        // Columnas de pricing de paquetes (opcionales si aún no corrió la migración)
+        try {
+            $pricingStmt = $this->db->prepare("
+                UPDATE drivers
+                SET precio_paquete_hasta_1kg = ?, precio_paquete_1_5kg = ?, precio_paquete_5_10kg = ?
+                WHERE user_id = ?
+            ");
+            $pricingStmt->execute([
+                $data['precio_paquete_hasta_1kg'] ?? 0,
+                $data['precio_paquete_1_5kg'] ?? 0,
+                $data['precio_paquete_5_10kg'] ?? 0,
+                $userId,
+            ]);
+        } catch (\PDOException $e) {
+            error_log('updateByUserId pricing columns skipped: ' . $e->getMessage());
+        }
+
+        return true;
     }
 
     // Listar todos los choferes

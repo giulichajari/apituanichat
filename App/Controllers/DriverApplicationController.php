@@ -241,14 +241,17 @@ class DriverApplicationController
 
         if ($userId) {
             $vehicle = $formData['vehicle'] ?? [];
-            $this->driverModel->updateByUserId((int) $userId, [
+            $profileData = [
                 'name' => $application['full_name'],
                 'phone' => $application['phone'],
                 'email' => $application['email'],
                 'car_model' => trim(($vehicle['make'] ?? '') . ' ' . ($vehicle['model'] ?? '')),
                 'license_plate' => $vehicle['plate'] ?? '',
                 'location' => ($formData['personal']['city'] ?? '') . ', ' . ($formData['personal']['state'] ?? ''),
-            ]);
+            ];
+
+            $this->driverModel->ensureDriverProfile((int) $userId, $profileData);
+            $this->driverModel->updateByUserId((int) $userId, $profileData);
         }
     }
 

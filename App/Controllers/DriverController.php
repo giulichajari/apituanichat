@@ -16,9 +16,6 @@ class DriverController
 
     public function getDriver()
     {
-        // 🧪 Depurar objeto user
-        error_log("Usuario recibido: " . print_r(Router::$request->user, true) . "\n", 3, __DIR__ . '/../../php-error.log');
-
         $userId = Router::$request->user->id ?? null;
 
         if (!$userId) {
@@ -28,7 +25,14 @@ class DriverController
             return;
         }
 
-        $driver = $this->driverModel->getDriver($userId);
+        $user = Router::$request->user;
+        $seed = [
+            'name' => $user->name ?? '',
+            'phone' => $user->phone ?? '',
+            'email' => $user->email ?? '',
+        ];
+
+        $driver = $this->driverModel->ensureDriverProfile((int) $userId, $seed);
 
         if ($driver) {
             Router::$response->status(200)->send([
@@ -36,8 +40,8 @@ class DriverController
                 "message" => "Perfil del chofer obtenido correctamente"
             ]);
         } else {
-            Router::$response->status(404)->send([
-                "message" => "Driver not found"
+            Router::$response->status(500)->send([
+                "message" => "No se pudo crear el perfil del conductor"
             ]);
         }
     }
@@ -202,6 +206,11 @@ class DriverController
 
         $ok = $this->driverModel->updateAvailabilityByUserId($userId, (int) $data['isAvailable']);
 
+        if (!$ok) {
+            $this->driverModel->ensureDriverProfile((int) $userId);
+            $ok = $this->driverModel->updateAvailabilityByUserId($userId, (int) $data['isAvailable']);
+        }
+
         if ($ok) {
             Router::$response->json([
                 "message" => "Disponibilidad actualizada correctamente ✅",
@@ -234,6 +243,13 @@ class DriverController
         }
 
         $driverModel = new DriverModel();
+
+        $user = Router::$request->user;
+        $driverModel->ensureDriverProfile((int) $userId, [
+            'name' => $user->name ?? '',
+            'phone' => $user->phone ?? '',
+            'email' => $user->email ?? '',
+        ]);
 
         $ok = $driverModel->updateByUserId($userId, $data);
 

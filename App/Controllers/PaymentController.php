@@ -30,10 +30,29 @@ class PaymentController
         $destinationAddress = $body['destinationAddress'] ?? '';
         $estimatedFare = $body['estimatedFare'] ?? null;
         $currency = $body['currency'] ?? 'USD';
+        $serviceType = $body['serviceType'] ?? 'passenger';
+        $packageWeightKg = $body['packageWeightKg'] ?? null;
+        $packageLengthCm = $body['packageLengthCm'] ?? null;
+        $packageWidthCm = $body['packageWidthCm'] ?? null;
+        $packageHeightCm = $body['packageHeightCm'] ?? null;
+        $packageType = $body['packageType'] ?? null;
 
         if (!$userId || !$driverId || !$pickup || !$destination || !$estimatedFare) {
             Router::$response->status(400)->json(["message" => "Campos obligatorios faltantes"]);
             return;
+        }
+
+        if ($serviceType === 'package') {
+            if (!$packageWeightKg || !$packageLengthCm || !$packageWidthCm || !$packageHeightCm) {
+                Router::$response->status(400)->json(["message" => "Paquete: peso y dimensiones son obligatorios"]);
+                return;
+            }
+            if ((float) $packageWeightKg > 10) {
+                Router::$response->status(400)->json([
+                    "message" => "El paquete supera 10 kg. Contactá soporte para envíos especiales."
+                ]);
+                return;
+            }
         }
 
         // 1️⃣ Crear ride request
@@ -46,7 +65,14 @@ class PaymentController
             'dest_lng' => $destination['lng'] ?? null,
             'pickup_address' => $pickupAddress,
             'dest_address' => $destinationAddress,
-            'estimated_fare' => $estimatedFare
+            'estimated_fare' => $estimatedFare,
+            'service_type' => $serviceType,
+            'package_weight_kg' => $packageWeightKg,
+            'package_length_cm' => $packageLengthCm,
+            'package_width_cm' => $packageWidthCm,
+            'package_height_cm' => $packageHeightCm,
+            'package_type' => $packageType,
+            'package_details' => $body['packageDetails'] ?? null,
         ]);
 
         if (!$rideRequestId) {

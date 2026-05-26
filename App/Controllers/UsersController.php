@@ -201,7 +201,7 @@ private function getCurrentUserId()
             $this->createChatsWithExistingUsers($userId);
 
             // 🧩 Si el rol es driver, crear registro vacío en la tabla drivers
-            if ($rol === 'Driver') {
+            if (strcasecmp((string) $rol, 'driver') === 0) {
                 $driverModel = new DriverModel();
                 $driverModel->createEmptyProfile($userId);
             } else {
