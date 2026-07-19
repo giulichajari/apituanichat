@@ -11,6 +11,7 @@ use App\Routers\DriversRouter;
 use App\Routers\PaymentsRouter;
 use App\Routers\RestaurantsRouter;
 use App\Routers\ProductsRouter;
+use App\Routers\CountryRatesRouter;
 use App\Routers\OrdersRouter;
 use App\Routers\StatusRouter;
 use App\Routers\GroupsRouter;
@@ -60,6 +61,7 @@ try {
     new PaymentsRouter($router);
     new RestaurantsRouter($router);
     new ProductsRouter($router);
+    new CountryRatesRouter($router);
     new OrdersRouter($router);
     new StatusRouter($router);
     new GroupsRouter($router);
