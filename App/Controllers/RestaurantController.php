@@ -372,9 +372,16 @@ class RestaurantController
 
     public function createRestaurant()
     {
+        $latRaw = Router::$request->body->lat ?? null;
+        $lngRaw = Router::$request->body->lng ?? null;
+        $lat = ($latRaw !== null && $latRaw !== '') ? (float) $latRaw : null;
+        $lng = ($lngRaw !== null && $lngRaw !== '') ? (float) $lngRaw : null;
+
         $data = [
             'nombre' => Router::$request->body->nombre ?? '',
             'ubicacion' => Router::$request->body->ubicacion ?? '',
+            'lat' => $lat,
+            'lng' => $lng,
             'tipo_comida' => Router::$request->body->tipo_comida ?? '',
             'descripcion' => Router::$request->body->descripcion ?? '',
             'telefono' => Router::$request->body->telefono ?? '',

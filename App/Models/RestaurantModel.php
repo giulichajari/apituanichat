@@ -48,11 +48,11 @@ class RestaurantModel
     {
         try {
             $sql = "INSERT INTO restaurantes 
-                (nombre, ubicacion, tipo_comida, descripcion, telefono, email, 
+                (nombre, ubicacion, lat, lng, tipo_comida, descripcion, telefono, email, 
                  horario_apertura, horario_cierre, precio_promedio, capacidad,
                  mascotas_permitidas, estacionamiento, wifi_gratis, user_id)
                 VALUES 
-                (:nombre, :ubicacion, :tipo_comida, :descripcion, :telefono, :email,
+                (:nombre, :ubicacion, :lat, :lng, :tipo_comida, :descripcion, :telefono, :email,
                  :horario_apertura, :horario_cierre, :precio_promedio, :capacidad,
                  :mascotas_permitidas, :estacionamiento, :wifi_gratis, :user_id)";
 
@@ -60,6 +60,8 @@ class RestaurantModel
             $success = $stmt->execute([
                 ':nombre' => $data['nombre'],
                 ':ubicacion' => $data['ubicacion'],
+                ':lat' => $data['lat'] ?? null,
+                ':lng' => $data['lng'] ?? null,
                 ':tipo_comida' => $data['tipo_comida'],
                 ':descripcion' => $data['descripcion'] ?? null,
                 ':telefono' => $data['telefono'] ?? null,
@@ -92,7 +94,7 @@ class RestaurantModel
             $params = [':id' => $id];
 
             $allowedFields = [
-                'nombre', 'ubicacion', 'tipo_comida', 'descripcion', 'telefono', 'email',
+                'nombre', 'ubicacion', 'lat', 'lng', 'tipo_comida', 'descripcion', 'telefono', 'email',
                 'horario_apertura', 'horario_cierre', 'precio_promedio', 'capacidad',
                 'mascotas_permitidas', 'estacionamiento', 'wifi_gratis', 'foto_portada'
             ];
@@ -100,7 +102,14 @@ class RestaurantModel
             foreach ($allowedFields as $field) {
                 if (array_key_exists($field, $data)) {
                     $fields[] = "$field = :$field";
-                    $params[":$field"] = $data[$field];
+                    $value = $data[$field];
+                    if (($field === 'lat' || $field === 'lng') && ($value === '' || $value === null)) {
+                        $value = null;
+                    }
+                    if (($field === 'lat' || $field === 'lng') && $value !== null) {
+                        $value = (float) $value;
+                    }
+                    $params[":$field"] = $value;
                 }
             }
 
