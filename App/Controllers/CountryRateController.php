@@ -17,15 +17,25 @@ class CountryRateController
     /** GET /country-rates — público (Remis) */
     public function listRates(): void
     {
-        $rates = $this->model->getAllActive();
-        Router::$response->status(200)->json([
-            'message' => 'OK',
-            'data' => $rates,
-            'meta' => [
-                'class_increment' => 1.42,
-                'range_policy' => 'midpoint',
-            ],
-        ]);
+        try {
+            $rates = $this->model->getAllActive();
+            Router::$response->status(200)->json([
+                'message' => 'OK',
+                'data' => $rates,
+                'meta' => [
+                    'class_increment' => 1.42,
+                    'range_policy' => 'midpoint',
+                    'count' => count($rates),
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            error_log('CountryRateController::listRates: ' . $e->getMessage());
+            Router::$response->status(500)->json([
+                'message' => 'No se pudieron cargar las tarifas. Verificá que exista la tabla countries y country_rates.',
+                'error' => $e->getMessage(),
+                'data' => [],
+            ]);
+        }
     }
 
     /** GET /country-rates/by-alpha2/{code} — público */
@@ -50,6 +60,34 @@ class CountryRateController
             'message' => 'OK',
             'data' => $rate,
         ]);
+    }
+
+    /** POST /country-rates/seed — solo ADMIN: crea tabla + inserta tarifas */
+    public function seedRates(): void
+    {
+        if (!$this->requireAdmin()) {
+            return;
+        }
+
+        try {
+            $this->model->ensureSchemaAndSeed();
+            // Forzar (re)seed aunque ya haya filas incompletas
+            $count = $this->model->seedDefaults();
+            $rates = $this->model->getAllActive();
+            Router::$response->status(200)->json([
+                'message' => $count > 0
+                    ? "Tarifas cargadas ($count países)"
+                    : 'No se insertó ninguna tarifa. Verificá que exista la tabla countries con códigos ARG, USA, MEX, etc.',
+                'data' => $rates,
+                'meta' => ['count' => $count],
+            ]);
+        } catch (\Throwable $e) {
+            error_log('CountryRateController::seedRates: ' . $e->getMessage());
+            Router::$response->status(500)->json([
+                'message' => 'Error al cargar tarifas: ' . $e->getMessage(),
+                'data' => [],
+            ]);
+        }
     }
 
     /** PUT /country-rates/{id} — solo ADMIN */

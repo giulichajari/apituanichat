@@ -149,7 +149,7 @@ class UsersModel
     public function getUser(int $id): array|bool
     {
         try {
-            $stmt = $this->db->prepare("SELECT id, name, email, phone, is_verified, avatar, created_at FROM users WHERE id = :id");
+            $stmt = $this->db->prepare("SELECT id, name, email, phone, is_verified, avatar, rol, created_at FROM users WHERE id = :id");
             $stmt->bindValue(':id', $id, PDO::PARAM_INT);
             $stmt->execute();
             return $stmt->fetch(PDO::FETCH_ASSOC) ?: [];

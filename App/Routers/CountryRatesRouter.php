@@ -25,6 +25,12 @@ class CountryRatesRouter
             fn() => $controller->getByAlpha2()
         );
 
+        $router->post(
+            '/country-rates/seed',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $controller->seedRates()
+        );
+
         $router->put(
             '/country-rates/{id}',
             fn() => $tokenMiddleware->strict(),
