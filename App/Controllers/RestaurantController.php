@@ -700,13 +700,13 @@ public function updateCoverImage($id)
     }
 }
 
-    /**
-     * Servir imagen de portada de restaurante (busca en public/uploads y en uploads legacy)
-     */
-    public function serveRestaurantCover($filename): void
+    public function serveRestaurantCover($filename = null): void
     {
         try {
-            $filename = basename(urldecode((string)$filename));
+            if ($filename === null || (is_object($filename) && !($filename instanceof \Stringable))) {
+                $filename = self::resolveCoverParam();
+            }
+            $filename = basename(urldecode((string) $filename));
             if (empty($filename) || preg_match('/\.\./', $filename)) {
                 Router::$response->status(400)->json(["message" => "Filename inválido"]);
                 return;
@@ -715,6 +715,8 @@ public function updateCoverImage($id)
             $paths = [
                 $base . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'restaurants' . DIRECTORY_SEPARATOR . 'cover' . DIRECTORY_SEPARATOR . $filename,
                 $base . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'restaurants' . DIRECTORY_SEPARATOR . 'cover' . DIRECTORY_SEPARATOR . $filename,
+                $base . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . $filename,
+                $base . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . $filename,
             ];
             foreach ($paths as $filePath) {
                 if (is_file($filePath) && is_readable($filePath)) {
@@ -728,11 +730,29 @@ public function updateCoverImage($id)
                     exit(0);
                 }
             }
-            Router::$response->status(404)->json(["message" => "Imagen no encontrada"]);
+            error_log("serveRestaurantCover 404: $filename | searched: " . implode(' | ', $paths));
+            Router::$response->status(404)->json(["message" => "Imagen no encontrada", "file" => $filename]);
         } catch (\Throwable $e) {
             error_log("serveRestaurantCover error: " . $e->getMessage());
             Router::$response->status(500)->json(["message" => "Error al cargar imagen"]);
         }
+    }
+
+    /** Lee el param filename de la ruta /restaurants/cover/{filename:.+} */
+    private static function resolveCoverParam(): string
+    {
+        $p = Router::$request->params ?? null;
+        if ($p === null) {
+            return '';
+        }
+        $arr = (array) $p;
+        return (string) (
+            $arr['filename']
+            ?? $arr['filename:.+']
+            ?? $arr['filename:.*']
+            ?? reset($arr)
+            ?? ''
+        );
     }
 
     public function getFavoriteRestaurants()

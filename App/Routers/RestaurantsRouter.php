@@ -27,7 +27,16 @@ class RestaurantsRouter
         // Servir imagen de portada (busca en public y en uploads legacy)
         $router->get(
             '/restaurants/cover/{filename:.+}',
-            fn() => $restaurantController->serveRestaurantCover((string) self::param('filename', ':.+'))
+            function () use ($restaurantController) {
+                $p = Router::$request->params ?? null;
+                $arr = $p ? (array) $p : [];
+                $filename = (string) (
+                    $arr['filename']
+                    ?? $arr['filename:.+']
+                    ?? (count($arr) ? reset($arr) : '')
+                );
+                $restaurantController->serveRestaurantCover($filename);
+            }
         );
 
         // Obtener restaurantes por propietario - DEBE IR ANTES de la ruta con {id}
