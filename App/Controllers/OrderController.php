@@ -40,18 +40,35 @@ class OrderController
     {
         $body = json_decode(file_get_contents('php://input'), true);
 
-        // Comprador = siempre el usuario autenticado (token). Evitar acceso a ->id si user es null.
+        // Comprador autenticado (opcional) o invitado con email
         $user = Router::$request->user ?? null;
         $userId = $user ? ($user->id ?? null) : null;
+        $guestEmail = trim((string)($body['guest_email'] ?? ''));
         $restaurantId = (int)($body['restaurantId'] ?? 0);
         $items = $body['items'] ?? [];
         $total = (float)($body['total'] ?? 0);
 
-        if (!$userId || !$restaurantId || empty($items) || $total <= 0) {
+        if (!$restaurantId || empty($items) || $total <= 0) {
             Router::$response->json([
-                "message" => "Campos obligatorios: token (usuario logueado), restaurantId, items, total"
+                "message" => "Campos obligatorios: restaurantId, items, total"
             ], 400);
             return;
+        }
+
+        if (!$userId) {
+            if ($guestEmail === '' || !filter_var($guestEmail, FILTER_VALIDATE_EMAIL)) {
+                Router::$response->json([
+                    "message" => "Para pedidos sin cuenta es obligatorio un email válido (guest_email)"
+                ], 400);
+                return;
+            }
+            $guestPhone = trim((string)($body['delivery_phone'] ?? ''));
+            if ($guestPhone === '') {
+                Router::$response->json([
+                    "message" => "Para pedidos sin cuenta es obligatorio el teléfono"
+                ], 400);
+                return;
+            }
         }
 
         $restaurant = $this->restaurantModel->getRestaurantById($restaurantId);
@@ -79,6 +96,7 @@ class OrderController
 
         $orderId = $this->orderModel->create([
             'user_id' => $userId,
+            'guest_email' => $userId ? null : $guestEmail,
             'restaurant_id' => $restaurantId,
             'items' => $items,
             'total' => $total,
@@ -87,7 +105,7 @@ class OrderController
             'idempotency_key' => null,
             'is_delivery' => $isDelivery,
             'delivery_address' => $isDelivery ? trim((string)($body['delivery_address'] ?? '')) : null,
-            'delivery_phone' => $isDelivery ? trim((string)($body['delivery_phone'] ?? '')) : null
+            'delivery_phone' => trim((string)($body['delivery_phone'] ?? '')) ?: null
         ]);
 
         if (!$orderId) {
@@ -306,6 +324,10 @@ class OrderController
     // ================== EMAIL (siempre si hay comprador: con link o aviso de problema) ==================
 
     $buyerEmail = $order['user_email'] ?? null;
+
+    if (!$buyerEmail && !empty($order['guest_email'])) {
+        $buyerEmail = $order['guest_email'];
+    }
 
     if (!$buyerEmail && !empty($order['user_id'])) {
         $buyer = $this->usersModel->getUser((int)$order['user_id']);

@@ -45,6 +45,20 @@ class RestaurantsRouter
             fn() => $tokenMiddleware->strict(),
             fn() => $restaurantController->getRestaurantsByOwner()
         );
+
+        // Puntos GPS pendientes (admin) — antes de rutas con {id}
+        $router->get(
+            '/restaurants/pending-location-approval',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $restaurantController->getPendingLocationApprovals()
+        );
+
+        $router->patch(
+            '/restaurants/{id:\d+}/location-approval',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $restaurantController->updateLocationApproval((int) self::param('id'))
+        );
+
   $router->post(
             '/restaurants/upload',
             fn() => $tokenMiddleware->strict(),

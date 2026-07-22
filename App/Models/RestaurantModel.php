@@ -48,11 +48,11 @@ class RestaurantModel
     {
         try {
             $sql = "INSERT INTO restaurantes 
-                (nombre, ubicacion, lat, lng, tipo_comida, descripcion, telefono, email, 
+                (nombre, ubicacion, lat, lng, location_approved, tipo_comida, descripcion, telefono, email, 
                  horario_apertura, horario_cierre, precio_promedio, capacidad,
                  mascotas_permitidas, estacionamiento, wifi_gratis, user_id)
                 VALUES 
-                (:nombre, :ubicacion, :lat, :lng, :tipo_comida, :descripcion, :telefono, :email,
+                (:nombre, :ubicacion, :lat, :lng, :location_approved, :tipo_comida, :descripcion, :telefono, :email,
                  :horario_apertura, :horario_cierre, :precio_promedio, :capacidad,
                  :mascotas_permitidas, :estacionamiento, :wifi_gratis, :user_id)";
 
@@ -62,6 +62,7 @@ class RestaurantModel
                 ':ubicacion' => $data['ubicacion'],
                 ':lat' => $data['lat'] ?? null,
                 ':lng' => $data['lng'] ?? null,
+                ':location_approved' => 0,
                 ':tipo_comida' => $data['tipo_comida'],
                 ':descripcion' => $data['descripcion'] ?? null,
                 ':telefono' => $data['telefono'] ?? null,
@@ -99,6 +100,7 @@ class RestaurantModel
                 'mascotas_permitidas', 'estacionamiento', 'wifi_gratis', 'foto_portada'
             ];
 
+            $coordsChanged = false;
             foreach ($allowedFields as $field) {
                 if (array_key_exists($field, $data)) {
                     $fields[] = "$field = :$field";
@@ -108,9 +110,17 @@ class RestaurantModel
                     }
                     if (($field === 'lat' || $field === 'lng') && $value !== null) {
                         $value = (float) $value;
+                        $coordsChanged = true;
+                    }
+                    if (($field === 'lat' || $field === 'lng') && array_key_exists($field, $data)) {
+                        $coordsChanged = true;
                     }
                     $params[":$field"] = $value;
                 }
+            }
+
+            if ($coordsChanged) {
+                $fields[] = "location_approved = 0";
             }
 
             if (empty($fields)) {
@@ -292,6 +302,51 @@ class RestaurantModel
         ");
         $stmt->execute([$restaurantId, $userId]);
         return $stmt->fetch() !== false;
+    }
+
+    /**
+     * Puntos GPS pendientes de aprobación admin (tienen lat/lng y location_approved = 0)
+     */
+    public function getPendingLocationApprovals(): array
+    {
+        $stmt = $this->db->query("
+            SELECT r.*, u.name AS owner_name, u.email AS owner_email
+            FROM restaurantes r
+            LEFT JOIN users u ON r.user_id = u.id
+            WHERE r.activo = 1
+              AND r.lat IS NOT NULL
+              AND r.lng IS NOT NULL
+              AND r.location_approved = 0
+            ORDER BY r.id DESC
+        ");
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * Aprobar o rechazar punto GPS. Al rechazar se limpian lat/lng.
+     */
+    public function updateLocationApproval(int $id, bool $approved): bool
+    {
+        try {
+            if ($approved) {
+                $stmt = $this->db->prepare("
+                    UPDATE restaurantes
+                    SET location_approved = 1
+                    WHERE id = ? AND activo = 1 AND lat IS NOT NULL AND lng IS NOT NULL
+                ");
+                return $stmt->execute([$id]);
+            }
+
+            $stmt = $this->db->prepare("
+                UPDATE restaurantes
+                SET location_approved = 0, lat = NULL, lng = NULL
+                WHERE id = ? AND activo = 1
+            ");
+            return $stmt->execute([$id]);
+        } catch (\PDOException $e) {
+            error_log("❌ Error al actualizar aprobación de ubicación: " . $e->getMessage());
+            return false;
+        }
     }
 
     /**

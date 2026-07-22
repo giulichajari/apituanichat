@@ -29,7 +29,7 @@ class OrdersRouter
 
         $router->post(
             '/orders/food',
-            fn() => $tokenMiddleware->strict(),
+            fn() => $tokenMiddleware->optional(),
             fn() => $orderController->createFoodOrder()
         );
 

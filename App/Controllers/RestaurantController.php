@@ -1046,4 +1046,76 @@ public function updateCoverImage($id)
             "message" => "Platos por categoría obtenidos correctamente"
         ]);
     }
+
+    /**
+     * Listar puntos GPS pendientes de aprobación (solo ADMIN)
+     */
+    public function getPendingLocationApprovals()
+    {
+        $user = Router::$request->user ?? null;
+        if (!$user || strtoupper($user->rol ?? '') !== 'ADMIN') {
+            Router::$response->status(403)->json([
+                "message" => "Acceso denegado. Se requiere rol ADMIN"
+            ]);
+            return;
+        }
+
+        $pending = $this->restaurantModel->getPendingLocationApprovals();
+
+        Router::$response->status(200)->json([
+            "data" => $pending,
+            "message" => "Puntos pendientes de aprobación obtenidos correctamente"
+        ]);
+    }
+
+    /**
+     * Aprobar o rechazar punto GPS de un restaurante (solo ADMIN)
+     */
+    public function updateLocationApproval($id)
+    {
+        $user = Router::$request->user ?? null;
+        if (!$user || strtoupper($user->rol ?? '') !== 'ADMIN') {
+            Router::$response->status(403)->json([
+                "message" => "Acceso denegado. Se requiere rol ADMIN"
+            ]);
+            return;
+        }
+
+        $restaurantId = (int) $id;
+        if ($restaurantId <= 0) {
+            Router::$response->status(400)->json(["message" => "ID de restaurante no válido"]);
+            return;
+        }
+
+        $body = Router::$request->body ?? null;
+        $approvedRaw = $body->location_approved ?? null;
+        if ($approvedRaw === null) {
+            Router::$response->status(400)->json(["message" => "Falta location_approved"]);
+            return;
+        }
+
+        $approved = filter_var($approvedRaw, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        if ($approved === null) {
+            $approved = (bool) ((int) $approvedRaw);
+        }
+
+        $restaurant = $this->restaurantModel->getRestaurantById($restaurantId);
+        if (!$restaurant) {
+            Router::$response->status(404)->json(["message" => "Restaurante no encontrado"]);
+            return;
+        }
+
+        $ok = $this->restaurantModel->updateLocationApproval($restaurantId, $approved);
+        if (!$ok) {
+            Router::$response->status(500)->json(["message" => "Error al actualizar la aprobación"]);
+            return;
+        }
+
+        Router::$response->status(200)->json([
+            "message" => $approved
+                ? "Punto geográfico aprobado. Ahora se muestra en el mapa."
+                : "Punto geográfico rechazado. El comedor debe volver a guardar la ubicación.",
+            "data" => $this->restaurantModel->getRestaurantById($restaurantId)
+        ]);
+    }
 }

@@ -18,11 +18,12 @@ class OrderModel
     {
         try {
             $stmt = $this->db->prepare("
-                INSERT INTO food_orders (user_id, restaurant_id, items, total, currency, status, payment_link_url, idempotency_key, is_delivery, delivery_address, delivery_phone)
-                VALUES (:user_id, :restaurant_id, :items, :total, :currency, 'pending', :payment_link_url, :idempotency_key, :is_delivery, :delivery_address, :delivery_phone)
+                INSERT INTO food_orders (user_id, guest_email, restaurant_id, items, total, currency, status, payment_link_url, idempotency_key, is_delivery, delivery_address, delivery_phone)
+                VALUES (:user_id, :guest_email, :restaurant_id, :items, :total, :currency, 'pending', :payment_link_url, :idempotency_key, :is_delivery, :delivery_address, :delivery_phone)
             ");
             $ok = $stmt->execute([
-                ':user_id' => $data['user_id'],
+                ':user_id' => $data['user_id'] ?? null,
+                ':guest_email' => $data['guest_email'] ?? null,
                 ':restaurant_id' => $data['restaurant_id'],
                 ':items' => is_string($data['items']) ? $data['items'] : json_encode($data['items']),
                 ':total' => $data['total'],
