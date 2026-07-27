@@ -57,13 +57,22 @@ class OrderController
             return;
         }
 
-        if (!$userId) {
-            if ($deliveryPhone === '') {
-                Router::$response->json([
-                    "message" => "Para pedidos sin cuenta es obligatorio el teléfono"
-                ], 400);
-                return;
+        // Si el usuario autenticado no envió teléfono, usar el del perfil
+        if ($userId && $deliveryPhone === '') {
+            $buyer = $this->usersModel->getUser((int)$userId);
+            if (is_array($buyer)) {
+                $deliveryPhone = trim((string)($buyer['phone'] ?? ''));
             }
+        }
+
+        if ($deliveryPhone === '') {
+            Router::$response->json([
+                "message" => "El teléfono es obligatorio para el pedido"
+            ], 400);
+            return;
+        }
+
+        if (!$userId) {
             // guest_email opcional (ya no se exige)
             if ($guestEmail !== '' && !filter_var($guestEmail, FILTER_VALIDATE_EMAIL)) {
                 $guestEmail = '';
