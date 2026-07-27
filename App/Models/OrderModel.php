@@ -18,8 +18,8 @@ class OrderModel
     {
         try {
             $stmt = $this->db->prepare("
-                INSERT INTO food_orders (user_id, guest_email, restaurant_id, items, total, currency, status, payment_link_url, idempotency_key, is_delivery, delivery_address, delivery_phone)
-                VALUES (:user_id, :guest_email, :restaurant_id, :items, :total, :currency, 'pending', :payment_link_url, :idempotency_key, :is_delivery, :delivery_address, :delivery_phone)
+                INSERT INTO food_orders (user_id, guest_email, restaurant_id, items, total, currency, status, payment_link_url, idempotency_key, is_delivery, delivery_address, delivery_phone, order_type, reservation_at)
+                VALUES (:user_id, :guest_email, :restaurant_id, :items, :total, :currency, 'pending', :payment_link_url, :idempotency_key, :is_delivery, :delivery_address, :delivery_phone, :order_type, :reservation_at)
             ");
             $ok = $stmt->execute([
                 ':user_id' => $data['user_id'] ?? null,
@@ -32,7 +32,9 @@ class OrderModel
                 ':idempotency_key' => $data['idempotency_key'] ?? null,
                 ':is_delivery' => !empty($data['is_delivery']) ? 1 : 0,
                 ':delivery_address' => $data['delivery_address'] ?? null,
-                ':delivery_phone' => $data['delivery_phone'] ?? null
+                ':delivery_phone' => $data['delivery_phone'] ?? null,
+                ':order_type' => $data['order_type'] ?? 'dine_in',
+                ':reservation_at' => $data['reservation_at'] ?? null
             ]);
             return $ok ? (int)$this->db->lastInsertId() : null;
         } catch (\PDOException $e) {
@@ -43,11 +45,12 @@ class OrderModel
 
     public function getByRestaurant(int $restaurantId): array
     {
+        // Solo pedidos ya pagados: el restaurante no ve solicitudes hasta que Square confirma el pago
         $stmt = $this->db->prepare("
             SELECT o.*, u.name as user_name, u.email as user_email
             FROM food_orders o
             LEFT JOIN users u ON o.user_id = u.id
-            WHERE o.restaurant_id = ?
+            WHERE o.restaurant_id = ? AND o.status = 'paid'
             ORDER BY o.created_at DESC
         ");
         $stmt->execute([$restaurantId]);
@@ -81,9 +84,17 @@ class OrderModel
         $stmt = $this->db->prepare("
             UPDATE food_orders 
             SET payment_link_url = ?, square_payment_link_id = ? 
-            WHERE id = ? AND status = 'confirmed'
+            WHERE id = ? AND status IN ('pending', 'confirmed')
         ");
         return $stmt->execute([$paymentLinkUrl, $squarePaymentLinkId, $orderId]);
+    }
+
+    public function deleteUnpaid(int $orderId): bool
+    {
+        $stmt = $this->db->prepare("
+            DELETE FROM food_orders WHERE id = ? AND status = 'pending'
+        ");
+        return $stmt->execute([$orderId]);
     }
 
     public function markAsPaid(int $orderId): bool

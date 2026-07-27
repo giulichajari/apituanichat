@@ -67,7 +67,7 @@ class CountryRateModel
             SELECT c.id, v.code_alpha2, v.pricing_model, v.rate_min, v.rate_max,
                    NULL, NULL, NULL, NULL
             FROM (
-              SELECT 'USA' AS code, 'US' AS code_alpha2, 'per_km' AS pricing_model, 1.0000 AS rate_min, 1.0000 AS rate_max
+              SELECT 'USA' AS code, 'US' AS code_alpha2, 'hourly' AS pricing_model, 35.0000 AS rate_min, 35.0000 AS rate_max
               UNION ALL SELECT 'MEX', 'MX', 'per_km', 0.2000, 0.2000
               UNION ALL SELECT 'BOL', 'BO', 'per_km', 0.2600, 0.3600
               UNION ALL SELECT 'PRY', 'PY', 'per_km', 0.2700, 0.4000

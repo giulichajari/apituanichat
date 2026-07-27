@@ -21,7 +21,8 @@ class OrderController
     }
 
     /**
-     * Crear pedido de comida (sin pago aún; el link de pago se envía por email al confirmar)
+     * Crear pedido de comida y cobrar de inmediato (link Square).
+     * El restaurante solo ve el pedido cuando el webhook marca status=paid.
      */
     public function createFoodOrder()
     {
@@ -40,13 +41,14 @@ class OrderController
     {
         $body = json_decode(file_get_contents('php://input'), true);
 
-        // Comprador autenticado (opcional) o invitado con email
+        // Comprador autenticado (opcional) o invitado solo con teléfono
         $user = Router::$request->user ?? null;
         $userId = $user ? ($user->id ?? null) : null;
         $guestEmail = trim((string)($body['guest_email'] ?? ''));
         $restaurantId = (int)($body['restaurantId'] ?? 0);
         $items = $body['items'] ?? [];
         $total = (float)($body['total'] ?? 0);
+        $deliveryPhone = trim((string)($body['delivery_phone'] ?? ''));
 
         if (!$restaurantId || empty($items) || $total <= 0) {
             Router::$response->json([
@@ -56,18 +58,15 @@ class OrderController
         }
 
         if (!$userId) {
-            if ($guestEmail === '' || !filter_var($guestEmail, FILTER_VALIDATE_EMAIL)) {
-                Router::$response->json([
-                    "message" => "Para pedidos sin cuenta es obligatorio un email válido (guest_email)"
-                ], 400);
-                return;
-            }
-            $guestPhone = trim((string)($body['delivery_phone'] ?? ''));
-            if ($guestPhone === '') {
+            if ($deliveryPhone === '') {
                 Router::$response->json([
                     "message" => "Para pedidos sin cuenta es obligatorio el teléfono"
                 ], 400);
                 return;
+            }
+            // guest_email opcional (ya no se exige)
+            if ($guestEmail !== '' && !filter_var($guestEmail, FILTER_VALIDATE_EMAIL)) {
+                $guestEmail = '';
             }
         }
 
@@ -83,20 +82,51 @@ class OrderController
         }
 
         $isDelivery = !empty($body['delivery']);
-        if ($isDelivery) {
+        $orderType = trim((string)($body['order_type'] ?? ''));
+        $allowedTypes = ['delivery', 'dine_in', 'reservation'];
+        if ($orderType === '' || !in_array($orderType, $allowedTypes, true)) {
+            $orderType = $isDelivery ? 'delivery' : 'dine_in';
+        }
+        if ($orderType === 'delivery') {
+            $isDelivery = true;
+        } else {
+            $isDelivery = false;
+        }
+
+        $reservationAt = null;
+        if ($orderType === 'delivery') {
             $addr = trim((string)($body['delivery_address'] ?? ''));
-            $phone = trim((string)($body['delivery_phone'] ?? ''));
+            $phone = $deliveryPhone !== '' ? $deliveryPhone : trim((string)($body['delivery_phone'] ?? ''));
             if ($addr === '' || $phone === '') {
                 Router::$response->json([
                     "message" => "Para delivery son obligatorios dirección y teléfono"
                 ], 400);
                 return;
             }
+            $deliveryPhone = $phone;
+        }
+
+        if ($orderType === 'reservation') {
+            $reservationAt = trim((string)($body['reservation_at'] ?? ''));
+            if ($reservationAt === '') {
+                Router::$response->json([
+                    "message" => "Para reservar es obligatoria la fecha y hora (reservation_at)"
+                ], 400);
+                return;
+            }
+            $ts = strtotime($reservationAt);
+            if ($ts === false || $ts <= time()) {
+                Router::$response->json([
+                    "message" => "La reserva debe ser en una fecha y hora futura"
+                ], 400);
+                return;
+            }
+            $reservationAt = date('Y-m-d H:i:s', $ts);
         }
 
         $orderId = $this->orderModel->create([
             'user_id' => $userId,
-            'guest_email' => $userId ? null : $guestEmail,
+            'guest_email' => $userId ? null : ($guestEmail !== '' ? $guestEmail : null),
             'restaurant_id' => $restaurantId,
             'items' => $items,
             'total' => $total,
@@ -105,7 +135,9 @@ class OrderController
             'idempotency_key' => null,
             'is_delivery' => $isDelivery,
             'delivery_address' => $isDelivery ? trim((string)($body['delivery_address'] ?? '')) : null,
-            'delivery_phone' => trim((string)($body['delivery_phone'] ?? '')) ?: null
+            'delivery_phone' => $deliveryPhone !== '' ? $deliveryPhone : null,
+            'order_type' => $orderType,
+            'reservation_at' => $reservationAt
         ]);
 
         if (!$orderId) {
@@ -113,10 +145,117 @@ class OrderController
             return;
         }
 
+        // Cobro inmediato: crear link Square y devolverlo al cliente
+        $order = $this->orderModel->getById($orderId);
+        $square = $this->createSquarePaymentLink($orderId, $order, $restaurant);
+
+        if (empty($square['url']) || empty($square['id'])) {
+            $this->orderModel->deleteUnpaid($orderId);
+            Router::$response->json([
+                "message" => "No se pudo iniciar el pago. Intentá de nuevo.",
+                "detail" => $square['error'] ?? 'Square payment link no disponible'
+            ], 502);
+            return;
+        }
+
+        $this->orderModel->updatePaymentLink($orderId, $square['url'], $square['id']);
+
         Router::$response->json([
-            "message" => "Pedido creado. Espera la confirmación del restaurante. Recibirás un email para completar el pago.",
-            "orderId" => $orderId
+            "message" => "Pedido creado. Completá el pago para enviarlo al restaurante.",
+            "orderId" => $orderId,
+            "paymentUrl" => $square['url']
         ], 201);
+    }
+
+    /**
+     * Crea un payment link de Square (quick_pay) para un food order.
+     * @return array{url:?string,id:?string,error:?string}
+     */
+    private function createSquarePaymentLink(int $orderId, ?array $order, ?array $restaurant): array
+    {
+        $appEnv = isset($_ENV['APP_ENV']) ? strtolower((string) $_ENV['APP_ENV']) : '';
+        $isProd = ($appEnv === 'production');
+
+        if ($isProd) {
+            $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_PROD'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
+            $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_PROD'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
+        } else {
+            $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_SANDBOX'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
+            $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_SANDBOX'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
+        }
+        $locationId = preg_replace('/[^a-zA-Z0-9_-]/', '', trim($locationId));
+
+        $sandboxEnv = $_ENV['SQUARE_SANDBOX'] ?? '';
+        $sandbox = ($sandboxEnv === 'true' || $sandboxEnv === '1') ? true : !$isProd;
+        $squareBaseUrl = $sandbox ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com';
+
+        if (empty($accessToken) || empty($locationId)) {
+            return [
+                'url' => null,
+                'id' => null,
+                'error' => empty($accessToken) ? 'SQUARE_ACCESS_TOKEN no configurado' : 'SQUARE_LOCATION_ID no configurado'
+            ];
+        }
+
+        $amountCents = (int) round((float) ($order['total'] ?? 0) * 100);
+        if ($amountCents <= 0) {
+            return ['url' => null, 'id' => null, 'error' => 'Total inválido para cobro'];
+        }
+
+        $currency = strtoupper((string) ($order['currency'] ?? 'USD'));
+        $idempotencyKey = uniqid('food_', true);
+        $postData = [
+            "idempotency_key" => $idempotencyKey,
+            "quick_pay" => [
+                "name" => "Pedido #{$orderId} Tuani Eats - " . ($restaurant['nombre'] ?? 'Restaurante'),
+                "price_money" => [
+                    "amount" => $amountCents,
+                    "currency" => $currency
+                ],
+                "location_id" => $locationId
+            ]
+        ];
+
+        $ch = curl_init($squareBaseUrl . "/v2/online-checkout/payment-links");
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            "Content-Type: application/json",
+            "Authorization: Bearer $accessToken",
+            "Square-Version: 2024-11-20"
+        ]);
+        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+
+        $response = curl_exec($ch);
+        $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        $this->paymentLog("createSquarePaymentLink HTTP", $httpcode);
+        $this->paymentLog("createSquarePaymentLink RESP", substr($response ?: '', 0, 800));
+
+        $result = is_string($response) ? json_decode($response, true) : [];
+        $paymentLinkUrl = $result['payment_link']['url'] ?? null;
+        $squarePaymentLinkId = $result['payment_link']['id'] ?? null;
+
+        $error = null;
+        if ($curlError) {
+            $error = $curlError;
+        } elseif (($httpcode !== 200 && $httpcode !== 201) || !$paymentLinkUrl) {
+            if (!empty($result['errors']) && is_array($result['errors'])) {
+                $first = $result['errors'][0] ?? [];
+                $error = ($first['code'] ?? '') . ': ' . ($first['detail'] ?? $first['message'] ?? json_encode($first));
+            } else {
+                $error = 'Square no devolvió payment link';
+            }
+        }
+
+        return [
+            'url' => $paymentLinkUrl,
+            'id' => $squarePaymentLinkId,
+            'error' => $error
+        ];
     }
 
     /**
