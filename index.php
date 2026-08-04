@@ -15,6 +15,7 @@ use App\Routers\CountryRatesRouter;
 use App\Routers\OrdersRouter;
 use App\Routers\StatusRouter;
 use App\Routers\GroupsRouter;
+use App\Routers\AiRouter;
 use EasyProjects\SimpleRouter\Router;
 
 
@@ -65,6 +66,7 @@ try {
     new OrdersRouter($router);
     new StatusRouter($router);
     new GroupsRouter($router);
+    new AiRouter($router);
     // Ejecutamos router
     // Cargar variables de entorno desde la raíz del proyecto
 

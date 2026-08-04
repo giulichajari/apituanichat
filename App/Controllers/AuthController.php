@@ -6,6 +6,7 @@ use Firebase\JWT\JWT;
 use EasyProjects\SimpleRouter\Router;
 use PDO;
 use App\Models\UsersModel;
+use App\Services\JwtSecret;
 use Exception;
 use Firebase\JWT\Key; // ✅ Importar la clase Key
 
@@ -48,8 +49,8 @@ class AuthController
       $stmt->bindValue(':id', $user['id']);
       $stmt->execute();
 
-      // 🔹 Generar JWT
-      $secretKey = "TU_SECRET_KEY"; // debe coincidir con tu TokenMiddleware
+      // 🔹 Generar JWT (secreto solo desde .env)
+      $secretKey = JwtSecret::get();
       $payload = [
         'user_id' => $user['id'],
         'email' => $user['email'],
@@ -143,14 +144,14 @@ class AuthController
       return;
     }
 
-    // ✅ Generamos JWT
+    // ✅ Generamos JWT (mismo claim user_id que login/middleware)
     $payload = [
-      'sub' => $user['id'],
+      'user_id' => $user['id'],
       'email' => $email,
       'iat' => time(),
       'exp' => time() + 3600 // 1 hora
     ];
-    $jwt = JWT::encode($payload, $_ENV['JWT_SECRET'], 'HS256');
+    $jwt = JWT::encode($payload, JwtSecret::get(), 'HS256');
 
     // Limpiamos OTP usado
     $stmt = $db->prepare("UPDATE users SET otp = NULL, otp_created_at = NULL WHERE id = :id");
@@ -171,9 +172,8 @@ class AuthController
       }
 
       $token = $matches[1];
- $secretKey = $_ENV['JWT_SECRET'] ?? 'TU_SECRET_KEY';
-            $decoded = JWT::decode($token, new Key($secretKey, 'HS256'));
-            $userId = $decoded->user_id;
+      $decoded = JWT::decode($token, new Key(JwtSecret::get(), 'HS256'));
+      $userId = $decoded->user_id;
 
       if (!$userId) {
         Router::$response->json(['error' => 'user_id requerido'], 400);

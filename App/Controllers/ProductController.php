@@ -5,6 +5,7 @@ namespace App\Controllers;
 use App\Models\ProductModel;
 use App\Models\CategoryModel;
 use App\Models\CountryModel;
+use App\Models\UsersModel;
 use App\Models\File;
 use App\Services\FileUploadService;
 
@@ -18,7 +19,8 @@ class ProductController
     public function __construct(
         private ?ProductModel $productModel = new ProductModel(),
         private ?CategoryModel $categoryModel = new CategoryModel(),
-        private ?CountryModel $countryModel = new CountryModel()
+        private ?CountryModel $countryModel = new CountryModel(),
+        private ?UsersModel $userModel = new UsersModel()
     ) {
         $this->fileUploadService = new FileUploadService();
     }
@@ -1025,12 +1027,9 @@ public function updateProduct($id)
         }
     }
 
-    // ✅ Método auxiliar para verificar si es admin (debes implementarlo según tu sistema)
-    private function isAdmin($userId)
+    private function isAdmin($userId): bool
     {
-        // Implementa la lógica para verificar si el usuario es admin
-        // Por ejemplo:
-        // return $this->userModel->isAdmin($userId);
-        return true; // Temporal - implementa según tu sistema
+        $user = $this->userModel->getUser((int) $userId);
+        return is_array($user) && !empty($user) && strtoupper($user['rol'] ?? '') === 'ADMIN';
     }
 }

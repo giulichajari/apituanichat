@@ -5,6 +5,8 @@ namespace App\Controllers;
 use App\Models\DriverApplicationModel;
 use App\Models\DriverModel;
 use App\Models\UsersModel;
+use App\Services\FieldEncryption;
+use App\Services\JwtSecret;
 use EasyProjects\SimpleRouter\Router;
 
 class DriverApplicationController
@@ -77,14 +79,15 @@ class DriverApplicationController
         $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
         if (preg_match('/Bearer\s+(.+)/i', $authHeader, $m)) {
             try {
-                $decoded = \Firebase\JWT\JWT::decode($m[1], new \Firebase\JWT\Key('TU_SECRET_KEY', 'HS256'));
+                $decoded = \Firebase\JWT\JWT::decode($m[1], new \Firebase\JWT\Key(JwtSecret::get(), 'HS256'));
                 $userId = $decoded->user_id ?? null;
             } catch (\Throwable $e) {
                 // Token opcional — continuar sin user_id
             }
         }
 
-        $formData = $this->sanitizeFormData($payload);
+        // Cifrar SSN / cuenta bancaria / licencia antes de guardar
+        $formData = FieldEncryption::encryptDriverFormData($this->sanitizeFormData($payload));
         $ip = $_SERVER['REMOTE_ADDR'] ?? null;
 
         $applicationId = $this->model->create([
@@ -193,6 +196,11 @@ class DriverApplicationController
         if (!$application) {
             Router::$response->status(404)->json(['message' => 'Solicitud no encontrada']);
             return;
+        }
+
+        // Descifrar datos sensibles solo para admin autenticado
+        if (isset($application['form_data']) && is_array($application['form_data'])) {
+            $application['form_data'] = FieldEncryption::decryptDriverFormData($application['form_data']);
         }
 
         Router::$response->status(200)->json(['data' => $application]);

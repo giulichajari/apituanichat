@@ -3,15 +3,18 @@
 namespace App\Controllers;
 
 use App\Models\DriverModel;
+use App\Services\FareCalculator;
 use EasyProjects\SimpleRouter\Router;
 
 class DriverController
 {
     private DriverModel $driverModel;
+    private FareCalculator $fareCalculator;
 
     public function __construct()
     {
         $this->driverModel = new DriverModel();
+        $this->fareCalculator = new FareCalculator();
     }
 
     public function getDriver()
@@ -98,17 +101,36 @@ class DriverController
     {
         $input = json_decode(file_get_contents('php://input'), true);
 
-        $userId = $input['userId'] ?? null;
+        // userId del token — no confiar en el body
+        $userId = Router::$request->user->id ?? null;
         $driverId = $input['driverId'] ?? null;
         $pickup = $input['pickup'] ?? null;
         $destination = $input['destination'] ?? null;
         $pickupAddress = $input['pickupAddress'] ?? '';
         $destinationAddress = $input['destinationAddress'] ?? '';
-        $estimatedFare = $input['estimatedFare'] ?? null;
+        $serviceType = $input['serviceType'] ?? 'passenger';
+        $packageType = $input['packageType'] ?? null;
 
-        if (!$userId || !$driverId || !$pickup || !$destination || !$estimatedFare) {
+        if (!$userId || !$driverId || !$pickup || !$destination) {
             Router::$response->status(400)->json([
                 "message" => "Faltan datos requeridos"
+            ]);
+            return;
+        }
+
+        try {
+            $fareResult = $this->fareCalculator->calculate(
+                (int) $driverId,
+                is_array($pickup) ? $pickup : [],
+                is_array($destination) ? $destination : [],
+                $serviceType,
+                $packageType
+            );
+            $estimatedFare = $fareResult['fare'];
+        } catch (\Throwable $e) {
+            Router::$response->status(400)->json([
+                "message" => "No se pudo calcular la tarifa",
+                "error" => $e->getMessage()
             ]);
             return;
         }
@@ -123,7 +145,9 @@ class DriverController
             'dest_lng' => $destination['lng'] ?? null,
             'pickup_address' => $pickupAddress,
             'dest_address' => $destinationAddress,
-            'estimated_fare' => $estimatedFare
+            'estimated_fare' => $estimatedFare,
+            'service_type' => $serviceType,
+            'package_type' => $packageType,
         ]);
 
         if (!$requestId) {
@@ -175,7 +199,9 @@ class DriverController
         Router::$response->status(201)->json([
             "message" => "Solicitud enviada al chofer",
             "requestId" => $requestId,
-            "chatId" => $chatId
+            "chatId" => $chatId,
+            "estimatedFare" => $estimatedFare,
+            "fareDetails" => $fareResult,
         ]);
     }
 

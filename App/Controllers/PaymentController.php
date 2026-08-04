@@ -4,31 +4,33 @@ namespace App\Controllers;
 
 use App\Models\PaymentModel;
 use App\Models\DriverModel;
+use App\Services\FareCalculator;
 use EasyProjects\SimpleRouter\Router;
-use Dotenv\Dotenv;
 
 class PaymentController
 {
     private PaymentModel $paymentModel;
     private DriverModel $driverModel;
+    private FareCalculator $fareCalculator;
 
     public function __construct()
     {
         $this->paymentModel = new PaymentModel();
         $this->driverModel = new DriverModel();
+        $this->fareCalculator = new FareCalculator();
     }
 
     public function createPaymentLink()
     {
         $body = json_decode(file_get_contents('php://input'), true);
 
-        $userId = $body['userId'] ?? null;
+        // userId SIEMPRE del token verificado — nunca del body
+        $userId = Router::$request->user->id ?? null;
         $driverId = $body['driverId'] ?? null;
         $pickup = $body['pickup'] ?? null;
         $destination = $body['destination'] ?? null;
         $pickupAddress = $body['pickupAddress'] ?? '';
         $destinationAddress = $body['destinationAddress'] ?? '';
-        $estimatedFare = $body['estimatedFare'] ?? null;
         $currency = $body['currency'] ?? 'USD';
         $serviceType = $body['serviceType'] ?? 'passenger';
         $packageWeightKg = $body['packageWeightKg'] ?? null;
@@ -37,7 +39,7 @@ class PaymentController
         $packageHeightCm = $body['packageHeightCm'] ?? null;
         $packageType = $body['packageType'] ?? null;
 
-        if (!$userId || !$driverId || !$pickup || !$destination || !$estimatedFare) {
+        if (!$userId || !$driverId || !$pickup || !$destination) {
             Router::$response->status(400)->json(["message" => "Campos obligatorios faltantes"]);
             return;
         }
@@ -53,6 +55,25 @@ class PaymentController
                 ]);
                 return;
             }
+        }
+
+        // Recalcular tarifa en servidor (ignorar estimatedFare del cliente)
+        try {
+            $fareResult = $this->fareCalculator->calculate(
+                (int) $driverId,
+                is_array($pickup) ? $pickup : [],
+                is_array($destination) ? $destination : [],
+                $serviceType,
+                $packageType
+            );
+            $estimatedFare = $fareResult['fare'];
+        } catch (\Throwable $e) {
+            error_log('PaymentController fare: ' . $e->getMessage());
+            Router::$response->status(400)->json([
+                "message" => "No se pudo calcular la tarifa",
+                "error" => $e->getMessage()
+            ]);
+            return;
         }
 
         // 1️⃣ Crear ride request
@@ -80,49 +101,18 @@ class PaymentController
             return;
         }
 
-        // 2️⃣ Crear link de pago en Square
-        $accessToken = 'EAAAlxTY0_RvCL8Uef5jmXv3T2XKh_5aS76wre26WvHGUFKJJ0zeMmrsCh1z3fTl';
-        $locationId  = 'LVJKV9EVQMVRR';
-        $amountCents = (int) round($estimatedFare * 100); // Square espera enteros en centavos
-        $idempotencyKey = uniqid('pay_', true);
-
-        $postData = [
-            "idempotency_key" => $idempotencyKey,
-            "quick_pay" => [
-                "name" => "Pago de viaje #$rideRequestId",
-                "price_money" => [
-                    "amount" => $amountCents,
-                    "currency" => $currency
-                ],
-                "location_id" => $locationId
-            ]
-        ];
-
-        $ch = curl_init("https://connect.squareupsandbox.com/v2/online-checkout/payment-links");
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            "Content-Type: application/json",
-            "Authorization: Bearer $accessToken",
-            "Square-Version: 2025-03-19"
-        ]);
-        curl_setopt($ch, CURLOPT_POST, 1);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-
-        $response = curl_exec($ch);
-        $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        $result = json_decode($response, true);
-
-        if ($httpcode !== 200 && $httpcode !== 201) {
-            Router::$response->status($httpcode)->json([
+        // 2️⃣ Crear link de pago en Square (credenciales solo desde .env)
+        $square = $this->createSquarePaymentLink((int) $rideRequestId, $estimatedFare, $currency);
+        if (!empty($square['error'])) {
+            Router::$response->status(500)->json([
                 "message" => "Error creando link de pago",
-                "error" => $result
+                "error" => $square['error']
             ]);
             return;
         }
 
-        $paymentLinkUrl = $result['payment_link']['url'] ?? null;
+        $paymentLinkUrl = $square['url'];
+        $idempotencyKey = $square['idempotency_key'];
 
         // 3️⃣ Guardar en payments vinculando ride_request_id
         $paymentId = $this->paymentModel->create([
@@ -140,10 +130,89 @@ class PaymentController
             "message" => "Solicitud y link de pago creados correctamente",
             "rideRequestId" => $rideRequestId,
             "payment_id" => $paymentId,
-            "paymentUrl" => $paymentLinkUrl
+            "paymentUrl" => $paymentLinkUrl,
+            "estimatedFare" => $estimatedFare,
+            "fareDetails" => $fareResult,
         ]);
     }
 
+    /**
+     * @return array{url:?string,idempotency_key:?string,error:?string}
+     */
+    private function createSquarePaymentLink(int $rideRequestId, float $amount, string $currency): array
+    {
+        $appEnv = isset($_ENV['APP_ENV']) ? strtolower((string) $_ENV['APP_ENV']) : '';
+        $isProd = ($appEnv === 'production');
+
+        if ($isProd) {
+            $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_PROD'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
+            $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_PROD'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
+        } else {
+            $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_SANDBOX'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
+            $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_SANDBOX'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
+        }
+        $locationId = preg_replace('/[^a-zA-Z0-9_-]/', '', trim($locationId));
+
+        $sandboxEnv = $_ENV['SQUARE_SANDBOX'] ?? '';
+        $sandbox = ($sandboxEnv === 'true' || $sandboxEnv === '1') ? true : !$isProd;
+        $squareBaseUrl = $sandbox ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com';
+
+        if (empty($accessToken) || empty($locationId)) {
+            return [
+                'url' => null,
+                'idempotency_key' => null,
+                'error' => empty($accessToken) ? 'SQUARE_ACCESS_TOKEN no configurado' : 'SQUARE_LOCATION_ID no configurado'
+            ];
+        }
+
+        $amountCents = (int) round($amount * 100);
+        if ($amountCents <= 0) {
+            return ['url' => null, 'idempotency_key' => null, 'error' => 'Monto inválido'];
+        }
+
+        $idempotencyKey = uniqid('pay_', true);
+        $postData = [
+            "idempotency_key" => $idempotencyKey,
+            "quick_pay" => [
+                "name" => "Pago de viaje #$rideRequestId",
+                "price_money" => [
+                    "amount" => $amountCents,
+                    "currency" => strtoupper($currency)
+                ],
+                "location_id" => $locationId
+            ]
+        ];
+
+        $ch = curl_init($squareBaseUrl . "/v2/online-checkout/payment-links");
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            "Content-Type: application/json",
+            "Authorization: Bearer $accessToken",
+            "Square-Version: 2025-03-19"
+        ]);
+        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
+        $response = curl_exec($ch);
+        $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        $result = json_decode($response, true);
+
+        if ($httpcode !== 200 && $httpcode !== 201) {
+            return [
+                'url' => null,
+                'idempotency_key' => $idempotencyKey,
+                'error' => $result ?? "HTTP $httpcode"
+            ];
+        }
+
+        return [
+            'url' => $result['payment_link']['url'] ?? null,
+            'idempotency_key' => $idempotencyKey,
+            'error' => null
+        ];
+    }
 
     public function updateStatus($idempotencyKey)
     {
@@ -169,9 +238,22 @@ class PaymentController
             "status" => $status
         ]);
     }
+
     public function getPaymentsByUser($userId)
     {
-        $payments = $this->paymentModel->findByUserId((int)$userId);
+        $authUser = Router::$request->user ?? null;
+        $authId = (int) ($authUser->id ?? 0);
+        $requestedId = (int) $userId;
+        $isAdmin = $authUser && strtoupper($authUser->rol ?? '') === 'ADMIN';
+
+        if (!$isAdmin && $authId !== $requestedId) {
+            Router::$response->status(403)->json([
+                "message" => "No autorizado a ver pagos de otro usuario"
+            ]);
+            return;
+        }
+
+        $payments = $this->paymentModel->findByUserId($requestedId);
 
         if (empty($payments)) {
             Router::$response->status(404)->json([
@@ -185,7 +267,19 @@ class PaymentController
 
     public function getPaymentsByDriver($driverId)
     {
-        $payments = $this->paymentModel->findByDriverId((int)$driverId);
+        $authUser = Router::$request->user ?? null;
+        $authId = (int) ($authUser->id ?? 0);
+        $requestedId = (int) $driverId;
+        $isAdmin = $authUser && strtoupper($authUser->rol ?? '') === 'ADMIN';
+
+        if (!$isAdmin && $authId !== $requestedId) {
+            Router::$response->status(403)->json([
+                "message" => "No autorizado a ver pagos de otro chofer"
+            ]);
+            return;
+        }
+
+        $payments = $this->paymentModel->findByDriverId($requestedId);
 
         if (empty($payments)) {
             Router::$response->status(404)->json([
@@ -203,6 +297,17 @@ class PaymentController
 
         if (!$payment) {
             Router::$response->status(404)->json(["message" => "Pago no encontrado"]);
+            return;
+        }
+
+        $authUser = Router::$request->user ?? null;
+        $authId = (int) ($authUser->id ?? 0);
+        $isAdmin = $authUser && strtoupper($authUser->rol ?? '') === 'ADMIN';
+        $ownerId = (int) ($payment['user_id'] ?? 0);
+        $driverId = (int) ($payment['driver_id'] ?? 0);
+
+        if (!$isAdmin && $authId !== $ownerId && $authId !== $driverId) {
+            Router::$response->status(403)->json(["message" => "No autorizado"]);
             return;
         }
 

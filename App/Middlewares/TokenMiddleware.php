@@ -3,6 +3,7 @@
 namespace App\Middlewares;
 
 use App\Models\UsersModel;
+use App\Services\JwtSecret;
 use EasyProjects\SimpleRouter\Router;
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
@@ -10,12 +11,14 @@ use Firebase\JWT\Key;
 
 class TokenMiddleware
 {
-    private string $secret = "TU_SECRET_KEY"; // Ideal mover a .env
+    private string $secret;
     private $user;
 
     public function __construct(
         private ?UsersModel $usersModel = new UsersModel()
-    ) {}
+    ) {
+        $this->secret = JwtSecret::get();
+    }
 
     public function strict()
     {
