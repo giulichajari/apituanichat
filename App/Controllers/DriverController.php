@@ -4,17 +4,21 @@ namespace App\Controllers;
 
 use App\Models\DriverModel;
 use App\Services\FareCalculator;
+use App\Models\DeviceTokenModel;
+use App\Services\FcmService;
 use EasyProjects\SimpleRouter\Router;
 
 class DriverController
 {
     private DriverModel $driverModel;
     private FareCalculator $fareCalculator;
+    private DeviceTokenModel $deviceTokenModel;
 
     public function __construct()
     {
         $this->driverModel = new DriverModel();
         $this->fareCalculator = new FareCalculator();
+        $this->deviceTokenModel = new DeviceTokenModel();
     }
 
     public function getDriver()
@@ -184,13 +188,23 @@ class DriverController
                     'user_id' => $userId
                 ]
             ];
-
-            $socket = fsockopen('localhost', 8080, $errno, $errstr, 2);
-            if ($socket) {
-                fwrite($socket, json_encode($message));
-                fclose($socket);
-            } else {
-                error_log("⚠️ No se pudo conectar al WebSocket: $errstr ($errno)");
+            $tokens = $this->deviceTokenModel->getActiveTokensForUser((int)$driverId);
+            foreach ($tokens as $row) {
+                $fcmToken = $row["fcm_token"] ?? null;
+                if (!$fcmToken) {
+                    continue;
+                }
+                $ok = FcmService::sendDataMessage($fcmToken, [
+                    "type" => "ride_request",
+                    "ride_id" => (string)$requestId,
+                    "chat_id" => (string)($chatId ?? ""),
+                    "message" => "Tienes una nueva solicitud de viaje",
+                    "estimated_fare" => (string)$estimatedFare,
+                    "user_id" => (string)$userId,
+                ]);
+                if (!$ok) {
+                    $this->deviceTokenModel->deactivateToken($fcmToken);
+                }
             }
         } catch (\Exception $e) {
             error_log("❌ Error enviando notificación WS: " . $e->getMessage());

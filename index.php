@@ -16,6 +16,9 @@ use App\Routers\OrdersRouter;
 use App\Routers\StatusRouter;
 use App\Routers\GroupsRouter;
 use App\Routers\AiRouter;
+use App\Routers\DeviceTokensRouter;
+use App\Routers\VerificationRouter;
+use App\Routers\LiveRouter;
 use EasyProjects\SimpleRouter\Router;
 
 
@@ -67,6 +70,9 @@ try {
     new StatusRouter($router);
     new GroupsRouter($router);
     new AiRouter($router);
+    new DeviceTokensRouter($router);
+        new VerificationRouter($router);
+    new LiveRouter($router);
     // Ejecutamos router
     // Cargar variables de entorno desde la raíz del proyecto
 

@@ -492,6 +492,9 @@ class ChatModel
                 u.name as other_user_name,
                 u.email as other_user_email,
                 u.avatar as other_user_avatar,
+                u.is_verified as other_user_is_verified,
+                u.verified_type as other_user_verified_type,
+                u.verified_alias as other_user_verified_alias,
                 -- Último mensaje
                 (SELECT contenido FROM mensajes m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) as ultimo_mensaje,
                 (SELECT enviado_en FROM mensajes m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) as ultimo_mensaje_fecha,
@@ -757,6 +760,9 @@ class ChatModel
                 name, 
                 email, 
                 avatar,
+                is_verified,
+                verified_type,
+                verified_alias,
                 created_at
             FROM users 
             WHERE id != :currentUserId 
@@ -775,6 +781,9 @@ class ChatModel
                 u.name as other_user_name,
                 u.email as other_user_email,
                 u.avatar as other_user_avatar,
+                u.is_verified as other_user_is_verified,
+                u.verified_type as other_user_verified_type,
+                u.verified_alias as other_user_verified_alias,
                 -- Último mensaje
                 (SELECT contenido FROM mensajes m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) as last_message,
                 (SELECT enviado_en FROM mensajes m WHERE m.chat_id = c.id ORDER BY m.id DESC LIMIT 1) as last_message_time,
@@ -809,6 +818,9 @@ class ChatModel
                     'name' => $user['name'],
                     'email' => $user['email'],
                     'avatar' => $user['avatar'],
+                    'is_verified' => $user['is_verified'],
+                    'verified_type' => $user['verified_type'],
+                    'verified_alias' => $user['verified_alias'],
                     'created_at' => $user['created_at'],
 
                     // Información del chat (si existe)

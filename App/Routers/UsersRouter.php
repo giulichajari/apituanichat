@@ -59,6 +59,7 @@ class UsersRouter
         $router->post("/login", fn() => $authController->login());
         $router->post("/logout", fn() => $authController->logout());
         $router->post("/verify-otp", fn() => $authController->verifyOtp());
+        $router->post("/auth/refresh", fn() => $authController->refreshToken());
         $router->post('/register', function () {
             $controller = new UsersController();
             $controller->register();

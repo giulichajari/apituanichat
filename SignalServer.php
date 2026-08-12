@@ -13,6 +13,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     protected $chatModel;
     protected $usersModel;
     protected $profileModel;
+    protected $deviceTokenModel;
 
     public function __construct()
     {
@@ -21,6 +22,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $this->initializeChatModel();
         $this->initializeUsersModel();
         $this->initializeProfileModel();
+        $this->initializeDeviceTokenModel();
         echo "🚀 SignalServer refactorizado inicializado\n";
     }
 
@@ -205,6 +207,19 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         } catch (\Throwable $e) {
             $this->profileModel = null;
             $this->logToFile("❌ ProfileModel no disponible: {$e->getMessage()}");
+        }
+    }
+    private function initializeDeviceTokenModel()
+    {
+        try {
+            if (!class_exists("App\\Models\\DeviceTokenModel")) {
+                $this->deviceTokenModel = null;
+                return;
+            }
+            $this->deviceTokenModel = new \App\Models\DeviceTokenModel();
+        } catch (\Throwable $e) {
+            $this->deviceTokenModel = null;
+            $this->logToFile("❌ DeviceTokenModel no disponible: {$e->getMessage()}");
         }
     }
 
@@ -1359,20 +1374,40 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
     private function sendFcmToUser($userId, array $data)
     {
-        if (!$this->usersModel || !class_exists('App\Services\FcmService')) {
+        if (!class_exists("App\\Services\\FcmService")) {
             return;
         }
-
-        try {
-            $token = $this->usersModel->getFcmToken((int)$userId);
-            if ($token) {
-                \App\Services\FcmService::sendDataMessage($token, $data);
+        $tokens = [];
+        if ($this->deviceTokenModel) {
+            try {
+                $tokens = $this->deviceTokenModel->getActiveTokensForUser((int)$userId);
+                $this->logToFile("🔎 sendFcmToUser: {$userId} tiene " . count($tokens) . " token(s) activo(s) en device_tokens");
+            } catch (\Throwable $e) {
+                $this->logToFile("❌ Error obteniendo device_tokens para {$userId}: {$e->getMessage()}");
             }
-        } catch (\Throwable $e) {
-            $this->logToFile("❌ Error enviando FCM a {$userId}: {$e->getMessage()}");
+        }
+        if (empty($tokens) && $this->usersModel) {
+            $legacy = $this->usersModel->getFcmToken((int)$userId);
+            if ($legacy) {
+                $tokens = [["fcm_token" => $legacy]];
+            }
+        }
+        foreach ($tokens as $row) {
+            $fcmToken = $row["fcm_token"] ?? null;
+            if (!$fcmToken) {
+                continue;
+            }
+            try {
+                $ok = \App\Services\FcmService::sendDataMessage($fcmToken, $data);
+                $this->logToFile("📤 FCM enviado a token " . substr($fcmToken, 0, 20) . "... resultado: " . ($ok ? "OK" : "FALLO"));
+                if (!$ok && $this->deviceTokenModel) {
+                    $this->deviceTokenModel->deactivateToken($fcmToken);
+                }
+            } catch (\Throwable $e) {
+                $this->logToFile("❌ Error enviando FCM a {$userId}: {$e->getMessage()}");
+            }
         }
     }
-
     private function buildCall(array $data, $callerId, $calleeId, ConnectionInterface $from)
     {
         $callId = $this->normalizeCallId($data, true);

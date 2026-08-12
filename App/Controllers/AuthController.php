@@ -59,6 +59,9 @@ class AuthController
       ];
       $jwt = JWT::encode($payload, $secretKey, 'HS256');
 
+      $refreshToken = bin2hex(random_bytes(32));
+      $refreshExpiresAt = date('Y-m-d H:i:s', time() + (86400 * 30));
+
       // 🔹 Guardar el token en DB (corregido)
       $expiresAt = date('Y-m-d H:i:s', time() + 3600);
       $createdAt = date('Y-m-d H:i:s');
@@ -66,25 +69,29 @@ class AuthController
       // Opción 1: UPDATE si el token ya existe para este usuario
       $stmt = $db->prepare("
             UPDATE user_tokens 
-            SET token = :token, created_at = :created_at, expires_at = :expires_at
+            SET token = :token, refresh_token = :refresh_token, created_at = :created_at, expires_at = :expires_at, refresh_expires_at = :refresh_expires_at
             WHERE user_id = :user_id
         ");
       $stmt->bindValue(':token', $jwt);
       $stmt->bindValue(':created_at', $createdAt);
       $stmt->bindValue(':expires_at', $expiresAt);
       $stmt->bindValue(':user_id', $user['id']);
+      $stmt->bindValue(':refresh_token', $refreshToken);
+      $stmt->bindValue(':refresh_expires_at', $refreshExpiresAt);
       $stmt->execute();
 
       // Si no se actualizó ninguna fila, INSERT nuevo token
       if ($stmt->rowCount() === 0) {
         $stmt = $db->prepare("
-                INSERT INTO user_tokens (user_id, token, created_at, expires_at)
-                VALUES (:user_id, :token, :created_at, :expires_at)
+                INSERT INTO user_tokens (user_id, token, refresh_token, created_at, expires_at, refresh_expires_at)
+                VALUES (:user_id, :token, :refresh_token, :created_at, :expires_at, :refresh_expires_at)
             ");
         $stmt->bindValue(':user_id', $user['id']);
         $stmt->bindValue(':token', $jwt);
         $stmt->bindValue(':created_at', $createdAt);
         $stmt->bindValue(':expires_at', $expiresAt);
+        $stmt->bindValue(':refresh_token', $refreshToken);
+        $stmt->bindValue(':refresh_expires_at', $refreshExpiresAt);
         $stmt->execute();
       }
 
@@ -92,6 +99,7 @@ class AuthController
       Router::$response->json([
         'message' => 'Login exitoso',
         'token' => $jwt,
+        'refresh_token' => $refreshToken,
         'otp' => $otp,
         'user_id' => $user['id'],
         'rol' => $user['rol'],
@@ -153,12 +161,113 @@ class AuthController
     ];
     $jwt = JWT::encode($payload, JwtSecret::get(), 'HS256');
 
+    $refreshToken = bin2hex(random_bytes(32));
+    $expiresAt = date('Y-m-d H:i:s', time() + 3600);
+    $refreshExpiresAt = date('Y-m-d H:i:s', time() + (86400 * 30));
+    $createdAt = date('Y-m-d H:i:s');
+
+    $stmt = $db->prepare("
+        UPDATE user_tokens
+        SET token = :token, refresh_token = :refresh_token,
+            created_at = :created_at, expires_at = :expires_at,
+            refresh_expires_at = :refresh_expires_at
+        WHERE user_id = :user_id
+    ");
+    $stmt->bindValue(':token', $jwt);
+    $stmt->bindValue(':refresh_token', $refreshToken);
+    $stmt->bindValue(':created_at', $createdAt);
+    $stmt->bindValue(':expires_at', $expiresAt);
+    $stmt->bindValue(':refresh_expires_at', $refreshExpiresAt);
+    $stmt->bindValue(':user_id', $user['id']);
+    $stmt->execute();
+
+    if ($stmt->rowCount() === 0) {
+        $stmt = $db->prepare("
+            INSERT INTO user_tokens (user_id, token, refresh_token, created_at, expires_at, refresh_expires_at)
+            VALUES (:user_id, :token, :refresh_token, :created_at, :expires_at, :refresh_expires_at)
+        ");
+        $stmt->bindValue(':user_id', $user['id']);
+        $stmt->bindValue(':token', $jwt);
+        $stmt->bindValue(':refresh_token', $refreshToken);
+        $stmt->bindValue(':created_at', $createdAt);
+        $stmt->bindValue(':expires_at', $expiresAt);
+        $stmt->bindValue(':refresh_expires_at', $refreshExpiresAt);
+        $stmt->execute();
+    }
+
     // Limpiamos OTP usado
     $stmt = $db->prepare("UPDATE users SET otp = NULL, otp_created_at = NULL WHERE id = :id");
     $stmt->bindValue(':id', $user['id']);
     $stmt->execute();
 
-    Router::$response->json(['token' => $jwt], 200);
+    Router::$response->json(['token' => $jwt, 'refresh_token' => $refreshToken], 200);
+  }
+
+  public static function refreshToken()
+  {
+    try {
+      $body = Router::$request->body;
+      $refreshToken = $body->refresh_token ?? null;
+
+      if (!$refreshToken) {
+        Router::$response->json(['error' => 'refresh_token requerido'], 400);
+        return;
+      }
+
+      $db = \App\Configs\Database::getInstance()->getConnection();
+
+      $stmt = $db->prepare("
+          SELECT user_id, refresh_expires_at FROM user_tokens
+          WHERE refresh_token = :refresh_token
+      ");
+      $stmt->bindValue(':refresh_token', $refreshToken);
+      $stmt->execute();
+      $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+      if (!$row) {
+        Router::$response->json(['error' => 'refresh_token inválido'], 401);
+        return;
+      }
+
+      if (strtotime($row['refresh_expires_at']) < time()) {
+        Router::$response->json(['error' => 'refresh_token expirado, inicia sesión de nuevo'], 401);
+        return;
+      }
+
+      $stmt = $db->prepare("SELECT id, email FROM users WHERE id = :id");
+      $stmt->bindValue(':id', $row['user_id']);
+      $stmt->execute();
+      $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+      if (!$user) {
+        Router::$response->json(['error' => 'Usuario no encontrado'], 404);
+        return;
+      }
+
+      $payload = [
+        'user_id' => $user['id'],
+        'email' => $user['email'],
+        'iat' => time(),
+        'exp' => time() + 3600
+      ];
+      $jwt = JWT::encode($payload, JwtSecret::get(), 'HS256');
+      $expiresAt = date('Y-m-d H:i:s', time() + 3600);
+
+      $stmt = $db->prepare("
+          UPDATE user_tokens SET token = :token, expires_at = :expires_at
+          WHERE user_id = :user_id
+      ");
+      $stmt->bindValue(':token', $jwt);
+      $stmt->bindValue(':expires_at', $expiresAt);
+      $stmt->bindValue(':user_id', $user['id']);
+      $stmt->execute();
+
+      Router::$response->json(['token' => $jwt], 200);
+
+    } catch (Exception $e) {
+      error_log("Refresh token ERROR: " . $e->getMessage(), 3, "/var/www/apituanichat/php-error.log");
+      Router::$response->json(['error' => 'Error renovando sesión'], 500);
+    }
   }
   public static function logout()
   {

@@ -4,6 +4,7 @@ namespace App\Controllers;
 
 use App\Models\PaymentModel;
 use App\Models\DriverModel;
+use App\Models\VerificationPaymentModel;
 use App\Services\FareCalculator;
 use EasyProjects\SimpleRouter\Router;
 
@@ -11,12 +12,14 @@ class PaymentController
 {
     private PaymentModel $paymentModel;
     private DriverModel $driverModel;
+    private VerificationPaymentModel $verificationPaymentModel;
     private FareCalculator $fareCalculator;
 
     public function __construct()
     {
         $this->paymentModel = new PaymentModel();
         $this->driverModel = new DriverModel();
+        $this->verificationPaymentModel = new VerificationPaymentModel();
         $this->fareCalculator = new FareCalculator();
     }
 
@@ -139,7 +142,7 @@ class PaymentController
     /**
      * @return array{url:?string,idempotency_key:?string,error:?string}
      */
-    private function createSquarePaymentLink(int $rideRequestId, float $amount, string $currency): array
+    private function createSquarePaymentLink(int $rideRequestId, float $amount, string $currency, ?string $name = null): array
     {
         $appEnv = isset($_ENV['APP_ENV']) ? strtolower((string) $_ENV['APP_ENV']) : '';
         $isProd = ($appEnv === 'production');
@@ -174,7 +177,7 @@ class PaymentController
         $postData = [
             "idempotency_key" => $idempotencyKey,
             "quick_pay" => [
-                "name" => "Pago de viaje #$rideRequestId",
+                "name" => $name ?? "Pago de viaje #$rideRequestId",
                 "price_money" => [
                     "amount" => $amountCents,
                     "currency" => strtoupper($currency)
@@ -209,11 +212,71 @@ class PaymentController
 
         return [
             'url' => $result['payment_link']['url'] ?? null,
+            'payment_link_id' => $result['payment_link']['id'] ?? null,
             'idempotency_key' => $idempotencyKey,
             'error' => null
         ];
     }
 
+
+    public function createVerificationPaymentLink()
+    {
+        $userId = Router::$request->user->id ?? null;
+        if (!$userId) {
+            Router::$response->status(401)->json(["message" => "Usuario no autenticado"]);
+            return;
+        }
+
+        if ($this->verificationPaymentModel->hasCompletedPayment((int)$userId)) {
+            Router::$response->status(200)->json([
+                "message" => "Ya tenés un pago de membresía completado",
+                "alreadyPaid" => true
+            ]);
+            return;
+        }
+
+        $amount = 100.00;
+        $currency = 'USD';
+
+        $square = $this->createSquarePaymentLink(0, $amount, $currency, "Membresía de verificación anual");
+        if (!empty($square['error'])) {
+            Router::$response->status(500)->json([
+                "message" => "Error creando link de pago",
+                "error" => $square['error']
+            ]);
+            return;
+        }
+
+        $this->verificationPaymentModel->create(
+            (int)$userId,
+            $amount,
+            $currency,
+            (string)($square['payment_link_id'] ?? ''),
+            (string)$square['url'],
+            (string)$square['idempotency_key']
+        );
+
+        Router::$response->status(201)->json([
+            "message" => "Link de pago creado",
+            "paymentUrl" => $square['url'],
+            "amount" => $amount,
+            "currency" => $currency,
+        ]);
+    }
+
+    public function getVerificationPaymentStatus()
+    {
+        $userId = Router::$request->user->id ?? null;
+        if (!$userId) {
+            Router::$response->status(401)->json(["message" => "Usuario no autenticado"]);
+            return;
+        }
+        $payment = $this->verificationPaymentModel->getLatestForUser((int)$userId);
+        Router::$response->status(200)->json([
+            "hasCompletedPayment" => $this->verificationPaymentModel->hasCompletedPayment((int)$userId),
+            "payment" => $payment,
+        ]);
+    }
     public function updateStatus($idempotencyKey)
     {
         $body = json_decode(file_get_contents('php://input'), true);

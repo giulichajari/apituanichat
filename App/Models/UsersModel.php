@@ -384,4 +384,26 @@ class UsersModel
             return false;
         }
     }
+
+    // Buscar usuarios por nombre o email (para verificación manual)
+    public function searchUsers(string $query, int $limit = 20): array
+    {
+        try {
+            $like = '%' . $query . '%';
+            $stmt = $this->db->prepare("
+                SELECT id, name, email, is_verified, verified_type, verified_alias
+                FROM users
+                WHERE name LIKE :q OR email LIKE :q
+                ORDER BY name ASC
+                LIMIT :limit
+            ");
+            $stmt->bindValue(':q', $like);
+            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+            $stmt->execute();
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            error_log("searchUsers ERROR: " . $e->getMessage());
+            return [];
+        }
+    }
 }

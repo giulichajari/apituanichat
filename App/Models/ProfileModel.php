@@ -20,12 +20,14 @@ class ProfileModel
     {
         try {
             $stmt = $this->db->prepare("
-                SELECT id, user_id, bio, email, website,
-                       instagram, facebook, twitter, linkedin, tiktok, avatar,
-                       enable_welcome_message, welcome_message, welcome_link, company_description,
-                       enable_unavailable_auto_reply, unavailable_auto_reply_message
-                FROM profiles
-                WHERE user_id = :user_id
+                SELECT p.id, p.user_id, p.bio, p.email, p.website,
+                       p.instagram, p.facebook, p.twitter, p.linkedin, p.tiktok, p.avatar,
+                       p.enable_welcome_message, p.welcome_message, p.welcome_link, p.company_description,
+                       p.enable_unavailable_auto_reply, p.unavailable_auto_reply_message,
+                       u.name, u.is_verified, u.verified_type, u.verified_alias
+                FROM profiles p
+                JOIN users u ON u.id = p.user_id
+                WHERE p.user_id = :user_id
             ");
             $stmt->bindValue(':user_id', $userId, PDO::PARAM_INT);
             $stmt->execute();

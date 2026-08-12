@@ -3,6 +3,7 @@
 namespace App\Controllers;
 
 use App\Models\OrderModel;
+use App\Models\VerificationPaymentModel;
 use EasyProjects\SimpleRouter\Router;
 
 /**
@@ -16,10 +17,12 @@ use EasyProjects\SimpleRouter\Router;
 class SquareWebhookController
 {
     private OrderModel $orderModel;
+    private VerificationPaymentModel $verificationPaymentModel;
 
     public function __construct()
     {
         $this->orderModel = new OrderModel();
+        $this->verificationPaymentModel = new VerificationPaymentModel();
     }
 
     public function handle(): void
@@ -76,19 +79,29 @@ class SquareWebhookController
         }
 
         $order = $this->orderModel->getBySquarePaymentLinkId($paymentLinkId);
-        if (!$order) {
-            error_log("Square webhook: pedido no encontrado para payment_link_id $paymentLinkId");
+        if ($order) {
+            $ok = $this->orderModel->markAsPaid((int)$order["id"]);
+            if ($ok) {
+                error_log("Square webhook: Pedido #{$order["id"]} marcado como pagado.");
+            }
             return;
         }
 
-        $ok = $this->orderModel->markAsPaid((int)$order['id']);
-        if ($ok) {
-            error_log("Square webhook: Pedido #{$order['id']} marcado como pagado.");
+        $verificationPayment = $this->verificationPaymentModel->getByPaymentLinkId($paymentLinkId);
+        if ($verificationPayment) {
+            $ok = $this->verificationPaymentModel->markAsCompleted((int)$verificationPayment["id"]);
+            if ($ok) {
+                error_log("Square webhook: Pago de verificacion #{$verificationPayment["id"]} marcado como completado.");
+            }
+            return;
         }
+
+        error_log("Square webhook: no se encontro pedido ni pago de verificacion para payment_link_id $paymentLinkId");
     }
 
     private function fetchPaymentLinkId(string $paymentId): ?string
     {
+
         $accessToken = $_ENV['SQUARE_ACCESS_TOKEN'] ?? '';
         if (!$accessToken) return null;
 
