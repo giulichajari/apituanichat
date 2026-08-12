@@ -15,3 +15,13 @@
 # Archivos del sistema
 .DS_Store
 Thumbs.db
+
+# Credenciales adicionales
+.env.*
+firebase-credentials.json
+*firebase-credentials*
+
+# Backups locales (no deben ir al historial)
+*.bak
+*.bak.*
+*.bak2.*
