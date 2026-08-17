@@ -46,36 +46,63 @@ class MailService
             'pass_len' => strlen((string) $password),
         ]);
 
-        try {
-            $mail = new PHPMailer(true);
-            $mail->CharSet = 'UTF-8';
-            $mail->isSMTP();
-            $mail->Host = $smtpHost;
-            $mail->SMTPAuth = true;
-            $mail->AuthType = 'LOGIN';
-            $mail->Username = $username;
-            $mail->Password = $password;
-            $mail->SMTPSecure = $secure === 'ssl'
-                ? PHPMailer::ENCRYPTION_SMTPS
-                : PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Port = $port;
-            $mail->Timeout = 20;
-            $mail->setFrom($from, $fromName);
-            $mail->addReplyTo($replyTo);
-            $mail->addAddress($to);
-            $mail->Subject = $subject;
-            $mail->isHTML($isHtml);
-            $mail->Body = $body;
-            if ($isHtml) {
-                $mail->AltBody = trim(html_entity_decode(strip_tags($body), ENT_QUOTES, 'UTF-8'));
+        $attempts = self::connectionAttempts($port, $secure);
+        $lastError = 'SMTP desconocido';
+
+        foreach ($attempts as $attempt) {
+            try {
+                $mail = new PHPMailer(true);
+                $mail->CharSet = 'UTF-8';
+                $mail->isSMTP();
+                $mail->Host = $smtpHost;
+                $mail->SMTPAuth = true;
+                $mail->AuthType = 'LOGIN';
+                $mail->Username = $username;
+                $mail->Password = $password;
+                $mail->SMTPSecure = $attempt['secure'] === 'ssl'
+                    ? PHPMailer::ENCRYPTION_SMTPS
+                    : PHPMailer::ENCRYPTION_STARTTLS;
+                $mail->Port = $attempt['port'];
+                $mail->Timeout = 20;
+                $mail->SMTPAutoTLS = true;
+                $mail->SMTPOptions = [
+                    'socket' => ['bindto' => '0.0.0.0:0'],
+                ];
+                $mail->setFrom($from, $fromName);
+                $mail->addReplyTo($replyTo);
+                $mail->addAddress($to);
+                $mail->Subject = $subject;
+                $mail->isHTML($isHtml);
+                $mail->Body = $body;
+                if ($isHtml) {
+                    $mail->AltBody = trim(html_entity_decode(strip_tags($body), ENT_QUOTES, 'UTF-8'));
+                }
+                $mail->send();
+                self::log('PHPMailer RESULT', 'OK port=' . $attempt['port'] . ' secure=' . $attempt['secure']);
+                return true;
+            } catch (\Throwable $e) {
+                $lastError = $e->getMessage();
+                self::log('PHPMailer ERROR', $lastError . ' | port=' . $attempt['port'] . ' secure=' . $attempt['secure']);
             }
-            $mail->send();
-            self::log('PHPMailer RESULT', 'OK');
-            return true;
-        } catch (\Throwable $e) {
-            self::log('PHPMailer ERROR', $e->getMessage());
-            return false;
         }
+
+        return false;
+    }
+
+    /**
+     * Hostinger: 465 + SMTPS, o 587 + STARTTLS si el primero no conecta.
+     */
+    private static function connectionAttempts(int $port, string $secure): array
+    {
+        $primary = [
+            'port' => $port > 0 ? $port : 465,
+            'secure' => $secure === 'tls' || $secure === 'starttls' ? 'tls' : 'ssl',
+        ];
+        $fallback = $primary['port'] === 465
+            ? ['port' => 587, 'secure' => 'tls']
+            : ['port' => 465, 'secure' => 'ssl'];
+
+        return [$primary, $fallback];
     }
 
     private static function env(string $key, ?string $default = null): ?string
