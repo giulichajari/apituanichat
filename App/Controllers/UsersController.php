@@ -302,10 +302,10 @@ private function getCurrentUserId()
      */
     public function forgotPassword()
     {
-        $email = Router::$request->body->email ?? null;
+        $email = strtolower(trim((string) (Router::$request->body->email ?? '')));
         $genericMessage = "Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.";
 
-        if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return Router::$response->status(400)->send([
                 "message" => "Email is required"
             ]);
@@ -313,10 +313,13 @@ private function getCurrentUserId()
 
         $user = $this->usuariosModel->getUserByEmail($email);
         if (!$user) {
+            MailService::logForgot('user_not_found', $email);
             return Router::$response->status(200)->send([
                 "message" => $genericMessage
             ]);
         }
+
+        MailService::logForgot('user_found', $email, (int) $user['id']);
 
         $token = bin2hex(random_bytes(16));
         $this->usuariosModel->storeResetToken((int) $user["id"], $token);

@@ -336,7 +336,8 @@ class UsersModel
     public function getUserByEmail(string $email): array|false
     {
         try {
-            $stmt = $this->db->prepare("SELECT * FROM users WHERE email = :email");
+            $email = strtolower(trim($email));
+            $stmt = $this->db->prepare("SELECT * FROM users WHERE LOWER(TRIM(email)) = :email");
             $stmt->bindValue(':email', $email);
             $stmt->execute();
             return $stmt->fetch(PDO::FETCH_ASSOC);
