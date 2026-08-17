@@ -23,42 +23,46 @@ class MailService
             'phpmailer' => class_exists(PHPMailer::class),
         ]);
 
-        if ($smtpHost && class_exists(PHPMailer::class)) {
-            try {
-                $mail = new PHPMailer(true);
-                $mail->CharSet = 'UTF-8';
-                $mail->isSMTP();
-                $mail->Host = $smtpHost;
-                $mail->SMTPAuth = true;
-                $mail->Username = self::env('SMTP_USER', '');
-                $mail->Password = self::env('SMTP_PASS', '');
-                $mail->SMTPSecure = self::env('SMTP_SECURE', 'tls');
-                $mail->Port = (int) self::env('SMTP_PORT', '587');
-                $mail->setFrom($from, $fromName);
-                $mail->addReplyTo($replyTo);
-                $mail->addAddress($to);
-                $mail->Subject = $subject;
-                $mail->isHTML($isHtml);
-                $mail->Body = $body;
-                if ($isHtml) {
-                    $mail->AltBody = trim(html_entity_decode(strip_tags($body), ENT_QUOTES, 'UTF-8'));
-                }
-                $mail->send();
-                self::log('PHPMailer RESULT', 'OK');
-                return true;
-            } catch (\Throwable $e) {
-                self::log('PHPMailer ERROR', $e->getMessage());
-            }
+        if (!$smtpHost) {
+            self::log('SMTP_HOST vacío', 'no se envía');
+            return false;
         }
 
-        $headers = "From: {$from}\r\n";
-        $headers .= "Reply-To: {$replyTo}\r\n";
-        $headers .= $isHtml
-            ? "Content-Type: text/html; charset=UTF-8\r\n"
-            : "Content-Type: text/plain; charset=UTF-8\r\n";
-        $sent = @mail($to, $subject, $body, $headers);
-        self::log('mail() RESULT', $sent ? 'OK' : 'FAIL');
-        return (bool) $sent;
+        if (!class_exists(PHPMailer::class)) {
+            self::log('PHPMailer not found', 'ejecutá composer install en el servidor');
+            return false;
+        }
+
+        try {
+            $mail = new PHPMailer(true);
+            $mail->CharSet = 'UTF-8';
+            $mail->isSMTP();
+            $mail->Host = $smtpHost;
+            $mail->SMTPAuth = true;
+            $mail->Username = self::env('SMTP_USER', '');
+            $mail->Password = self::env('SMTP_PASS', '');
+            $secure = strtolower((string) self::env('SMTP_SECURE', 'tls'));
+            $mail->SMTPSecure = $secure === 'ssl'
+                ? PHPMailer::ENCRYPTION_SMTPS
+                : PHPMailer::ENCRYPTION_STARTTLS;
+            $mail->Port = (int) self::env('SMTP_PORT', $secure === 'ssl' ? '465' : '587');
+            $mail->Timeout = 20;
+            $mail->setFrom($from, $fromName);
+            $mail->addReplyTo($replyTo);
+            $mail->addAddress($to);
+            $mail->Subject = $subject;
+            $mail->isHTML($isHtml);
+            $mail->Body = $body;
+            if ($isHtml) {
+                $mail->AltBody = trim(html_entity_decode(strip_tags($body), ENT_QUOTES, 'UTF-8'));
+            }
+            $mail->send();
+            self::log('PHPMailer RESULT', 'OK');
+            return true;
+        } catch (\Throwable $e) {
+            self::log('PHPMailer ERROR', $e->getMessage());
+            return false;
+        }
     }
 
     private static function env(string $key, ?string $default = null): ?string
@@ -68,6 +72,14 @@ class MailService
             return $default;
         }
         return (string) $value;
+    }
+
+    public static function logForgot(string $event, string $email, ?int $userId = null): void
+    {
+        self::log('forgotPassword ' . $event, [
+            'email' => $email,
+            'user_id' => $userId,
+        ]);
     }
 
     private static function log(string $message, mixed $data = null): void
