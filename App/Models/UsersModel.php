@@ -362,7 +362,12 @@ class UsersModel
     public function getUserIdByResetToken(string $token): int|false
     {
         try {
-            $stmt = $this->db->prepare("SELECT id FROM users WHERE otp = :otp");
+            $stmt = $this->db->prepare(
+                "SELECT id FROM users
+                 WHERE otp = :otp
+                   AND otp_created_at IS NOT NULL
+                   AND otp_created_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)"
+            );
             $stmt->bindValue(':otp', $token);
             $stmt->execute();
             $row = $stmt->fetch(PDO::FETCH_ASSOC);

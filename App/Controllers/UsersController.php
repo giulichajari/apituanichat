@@ -4,6 +4,7 @@ namespace App\Controllers;
 
 use App\Models\UsersModel;
 use App\Models\DriverModel;
+use App\Services\MailService;
 use EasyProjects\SimpleRouter\Router;
 
 class UsersController
@@ -302,8 +303,9 @@ private function getCurrentUserId()
     public function forgotPassword()
     {
         $email = Router::$request->body->email ?? null;
+        $genericMessage = "Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.";
 
-        if (!$email) {
+        if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             return Router::$response->status(400)->send([
                 "message" => "Email is required"
             ]);
@@ -311,22 +313,41 @@ private function getCurrentUserId()
 
         $user = $this->usuariosModel->getUserByEmail($email);
         if (!$user) {
-            return Router::$response->status(404)->send([
-                "message" => "User not found"
+            return Router::$response->status(200)->send([
+                "message" => $genericMessage
             ]);
         }
 
-        // 🔑 Generar token temporal de reseteo
-        $token = bin2hex(random_bytes(32));
-        $this->usuariosModel->storeResetToken($user["id"], $token);
+        $token = bin2hex(random_bytes(16));
+        $this->usuariosModel->storeResetToken((int) $user["id"], $token);
 
-        // Enviar email (placeholder)
-        // En un proyecto real usarías PHPMailer o similar
-        // mail($email, "Password reset", "Use this token: $token");
+        $frontendUrl = rtrim($_ENV['FRONTEND_URL'] ?? $_SERVER['FRONTEND_URL'] ?? getenv('FRONTEND_URL') ?: 'https://tuanichat.com', '/');
+        $resetUrl = $frontendUrl . '/reset-password?token=' . urlencode($token);
+        $name = htmlspecialchars($user['name'] ?? '', ENT_QUOTES, 'UTF-8');
+
+        $html = '<p>Hola' . ($name !== '' ? " {$name}" : '') . ',</p>'
+            . '<p>Recibimos una solicitud para restablecer tu contraseña de Tuanichat.</p>'
+            . '<p><a href="' . htmlspecialchars($resetUrl, ENT_QUOTES, 'UTF-8') . '" style="display:inline-block;background:#2563eb;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold;">Restablecer contraseña</a></p>'
+            . '<p>Si el botón no funciona, copiá este enlace:<br>' . htmlspecialchars($resetUrl, ENT_QUOTES, 'UTF-8') . '</p>'
+            . '<p>El enlace vence en 1 hora. Si no pediste este cambio, ignorá este correo.</p>';
+
+        $sent = MailService::send(
+            $email,
+            'Restablecé tu contraseña de Tuanichat',
+            $html,
+            'Tuanichat',
+            true
+        );
+
+        if (!$sent) {
+            error_log('forgotPassword: no se pudo enviar el correo a ' . $email);
+            return Router::$response->status(500)->send([
+                "message" => "No se pudo enviar el correo. Intentá de nuevo en unos minutos."
+            ]);
+        }
 
         Router::$response->status(200)->send([
-            "message" => "Password reset link sent",
-            "token_dev" => $token // 👈 solo para pruebas
+            "message" => $genericMessage
         ]);
     }
 
@@ -341,6 +362,12 @@ private function getCurrentUserId()
         if (!$token || !$newPassword) {
             return Router::$response->status(400)->send([
                 "message" => "Token and new password are required"
+            ]);
+        }
+
+        if (strlen($newPassword) < 6) {
+            return Router::$response->status(400)->send([
+                "message" => "Password must be at least 6 characters"
             ]);
         }
 

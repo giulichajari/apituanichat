@@ -5,6 +5,7 @@ namespace App\Controllers;
 use App\Models\OrderModel;
 use App\Models\RestaurantModel;
 use App\Models\UsersModel;
+use App\Services\MailService;
 use EasyProjects\SimpleRouter\Router;
 
 class OrderController
@@ -548,47 +549,8 @@ private function sendPaymentEmail(string $to, array $order, string $paymentUrl):
 
 private function sendEmail(string $to, string $subject, string $body): bool
 {
-    $from = $_ENV['MAIL_FROM'] ?? 'noreply@tuanichat.com';
-    $replyTo = $_ENV['MAIL_REPLY'] ?? 'soporte@tuanichat.com';
-    $smtpHost = $_ENV['SMTP_HOST'] ?? null;
-
-    $this->paymentLog("sendEmail", ['to' => $to, 'smtp' => !empty($smtpHost), 'phpmailer' => class_exists(\PHPMailer\PHPMailer\PHPMailer::class)]);
-
-    if ($smtpHost && class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
-        try {
-            $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
-            $mail->CharSet = 'UTF-8';
-            $mail->isSMTP();
-            $mail->Host = $smtpHost;
-            $mail->SMTPAuth = true;
-            $mail->Username = $_ENV['SMTP_USER'];
-            $mail->Password = $_ENV['SMTP_PASS'];
-            $mail->SMTPSecure = $_ENV['SMTP_SECURE'] ?? 'tls';
-            $mail->Port = (int)($_ENV['SMTP_PORT'] ?? 587);
-            $mail->setFrom($from, 'Tuani Eats');
-            $mail->addReplyTo($replyTo);
-            $mail->addAddress($to);
-            $mail->Subject = $subject;
-            $mail->Body = $body;
-            $mail->send();
-            $this->paymentLog("PHPMailer RESULT", "OK");
-            return true;
-        } catch (\Throwable $e) {
-            $this->paymentLog("PHPMailer ERROR", $e->getMessage());
-            $this->paymentLog("SMTP failed, fallback to mail()", null);
-            // Sigue abajo y usa mail()
-        }
-    }
-
-    if ($smtpHost && !class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
-        $this->paymentLog("PHPMailer not found", "fallback to mail()");
-    }
-
-    $headers = "From: $from\r\n";
-    $headers .= "Reply-To: $replyTo\r\n";
-    $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
-    $sent = @mail($to, $subject, $body, $headers);
-    $this->paymentLog("mail() RESULT", $sent);
+    $sent = MailService::send($to, $subject, $body, 'Tuani Eats');
+    $this->paymentLog("sendEmail RESULT", $sent ? 'OK' : 'FAIL');
     return $sent;
 }
 
