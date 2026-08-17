@@ -33,19 +33,32 @@ class MailService
             return false;
         }
 
+        $username = self::env('SMTP_USER', '');
+        $password = self::env('SMTP_PASS', '');
+        $secure = strtolower((string) self::env('SMTP_SECURE', 'tls'));
+        $port = (int) self::env('SMTP_PORT', $secure === 'ssl' ? '465' : '587');
+
+        self::log('SMTP config', [
+            'host' => $smtpHost,
+            'port' => $port,
+            'secure' => $secure,
+            'user' => $username,
+            'pass_len' => strlen((string) $password),
+        ]);
+
         try {
             $mail = new PHPMailer(true);
             $mail->CharSet = 'UTF-8';
             $mail->isSMTP();
             $mail->Host = $smtpHost;
             $mail->SMTPAuth = true;
-            $mail->Username = self::env('SMTP_USER', '');
-            $mail->Password = self::env('SMTP_PASS', '');
-            $secure = strtolower((string) self::env('SMTP_SECURE', 'tls'));
+            $mail->AuthType = 'LOGIN';
+            $mail->Username = $username;
+            $mail->Password = $password;
             $mail->SMTPSecure = $secure === 'ssl'
                 ? PHPMailer::ENCRYPTION_SMTPS
                 : PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Port = (int) self::env('SMTP_PORT', $secure === 'ssl' ? '465' : '587');
+            $mail->Port = $port;
             $mail->Timeout = 20;
             $mail->setFrom($from, $fromName);
             $mail->addReplyTo($replyTo);
@@ -71,7 +84,17 @@ class MailService
         if ($value === false || $value === null || $value === '') {
             return $default;
         }
-        return (string) $value;
+        $value = trim((string) $value);
+        if (
+            strlen($value) >= 2
+            && (
+                ($value[0] === '"' && str_ends_with($value, '"'))
+                || ($value[0] === "'" && str_ends_with($value, "'"))
+            )
+        ) {
+            $value = substr($value, 1, -1);
+        }
+        return $value === '' ? $default : $value;
     }
 
     public static function logForgot(string $event, string $email, ?int $userId = null): void
