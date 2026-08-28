@@ -4,6 +4,8 @@ namespace App\Controllers;
 
 use App\Models\OrderModel;
 use App\Models\VerificationPaymentModel;
+use App\Models\GroupLiveGiftModel;
+use App\Models\GroupLiveChatModel;
 use EasyProjects\SimpleRouter\Router;
 
 /**
@@ -18,11 +20,15 @@ class SquareWebhookController
 {
     private OrderModel $orderModel;
     private VerificationPaymentModel $verificationPaymentModel;
+    private GroupLiveGiftModel $giftModel;
+    private GroupLiveChatModel $chatModel;
 
     public function __construct()
     {
         $this->orderModel = new OrderModel();
         $this->verificationPaymentModel = new VerificationPaymentModel();
+        $this->giftModel = new GroupLiveGiftModel();
+        $this->chatModel = new GroupLiveChatModel();
     }
 
     public function handle(): void
@@ -96,7 +102,25 @@ class SquareWebhookController
             return;
         }
 
-        error_log("Square webhook: no se encontro pedido ni pago de verificacion para payment_link_id $paymentLinkId");
+        $gift = $this->giftModel->getByPaymentLinkId($paymentLinkId);
+        if ($gift) {
+            $ok = $this->giftModel->markAsCompleted((int)$gift["id"]);
+            if ($ok) {
+                error_log("Square webhook: Regalo de live #{$gift["id"]} marcado como completado.");
+            }
+            return;
+        }
+
+        $pinnedMessage = $this->chatModel->getByPaymentLinkId($paymentLinkId);
+        if ($pinnedMessage) {
+            $ok = $this->chatModel->markPinCompleted((int)$pinnedMessage["id"]);
+            if ($ok) {
+                error_log("Square webhook: Mensaje anclado #{$pinnedMessage["id"]} marcado como completado.");
+            }
+            return;
+        }
+
+        error_log("Square webhook: no se encontro pedido, pago de verificacion, regalo ni mensaje anclado para payment_link_id $paymentLinkId");
     }
 
     private function fetchPaymentLinkId(string $paymentId): ?string
