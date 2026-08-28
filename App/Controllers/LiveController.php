@@ -13,6 +13,7 @@ class LiveController
 {
     private const RTMP_BASE = 'rtmp://live.tuanichat.com/live';
     private const HLS_BASE  = 'https://live.tuanichat.com/hls';
+    private const WHEP_BASE = 'https://live.tuanichat.com/rtc/v1/whep/';
 
     private const MAX_RECORDING_SECONDS = 600; // 10 minutos
     private const MAX_RECORDING_BYTES = 190 * 1024 * 1024; // 190MB (margen bajo el límite del servidor de 200MB)
@@ -74,6 +75,7 @@ class LiveController
             "rtmp_url"     => self::RTMP_BASE,
             "stream_key"   => $result['stream_key'],
             "playback_url" => self::HLS_BASE . '/' . $result['stream_key'] . '.m3u8',
+            "whep_url"     => self::WHEP_BASE . '?app=live&stream=' . $result['stream_key'],
         ]);
     }
 
@@ -104,6 +106,7 @@ class LiveController
                 "post_id"      => $post['id'],
                 "user_id"      => $post['user_id'],
                 "playback_url" => self::HLS_BASE . '/' . $post['stream_key'] . '.m3u8',
+                "whep_url"     => self::WHEP_BASE . '?app=live&stream=' . $post['stream_key'],
                 "started_at"   => $post['started_at'],
             ],
             "message" => "Live activo"
