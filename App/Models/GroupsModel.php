@@ -229,12 +229,13 @@ class GroupsModel
         }
     }
 
-    public function getGroupsByUser(int $userId, int $page = 1, int $perPage = 10): array|false
+    public function getGroupsByUser(int $userId, int $page = 1, int $perPage = 10, ?string $search = null): array|false
     {
         try {
             $offset = ($page - 1) * $perPage;
             $groupsSoftFilter = $this->hasGroupsDeletedAt() ? "AND g.deleted_at IS NULL" : "";
             $groupUsersSoftFilter = $this->hasGroupUsersDeletedAt() ? "AND gu.deleted_at IS NULL" : "";
+            $searchFilter = $search ? "AND g.name LIKE :search" : "";
 
             $stmt = $this->db->prepare("
             SELECT 
@@ -242,17 +243,23 @@ class GroupsModel
                 g.name, 
                 g.created_by, 
                 g.created_at, 
+                g.is_public,
+                g.join_pin,
                 gu.is_admin
             FROM `group_users` gu
             INNER JOIN `groups` g ON gu.group_id = g.id
             WHERE gu.user_id = :user_id 
               {$groupUsersSoftFilter}
               {$groupsSoftFilter}
+              {$searchFilter}
             ORDER BY g.created_at DESC
             LIMIT :limit OFFSET :offset
         ");
 
             $stmt->bindValue(':user_id', $userId, PDO::PARAM_INT);
+            if ($search) {
+                $stmt->bindValue(':search', '%' . $search . '%', PDO::PARAM_STR);
+            }
             $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
             $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
             $stmt->execute();

@@ -77,9 +77,11 @@ class GroupsController
         if ($page <= 0) {
             $page = 1;
         }
+        $search = Router::$request->query->search ?? null;
+        $search = $search ? trim($search) : null;
         $currentUserId = Router::$request->user->id ?? $this->getCurrentUserId();
 
-        $groups = $this->groupsModel->getGroupsByUser($currentUserId, $page, 10);
+        $groups = $this->groupsModel->getGroupsByUser($currentUserId, $page, 10, $search);
 
         if ($groups !== false) {
             Router::$response->status(200)->send([
