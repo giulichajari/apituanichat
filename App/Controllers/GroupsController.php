@@ -116,8 +116,13 @@ class GroupsController
     {
         $name = Router::$request->body->name ?? null;
         $members = Router::$request->body->members ?? []; // Array de IDs de usuarios
+        $isPublic = Router::$request->body->is_public ?? true;
+        $joinPin = Router::$request->body->join_pin ?? null;
         if (!$name) {
             return Router::$response->status(400)->send(["message" => "Group name is required"]);
+        }
+        if ($joinPin !== null && !preg_match('/^\d{4}$/', (string)$joinPin)) {
+            return Router::$response->status(400)->send(["message" => "El PIN debe tener exactamente 4 digitos"]);
         }
 
         $createdBy = Router::$request->user->id ?? $this->getCurrentUserId();
@@ -126,12 +131,15 @@ class GroupsController
         }
 
         // Crear grupo con el creador y los miembros seleccionados
-        $groupId = $this->groupsModel->createGroup($createdBy, $name, $members);
+        $groupId = $this->groupsModel->createGroup($createdBy, $name, $members, (bool)$isPublic, $joinPin);
 
         if ($groupId) {
+            $group = $this->groupsModel->getGroupById($groupId);
             Router::$response->status(201)->send([
                 "message" => "Group created successfully",
-                "group_id" => $groupId
+                "group_id" => $groupId,
+                "is_public" => (bool)$isPublic,
+                "join_pin" => $group['join_pin'] ?? null
             ]);
         } else {
             Router::$response->status(500)->send([

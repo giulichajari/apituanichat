@@ -60,16 +60,38 @@ class GroupsModel
     }
 
     // Crear un grupo
-    public function createGroup(int $creatorId, string $name, array $members = []): int|false
+    private function generateUniqueJoinPin(): string
+    {
+        do {
+            $pin = str_pad((string)random_int(0, 9999), 4, '0', STR_PAD_LEFT);
+            $stmt = $this->db->prepare("SELECT id FROM `groups` WHERE join_pin = :pin LIMIT 1");
+            $stmt->execute([':pin' => $pin]);
+            $exists = $stmt->fetch();
+        } while ($exists);
+        return $pin;
+    }
+
+    public function createGroup(int $creatorId, string $name, array $members = [], bool $isPublic = true, ?string $joinPin = null): int|false
     {
         try {
             $this->db->beginTransaction();
 
+            // Si el grupo es privado y no vino un PIN explícito, generamos uno único de 4 dígitos.
+            if (!$isPublic && !$joinPin) {
+                $joinPin = $this->generateUniqueJoinPin();
+            }
+            // Los grupos públicos no usan PIN.
+            if ($isPublic) {
+                $joinPin = null;
+            }
+
             // 1️⃣ Crear grupo
-            $stmt = $this->db->prepare("INSERT INTO `groups` (name, created_by, created_at) VALUES (:name, :created_by, NOW())");
+            $stmt = $this->db->prepare("INSERT INTO `groups` (name, created_by, is_public, join_pin, created_at) VALUES (:name, :created_by, :is_public, :join_pin, NOW())");
             $stmt->execute([
                 ':name' => $name,
-                ':created_by' => $creatorId
+                ':created_by' => $creatorId,
+                ':is_public' => $isPublic ? 1 : 0,
+                ':join_pin' => $joinPin
             ]);
             $groupId = (int)$this->db->lastInsertId();
 
