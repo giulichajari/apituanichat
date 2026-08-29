@@ -229,6 +229,47 @@ class GroupsModel
         }
     }
 
+    // Grupos que el usuario TODAVIA NO integra (para descubrir y unirse).
+    // No expone join_pin: solo indica is_public para que el frontend sepa si pedir PIN.
+    public function discoverGroups(int $userId, int $page = 1, int $perPage = 10, ?string $search = null): array|false
+    {
+        try {
+            $offset = ($page - 1) * $perPage;
+            $groupsSoftFilter = $this->hasGroupsDeletedAt() ? "AND g.deleted_at IS NULL" : "";
+            $searchFilter = $search ? "AND g.name LIKE :search" : "";
+
+            $stmt = $this->db->prepare("
+            SELECT
+                g.id,
+                g.name,
+                g.created_by,
+                g.created_at,
+                g.is_public
+            FROM `groups` g
+            WHERE g.id NOT IN (
+                SELECT gu.group_id FROM `group_users` gu WHERE gu.user_id = :user_id
+            )
+              {$groupsSoftFilter}
+              {$searchFilter}
+            ORDER BY g.created_at DESC
+            LIMIT :limit OFFSET :offset
+        ");
+
+            $stmt->bindValue(':user_id', $userId, PDO::PARAM_INT);
+            if ($search) {
+                $stmt->bindValue(':search', '%' . $search . '%', PDO::PARAM_STR);
+            }
+            $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
+            $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+            $stmt->execute();
+
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            error_log("DiscoverGroups ERROR: " . $e->getMessage());
+            return false;
+        }
+    }
+
     public function getGroupsByUser(int $userId, int $page = 1, int $perPage = 10, ?string $search = null): array|false
     {
         try {

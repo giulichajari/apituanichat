@@ -23,6 +23,20 @@ class GroupsRouter
             fn() => $groupsController->getGroups()
         );
 
+        // Descubrir grupos que el usuario todavia no integra
+        $router->get(
+            '/groups/discover/{page}',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $groupsController->discoverGroups()
+        );
+
+        // Unirse a un grupo por cuenta propia (publico directo, privado con PIN)
+        $router->post(
+            '/group/{idGroup}/join',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $groupsController->joinGroup()
+        );
+
         // Obtener un grupo por ID
         $router->get(
             '/group/{idGroup}',

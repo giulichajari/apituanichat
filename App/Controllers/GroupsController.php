@@ -282,6 +282,70 @@ class GroupsController
         }
     }
 
+    // Descubrir grupos que el usuario todavia no integra
+    public function discoverGroups($page = 1)
+    {
+        $page = (int) (Router::$request->params->page ?? $page ?? 1);
+        if ($page <= 0) {
+            $page = 1;
+        }
+        $search = Router::$request->query->search ?? null;
+        $search = $search ? trim($search) : null;
+        $currentUserId = Router::$request->user->id ?? $this->getCurrentUserId();
+
+        $groups = $this->groupsModel->discoverGroups($currentUserId, $page, 10, $search);
+
+        if ($groups !== false) {
+            Router::$response->status(200)->send([
+                "data" => $groups,
+                "message" => "Groups discovered successfully"
+            ]);
+        } else {
+            Router::$response->status(500)->send([
+                "message" => "Error discovering groups"
+            ]);
+        }
+    }
+
+    // El usuario se une a un grupo por su cuenta (publico directo, privado con PIN)
+    public function joinGroup()
+    {
+        $idGroup = (int) (Router::$request->params->idGroup ?? 0);
+        $pin = Router::$request->body->join_pin ?? null;
+        $currentUserId = Router::$request->user->id ?? $this->getCurrentUserId();
+
+        if ($idGroup <= 0 || !$currentUserId) {
+            Router::$response->status(400)->send(["message" => "Invalid request"]);
+            return;
+        }
+
+        $group = $this->groupsModel->getGroupById($idGroup);
+        if (empty($group)) {
+            Router::$response->status(404)->send(["message" => "Group not found"]);
+            return;
+        }
+
+        if ($this->groupsModel->isUserInGroup($idGroup, $currentUserId)) {
+            Router::$response->status(409)->send(["message" => "Ya sos miembro de este grupo"]);
+            return;
+        }
+
+        $isPublic = (bool)($group['is_public'] ?? true);
+        if (!$isPublic) {
+            if (!$pin || (string)$pin !== (string)($group['join_pin'] ?? '')) {
+                Router::$response->status(403)->send(["message" => "PIN incorrecto"]);
+                return;
+            }
+        }
+
+        $added = $this->groupsModel->addUserToGroup($idGroup, $currentUserId, false);
+        if ($added) {
+            Router::$response->status(200)->send(["message" => "Te uniste al grupo correctamente"]);
+        } else {
+            Router::$response->status(500)->send(["message" => "Error al unirse al grupo"]);
+        }
+    }
+
     // Agregar usuario al grupo
     public function addUserToGroup()
     {
