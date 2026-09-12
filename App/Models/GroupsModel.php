@@ -59,7 +59,7 @@ class GroupsModel
         return $this->hasGroupUsersDeletedAt;
     }
 
-    // Crear un grupo
+    // Genera un PIN unico de 4 digitos para grupos privados
     private function generateUniqueJoinPin(): string
     {
         do {
@@ -71,21 +71,19 @@ class GroupsModel
         return $pin;
     }
 
+    // Crear un grupo
     public function createGroup(int $creatorId, string $name, array $members = [], bool $isPublic = true, ?string $joinPin = null): int|false
     {
         try {
             $this->db->beginTransaction();
 
-            // Si el grupo es privado y no vino un PIN explícito, generamos uno único de 4 dígitos.
             if (!$isPublic && !$joinPin) {
                 $joinPin = $this->generateUniqueJoinPin();
             }
-            // Los grupos públicos no usan PIN.
             if ($isPublic) {
                 $joinPin = null;
             }
 
-            // 1️⃣ Crear grupo
             $stmt = $this->db->prepare("INSERT INTO `groups` (name, created_by, is_public, join_pin, created_at) VALUES (:name, :created_by, :is_public, :join_pin, NOW())");
             $stmt->execute([
                 ':name' => $name,
@@ -95,20 +93,16 @@ class GroupsModel
             ]);
             $groupId = (int)$this->db->lastInsertId();
 
-            // 2️⃣ Agregar creador como miembro/admin
             $stmtCreator = $this->db->prepare("INSERT INTO group_users (group_id, user_id, is_admin, joined_at) VALUES (:group_id, :user_id, 1, NOW())");
             $stmtCreator->execute([
                 ':group_id' => $groupId,
                 ':user_id' => $creatorId
             ]);
 
-            // 3️⃣ Agregar otros miembros
             if (!empty($members)) {
                 $stmtMember = $this->db->prepare("INSERT INTO group_users (group_id, user_id, is_admin, joined_at) VALUES (:group_id, :user_id, 0, NOW())");
                 foreach ($members as $userId) {
-                    // evitar duplicados, por si el creador está en la lista
                     if ($userId === $creatorId) continue;
-
                     $stmtMember->execute([
                         ':group_id' => $groupId,
                         ':user_id' => $userId
@@ -124,7 +118,6 @@ class GroupsModel
             return false;
         }
     }
-
 
     // Actualizar nombre del grupo
     public function updateGroup(int $idGroup, string $name): bool
@@ -146,10 +139,39 @@ class GroupsModel
         }
     }
 
-    /**
-     * Borrado lógico: marca el grupo y desvincula miembros activos (group_users.deleted_at).
-     * @return 'ok'|'not_found'|'already_deleted'|'forbidden'|'error'
-     */
+    // Puede el usuario mandar mensajes/archivos en este grupo?
+    // Si solo_admins_chatean esta apagado, cualquier miembro puede.
+    // Si esta prendido, solo el creador o un admin del grupo.
+    public function canUserSendGroupMessage(int $groupId, int $userId): bool
+    {
+        $group = $this->getGroupById($groupId);
+        if (!$group) {
+            return false;
+        }
+        if ((int) ($group['solo_admins_chatean'] ?? 0) !== 1) {
+            return true;
+        }
+        if ((int) $group['created_by'] === $userId) {
+            return true;
+        }
+        return (bool) $this->isUserAdmin($groupId, $userId);
+    }
+
+    public function setSoloAdminsChatean(int $groupId, bool $value): bool
+    {
+        try {
+            $stmt = $this->db->prepare("UPDATE `groups` SET solo_admins_chatean = :val WHERE id = :id");
+            $stmt->execute([
+                ':val' => $value ? 1 : 0,
+                ':id' => $groupId
+            ]);
+            return true;
+        } catch (PDOException $e) {
+            error_log("SetSoloAdminsChatean ERROR: " . $e->getMessage());
+            return false;
+        }
+    }
+
     public function softDeleteGroup(int $groupId, int $actorUserId): string
     {
         if (!$this->hasGroupsDeletedAt() || !$this->hasGroupUsersDeletedAt()) {
@@ -212,7 +234,6 @@ class GroupsModel
         }
     }
 
-    // Obtener un grupo por ID (solo activos)
     public function getGroupById(int $idGroup): array|false
     {
         try {
@@ -229,8 +250,7 @@ class GroupsModel
         }
     }
 
-    // Grupos que el usuario TODAVIA NO integra (para descubrir y unirse).
-    // No expone join_pin: solo indica is_public para que el frontend sepa si pedir PIN.
+    // Grupos que el usuario TODAVIA NO integra (para descubrir y unirse)
     public function discoverGroups(int $userId, int $page = 1, int $perPage = 10, ?string $search = null): array|false
     {
         try {
@@ -285,6 +305,7 @@ class GroupsModel
                 g.created_by, 
                 g.created_at, 
                 g.is_public,
+                g.solo_admins_chatean,
                 g.join_pin,
                 gu.is_admin
             FROM `group_users` gu
@@ -307,7 +328,6 @@ class GroupsModel
 
             $groups = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-            // Opcional: traer miembros de cada grupo
             foreach ($groups as &$group) {
                 $membersSoftFilter = $this->hasGroupUsersDeletedAt() ? "AND gu.deleted_at IS NULL" : "";
                 $stmtMembers = $this->db->prepare("
@@ -326,6 +346,7 @@ class GroupsModel
             return false;
         }
     }
+
     public function addMultipleUsers($groupId, array $users)
     {
         $stmt = $this->db->prepare("
@@ -343,6 +364,7 @@ class GroupsModel
 
         return true;
     }
+
     public function isUserAdmin($groupId, $userId)
     {
         $groupsSoftJoin = $this->hasGroupsDeletedAt() ? "AND g.deleted_at IS NULL" : "";
@@ -363,7 +385,7 @@ class GroupsModel
 
         return (bool) $stmt->fetchColumn();
     }
-    // Agregar usuario a un grupo
+
     public function addUserToGroup(int $groupId, int $userId, bool $isAdmin = false): bool
     {
         try {
@@ -390,6 +412,7 @@ class GroupsModel
             return false;
         }
     }
+
     public function isUserInGroup($groupId, $userId)
     {
         $groupsSoftJoin = $this->hasGroupsDeletedAt() ? "AND g.deleted_at IS NULL" : "";
@@ -409,16 +432,37 @@ class GroupsModel
         return (bool) $stmt->fetch();
     }
 
+    // Mensajes del grupo, con soporte de archivos/mensajes pagados (visibilidad + precio)
     public function getGroupMessages($groupId, $userId)
     {
         $groupsSoftJoin = $this->hasGroupsDeletedAt() ? "AND g.deleted_at IS NULL" : "";
         $stmt = $this->db->prepare("
         SELECT 
             m.id,
+            m.user_id,
             m.contenido AS message,
+            m.tipo,
+            m.file_url,
+            m.file_name,
+            m.file_size,
+            m.mime_type,
+            m.latitude,
+            m.longitude,
+            m.visibilidad,
+            m.precio,
             m.enviado_en,
             u.name AS user_name,
-            (m.user_id = ?) AS mine
+            (m.user_id = ?) AS mine,
+            (
+                m.visibilidad = 'publico'
+                OR m.user_id = ?
+                OR EXISTS (
+                    SELECT 1 FROM mensajes_pagos mp
+                    WHERE mp.mensaje_id = m.id
+                      AND mp.usuario_id = ?
+                      AND mp.estado = 'completado'
+                )
+            ) AS desbloqueado
         FROM mensajes_grupos m
         JOIN users u ON u.id = m.user_id
         INNER JOIN `groups` g ON g.id = m.group_id {$groupsSoftJoin}
@@ -426,34 +470,98 @@ class GroupsModel
         ORDER BY m.enviado_en ASC
     ");
 
-        $stmt->execute([$userId, $groupId]);
+        $stmt->execute([$userId, $userId, $userId, $groupId]);
+        $rows = $stmt->fetchAll();
 
-        return $stmt->fetchAll();
+        foreach ($rows as &$row) {
+            $row['desbloqueado'] = (bool) $row['desbloqueado'];
+            if (!$row['desbloqueado']) {
+                $row['file_url'] = null;
+            }
+        }
+        unset($row);
+
+        return $rows;
     }
 
- public function createGroupMessage($groupId, $userId, $message, $tipo = 'texto')
-{
-    $stmt = $this->db->prepare("
-        INSERT INTO mensajes_grupos
-        (
-            group_id,
-            user_id,
-            contenido,
-            tipo,
-            enviado_en,
-            leido
-        )
-        VALUES (?, ?, ?, ?, NOW(), 0)
-    ");
+    // Trae un mensaje de grupo puntual para validar visibilidad/precio antes de generar el link de pago
+    public function getMessageForPayment(int $mensajeId, int $groupId): array|false
+    {
+        try {
+            $stmt = $this->db->prepare("
+                SELECT id, group_id, visibilidad, precio
+                FROM mensajes_grupos
+                WHERE id = :id AND group_id = :group_id
+                LIMIT 1
+            ");
+            $stmt->execute([':id' => $mensajeId, ':group_id' => $groupId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            return $row ?: false;
+        } catch (PDOException $e) {
+            error_log("GetMessageForPayment ERROR: " . $e->getMessage());
+            return false;
+        }
+    }
 
-    return $stmt->execute([
-        $groupId,
-        $userId,
-        $message,
-        $tipo
-    ]);
-}
-    // Quitar usuario de un grupo (marcar deleted_at)
+    // Crear mensaje de grupo (texto o archivo, publico o pagado)
+    public function createGroupMessage($groupId, $userId, $message, $tipo = 'texto', array $extra = [])
+    {
+        $stmt = $this->db->prepare("
+            INSERT INTO mensajes_grupos
+            (
+                group_id,
+                user_id,
+                contenido,
+                tipo,
+                file_url,
+                file_name,
+                file_size,
+                mime_type,
+                latitude,
+                longitude,
+                visibilidad,
+                precio,
+                enviado_en
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        ");
+
+        $stmt->execute([
+            $groupId,
+            $userId,
+            $message,
+            $tipo,
+            $extra['file_url'] ?? null,
+            $extra['file_name'] ?? null,
+            $extra['file_size'] ?? null,
+            $extra['mime_type'] ?? null,
+            $extra['latitude'] ?? null,
+            $extra['longitude'] ?? null,
+            $extra['visibilidad'] ?? 'publico',
+            $extra['precio'] ?? null,
+        ]);
+        return $this->db->lastInsertId();
+    }
+
+    // Promover o degradar admin de un grupo
+    public function setUserAdminStatus(int $groupId, int $userId, bool $isAdmin): bool
+    {
+        try {
+            $sql = "UPDATE `group_users` SET is_admin = :is_admin WHERE group_id = :group_id AND user_id = :user_id";
+            if ($this->hasGroupUsersDeletedAt()) {
+                $sql .= " AND deleted_at IS NULL";
+            }
+            $stmt = $this->db->prepare($sql);
+            return $stmt->execute([
+                ':is_admin' => $isAdmin ? 1 : 0,
+                ':group_id' => $groupId,
+                ':user_id' => $userId
+            ]);
+        } catch (PDOException $e) {
+            error_log("SetUserAdminStatus ERROR: " . $e->getMessage());
+            return false;
+        }
+    }
+
     public function removeUserFromGroup(int $groupId, int $userId): bool
     {
         if (!$this->hasGroupUsersDeletedAt()) {
@@ -476,7 +584,6 @@ class GroupsModel
         }
     }
 
-    // Listar usuarios de un grupo
     public function getUsersByGroup(int $groupId): array|false
     {
         try {
@@ -494,6 +601,93 @@ class GroupsModel
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
         } catch (PDOException $e) {
             error_log("GetUsersByGroup ERROR: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    // Crear solicitud de ingreso a un grupo privado (sin PIN o PIN incorrecto)
+    public function createJoinRequest(int $groupId, int $userId): string
+    {
+        try {
+            $stmt = $this->db->prepare("
+                SELECT id FROM group_join_requests WHERE group_id = :group_id AND user_id = :user_id AND status = 'pending' LIMIT 1
+            ");
+            $stmt->execute([':group_id' => $groupId, ':user_id' => $userId]);
+            if ($stmt->fetchColumn()) {
+                return 'already_pending';
+            }
+
+            $stmt = $this->db->prepare("
+                INSERT INTO group_join_requests (group_id, user_id, status, created_at)
+                VALUES (:group_id, :user_id, 'pending', NOW())
+            ");
+            $stmt->execute([':group_id' => $groupId, ':user_id' => $userId]);
+            return 'created';
+        } catch (PDOException $e) {
+            error_log("CreateJoinRequest ERROR: " . $e->getMessage());
+            return 'error';
+        }
+    }
+
+    public function getPendingJoinRequests(int $groupId): array|false
+    {
+        try {
+            $stmt = $this->db->prepare("
+                SELECT jr.id, jr.group_id, jr.user_id, jr.created_at, u.name, u.email
+                FROM group_join_requests jr
+                INNER JOIN users u ON u.id = jr.user_id
+                WHERE jr.group_id = :group_id AND jr.status = 'pending'
+                ORDER BY jr.created_at ASC
+            ");
+            $stmt->execute([':group_id' => $groupId]);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (PDOException $e) {
+            error_log("GetPendingJoinRequests ERROR: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function resolveJoinRequest(int $requestId, int $resolverUserId, string $status): bool
+    {
+        try {
+            $this->db->beginTransaction();
+
+            $stmt = $this->db->prepare("SELECT group_id, user_id FROM group_join_requests WHERE id = :id AND status = 'pending' LIMIT 1 FOR UPDATE");
+            $stmt->execute([':id' => $requestId]);
+            $request = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$request) {
+                $this->db->rollBack();
+                return false;
+            }
+
+            $stmtUpdate = $this->db->prepare("
+                UPDATE group_join_requests
+                SET status = :status, resolved_at = NOW(), resolved_by = :resolver
+                WHERE id = :id
+            ");
+            $stmtUpdate->execute([
+                ':status' => $status,
+                ':resolver' => $resolverUserId,
+                ':id' => $requestId
+            ]);
+
+            if ($status === 'approved') {
+                $stmtAdd = $this->db->prepare("
+                    INSERT INTO group_users (group_id, user_id, is_admin, joined_at)
+                    VALUES (:group_id, :user_id, 0, NOW())
+                    ON DUPLICATE KEY UPDATE left_at = NULL, joined_at = NOW()
+                ");
+                $stmtAdd->execute([
+                    ':group_id' => $request['group_id'],
+                    ':user_id' => $request['user_id']
+                ]);
+            }
+
+            $this->db->commit();
+            return true;
+        } catch (PDOException $e) {
+            $this->db->rollBack();
+            error_log("ResolveJoinRequest ERROR: " . $e->getMessage());
             return false;
         }
     }

@@ -639,4 +639,137 @@ private function wakeUpWebSocketServer()
 
         return true;
     }
+    // ✅ SUBIDA DE ARCHIVO A UN MENSAJE DE GRUPO (soporta paywall visibilidad/precio)
+    // Sube solo la foto de una opcion de encuesta, sin crear un mensaje de chat
+    public function uploadEncuestaOpcionFoto($file, $groupId)
+    {
+        if ($file['error'] !== UPLOAD_ERR_OK) {
+            return ['success' => false, 'message' => 'Error en la subida del archivo'];
+        }
+
+        $rawType = isset($file['type']) ? trim((string)$file['type']) : '';
+        $mimeForCheck = trim(strtolower(explode(';', $rawType)[0]));
+        if (strpos($mimeForCheck, 'image/') !== 0) {
+            return ['success' => false, 'message' => 'Solo se permiten imagenes'];
+        }
+
+        $extension = $this->allowedTypes[$rawType] ?? $this->allowedTypes[$mimeForCheck] ?? null;
+        if (!$extension) {
+            return ['success' => false, 'message' => 'Tipo de imagen no permitido'];
+        }
+
+        $encuestasPath = $this->uploadPath . 'encuestas/' . $groupId . '/';
+        if (!is_dir($encuestasPath)) {
+            if (!mkdir($encuestasPath, 0755, true)) {
+                return ['success' => false, 'message' => 'No se pudo crear el directorio'];
+            }
+        }
+
+        $fileName = uniqid() . '.' . $extension;
+        $filePath = $encuestasPath . $fileName;
+
+        if (!move_uploaded_file($file['tmp_name'], $filePath)) {
+            return ['success' => false, 'message' => 'Error al guardar el archivo'];
+        }
+
+        return [
+            'success' => true,
+            'foto_url' => '/uploads/encuestas/' . $groupId . '/' . $fileName,
+        ];
+    }
+
+    public function uploadGroupFileSimple($file, $groupId, $userId, array $extra = [])
+    {
+        error_log("[DEBUG-GROUPUPLOAD] === INICIO === groupId=$groupId userId=$userId uploadPath={$this->uploadPath}");
+        try {
+            if ($file['error'] !== UPLOAD_ERR_OK) {
+                error_log("[DEBUG-GROUPUPLOAD] ERROR: file error code = " . $file['error']);
+                return ['success' => false, 'message' => 'Error en la subida del archivo'];
+            }
+
+            $rawType = isset($file['type']) ? trim((string)$file['type']) : '';
+            $mimeForCheck = trim(strtolower(explode(';', $rawType)[0]));
+            $isAudio = strpos($mimeForCheck, 'audio/') === 0;
+            $allowed = isset($this->allowedTypes[$rawType]) || isset($this->allowedTypes[$mimeForCheck]) || $isAudio;
+            if (!$allowed) {
+                return ['success' => false, 'message' => 'Tipo de archivo no permitido'];
+            }
+
+            $groupPath = $this->uploadPath . 'groups/' . $groupId . '/';
+            error_log("[DEBUG-GROUPUPLOAD] groupPath calculado = $groupPath");
+            if (!is_dir($groupPath)) {
+                error_log("[DEBUG-GROUPUPLOAD] no existe, creando con mkdir...");
+                if (!mkdir($groupPath, 0755, true)) {
+                    error_log("[DEBUG-GROUPUPLOAD] MKDIR FALLO");
+                    return ['success' => false, 'message' => 'No se pudo crear el directorio del grupo'];
+                }
+                error_log("[DEBUG-GROUPUPLOAD] mkdir OK");
+            } else {
+                error_log("[DEBUG-GROUPUPLOAD] el directorio ya existia");
+            }
+            if (!is_writable($groupPath)) {
+                error_log("[DEBUG-GROUPUPLOAD] NO ES ESCRIBIBLE");
+                return ['success' => false, 'message' => 'El directorio no tiene permisos de escritura'];
+            }
+
+            $extension = $this->allowedTypes[$file['type']] ?? $this->allowedTypes[$mimeForCheck] ?? null;
+            if (!$extension && $isAudio) {
+                $extension = ($mimeForCheck === 'audio/ogg' || strpos($mimeForCheck, 'ogg') !== false) ? 'ogg' : 'webm';
+            }
+            if (!$extension) {
+                return ['success' => false, 'message' => 'Tipo de archivo no permitido'];
+            }
+
+            $fileName = uniqid() . '_' . $userId . '.' . $extension;
+            $filePath = $groupPath . $fileName;
+            error_log("[DEBUG-GROUPUPLOAD] filePath destino = $filePath | tmp_name = {$file['tmp_name']} | is_uploaded_file=" . (is_uploaded_file($file['tmp_name']) ? 'SI' : 'NO'));
+
+            if (!move_uploaded_file($file['tmp_name'], $filePath)) {
+                $err = error_get_last();
+                error_log("[DEBUG-GROUPUPLOAD] MOVE_UPLOADED_FILE FALLO. Ultimo error PHP: " . json_encode($err));
+                return ['success' => false, 'message' => 'Error al guardar el archivo en el servidor'];
+            }
+            error_log("[DEBUG-GROUPUPLOAD] move_uploaded_file OK. file_exists post-move=" . (file_exists($filePath) ? 'SI' : 'NO'));
+
+            $fileUrl = '/uploads/groups/' . $groupId . '/' . $fileName;
+            $tipo = strpos($file['type'], 'image/') === 0 ? 'imagen' : (strpos($file['type'], 'audio/') === 0 ? 'audio' : 'archivo');
+
+            $groupsModel = new \App\Models\GroupsModel();
+            $messageId = $groupsModel->createGroupMessage(
+                $groupId,
+                $userId,
+                $file['name'],
+                $tipo,
+                [
+                    'file_url' => $fileUrl,
+                    'file_name' => $fileName,
+                    'file_size' => $file['size'],
+                    'mime_type' => $file['type'],
+                    'visibilidad' => $extra['visibilidad'] ?? 'publico',
+                    'precio' => $extra['precio'] ?? null,
+                ]
+            );
+
+            if (!$messageId) {
+                unlink($filePath);
+                return ['success' => false, 'message' => 'Error al guardar el mensaje en el grupo'];
+            }
+
+            return [
+                'success' => true,
+                'file_url' => $fileUrl,
+                'file_name' => $fileName,
+                'file_original_name' => $file['name'],
+                'file_size' => $file['size'],
+                'file_mime_type' => $file['type'],
+                'message_id' => $messageId,
+                'tipo' => $tipo,
+                'visibilidad' => $extra['visibilidad'] ?? 'publico',
+                'precio' => $extra['precio'] ?? null,
+            ];
+        } catch (Exception $e) {
+            error_log("Error en uploadGroupFileSimple: " . $e->getMessage());
+            return ['success' => false, 'message' => 'Error durante la subida: ' . $e->getMessage()];
+        }
+    }
 }

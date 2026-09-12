@@ -79,6 +79,17 @@ class OrderModel
         return $stmt->execute([$id, $restaurantId]);
     }
 
+    // Actualiza el estado de despacho del delivery (busqueda/asignacion de conductor)
+    public function updateDeliveryStatus(int $orderId, string $status): bool
+    {
+        $allowed = ['not_applicable', 'searching_driver', 'assigned', 'picked_up', 'delivered', 'cancelled'];
+        if (!in_array($status, $allowed, true)) {
+            return false;
+        }
+        $stmt = $this->db->prepare("UPDATE food_orders SET delivery_status = ? WHERE id = ?");
+        return $stmt->execute([$status, $orderId]);
+    }
+
     public function updatePaymentLink(int $orderId, string $paymentLinkUrl, string $squarePaymentLinkId): bool
     {
         $stmt = $this->db->prepare("
@@ -104,6 +115,19 @@ class OrderModel
             WHERE id = ? AND status IN ('confirmed', 'pending')
         ");
         return $stmt->execute([$orderId]);
+    }
+
+    public function getPendingPaymentForUser(int $userId): array
+    {
+        $stmt = $this->db->prepare("
+            SELECT o.*, r.nombre as restaurant_name
+            FROM food_orders o
+            LEFT JOIN restaurants r ON r.id = o.restaurant_id
+            WHERE o.user_id = ? AND o.status = 'confirmed'
+            ORDER BY o.created_at DESC
+        ");
+        $stmt->execute([$userId]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
     public function getBySquarePaymentLinkId(string $squarePaymentLinkId): ?array

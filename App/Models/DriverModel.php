@@ -243,6 +243,31 @@ class DriverModel
     }
 
 
+    // Choferes disponibles cerca de un punto (lat/lng reales), usando formula de
+    // Haversine. Usado por el despacho automatico de Eats/Shop (y a futuro Ride).
+    public function findNearbyAvailableDrivers(float $lat, float $lng, float $radiusKm = 10, int $limit = 5): array
+    {
+        $sql = "
+            SELECT user_id, name, phone, lat, lng,
+                (6371 * acos(
+                    cos(radians(:lat)) * cos(radians(lat)) * cos(radians(lng) - radians(:lng))
+                    + sin(radians(:lat)) * sin(radians(lat))
+                )) AS distance_km
+            FROM drivers
+            WHERE is_available = 1 AND lat IS NOT NULL AND lng IS NOT NULL
+            HAVING distance_km <= :radius
+            ORDER BY distance_km ASC
+            LIMIT :limit
+        ";
+        $stmt = $this->db->prepare($sql);
+        $stmt->bindValue(':lat', $lat);
+        $stmt->bindValue(':lng', $lng);
+        $stmt->bindValue(':radius', $radiusKm);
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
     // Obtener chofer por user_id
     public function getDriver(int $id): ?array
     {

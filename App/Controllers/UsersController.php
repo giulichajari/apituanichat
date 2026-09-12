@@ -13,6 +13,42 @@ class UsersController
         private ?UsersModel $usuariosModel = new UsersModel(),
         private ?DriverModel $driverModel = new DriverModel(),
     ) {}
+
+    public function enableRestrictedMode()
+    {
+        $userId = (int) (Router::$request->user->id ?? 0);
+        $pin = trim((string) (Router::$request->body->pin ?? ''));
+
+        if ($userId <= 0 || !preg_match('/^\\d{4,6}$/', $pin)) {
+            Router::$response->status(400)->send(["message" => "PIN invalido (4 a 6 digitos)"]);
+            return;
+        }
+
+        $ok = $this->usuariosModel->setRestrictedMode($userId, $pin);
+        if ($ok) {
+            Router::$response->status(200)->send(["message" => "Modo restringido activado"]);
+        } else {
+            Router::$response->status(500)->send(["message" => "Error activando modo restringido"]);
+        }
+    }
+
+    public function disableRestrictedMode()
+    {
+        $userId = (int) (Router::$request->user->id ?? 0);
+        $pin = trim((string) (Router::$request->body->pin ?? ''));
+
+        if ($userId <= 0 || $pin === '') {
+            Router::$response->status(400)->send(["message" => "Falta el PIN"]);
+            return;
+        }
+
+        $ok = $this->usuariosModel->disableRestrictedMode($userId, $pin);
+        if ($ok) {
+            Router::$response->status(200)->send(["message" => "Modo restringido desactivado"]);
+        } else {
+            Router::$response->status(403)->send(["message" => "PIN incorrecto"]);
+        }
+    }
    public function getUsers($page = 1)
 {
     // ✅ Asegurar que page sea un número
@@ -88,6 +124,17 @@ private function getCurrentUserId()
 
     public function getUser()
     {
+        $requester = Router::$request->user ?? null;
+        $targetId = (int) Router::$request->params->idUser;
+        $isAdmin = $requester && strtoupper($requester->rol ?? '') === 'ADMIN';
+        $isSelf = $requester && (int) $requester->id === $targetId;
+        if (!$requester || (!$isAdmin && !$isSelf)) {
+            Router::$response->status(403)->send([
+                "message" => "No tienes permiso para ver este usuario"
+            ]);
+            return;
+        }
+
         $user = $this->usuariosModel->getUser(Router::$request->params->idUser);
 
         if ($user) {
@@ -108,6 +155,14 @@ private function getCurrentUserId()
 
     public function addUser()
     {
+        $requester = Router::$request->user ?? null;
+        if (!$requester || strtoupper($requester->rol ?? '') !== 'ADMIN') {
+            Router::$response->status(403)->send([
+                "message" => "Acceso denegado. Se requiere rol ADMIN"
+            ]);
+            return;
+        }
+
         if ($this->usuariosModel->addUser(
             Router::$request->body->id,
             Router::$request->body->name,
@@ -127,6 +182,17 @@ private function getCurrentUserId()
 
     public function updateUser()
     {
+        $requester = Router::$request->user ?? null;
+        $targetId = (int) Router::$request->params->idUser;
+        $isAdmin = $requester && strtoupper($requester->rol ?? '') === 'ADMIN';
+        $isSelf = $requester && (int) $requester->id === $targetId;
+        if (!$requester || (!$isAdmin && !$isSelf)) {
+            Router::$response->status(403)->send([
+                "message" => "No tienes permiso para modificar este usuario"
+            ]);
+            return;
+        }
+
         if ($this->usuariosModel->updateUser(
             Router::$request->params->idUser,
             Router::$request->body->name,
@@ -145,6 +211,17 @@ private function getCurrentUserId()
 
     public function deleteUser()
     {
+        $requester = Router::$request->user ?? null;
+        $targetId = (int) Router::$request->params->idUser;
+        $isAdmin = $requester && strtoupper($requester->rol ?? '') === 'ADMIN';
+        $isSelf = $requester && (int) $requester->id === $targetId;
+        if (!$requester || (!$isAdmin && !$isSelf)) {
+            Router::$response->status(403)->send([
+                "message" => "No tienes permiso para eliminar este usuario"
+            ]);
+            return;
+        }
+
         if ($this->usuariosModel->deleteUser(Router::$request->params->idUser)) {
             Router::$response->status(200)->send([
                 "message" => "The user has been deleted"
@@ -161,7 +238,8 @@ private function getCurrentUserId()
         $email = Router::$request->body->email ?? null;
         $password = Router::$request->body->password ?? null;
         $phone = Router::$request->body->phone ?? null;
-        $rol = Router::$request->body->role ?? null;
+        $requestedRol = strtolower(trim((string) (Router::$request->body->role ?? 'user')));
+        $rol = in_array($requestedRol, ['user', 'driver'], true) ? $requestedRol : 'user';
 
         if (!$name || !$email || !$password || !$phone) {
             return Router::$response->status(400)->send([

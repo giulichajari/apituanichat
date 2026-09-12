@@ -3,6 +3,7 @@
 namespace App\Controllers;
 
 use App\Models\ChatModel;
+use App\Models\AgentModel;
 use App\Models\File;
 use App\Services\FileUploadService;
 use EasyProjects\SimpleRouter\Router;
@@ -13,7 +14,8 @@ class ChatController
     private FileUploadService $fileUploadService;
 
     public function __construct(
-        private ?ChatModel $chatModel = new ChatModel()
+        private ?ChatModel $chatModel = new ChatModel(),
+        private ?AgentModel $agentModel = new AgentModel()
     ) {
         $this->fileUploadService = new FileUploadService();
     }
@@ -716,6 +718,235 @@ private function notifyWebSocketAfterUpload($uploadResult, $userId, $chatId, $up
             ]);
         }
     }
+
+    /**
+     * Endpoint para que n8n inyecte la respuesta del bot en un chat.
+     * Protegido por header X-N8N-Secret (no requiere login de usuario).
+     */
+    public function getBotSettings()
+    {
+        try {
+            $user = Router::$request->user;
+            $userId = $user->id ?? null;
+            $chatId = (int)(Router::$request->params->chat_id ?? 0);
+
+            if (!$userId || !$chatId) {
+                return Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "Faltan parámetros"
+                ]);
+            }
+            if (!$this->verifyChatAccess($chatId, $userId)) {
+                return Router::$response->status(403)->send([
+                    "success" => false,
+                    "message" => "No tenés acceso a este chat"
+                ]);
+            }
+
+            $agentId = $this->chatModel->getChatAgentId($chatId);
+            $agentName = null;
+            if ($agentId) {
+                $agent = $this->agentModel->getById($agentId);
+                $agentName = $agent['name'] ?? null;
+            }
+
+            return Router::$response->status(200)->send([
+                "success" => true,
+                "bot_active" => $this->chatModel->isBotActive($chatId),
+                "agent_id" => $agentId,
+                "agent_name" => $agentName
+            ]);
+        } catch (Exception $e) {
+            error_log("Error en getBotSettings: " . $e->getMessage());
+            return Router::$response->status(500)->send([
+                "success" => false,
+                "message" => "Error interno"
+            ]);
+        }
+    }
+
+    public function updateBotSettings()
+    {
+        try {
+            $user = Router::$request->user;
+            $userId = $user->id ?? null;
+            $chatId = (int)(Router::$request->params->chat_id ?? 0);
+
+            if (!$userId || !$chatId) {
+                return Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "Faltan parámetros"
+                ]);
+            }
+            if (!$this->verifyChatAccess($chatId, $userId)) {
+                return Router::$response->status(403)->send([
+                    "success" => false,
+                    "message" => "No tenés acceso a este chat"
+                ]);
+            }
+
+            $body = Router::$request->body;
+
+            if (property_exists($body, 'agent_id')) {
+                $agentId = $body->agent_id;
+                if ($agentId === null) {
+                    $this->chatModel->setChatAgentId($chatId, null);
+                } else {
+                    $agentId = (int)$agentId;
+                    if (!$this->agentModel->isOwnedBy($agentId, $userId)) {
+                        return Router::$response->status(403)->send([
+                            "success" => false,
+                            "message" => "Ese agente no te pertenece"
+                        ]);
+                    }
+                    $this->chatModel->setChatAgentId($chatId, $agentId);
+                }
+            }
+
+            if (property_exists($body, 'bot_active')) {
+                $this->chatModel->setBotActive($chatId, (bool)$body->bot_active);
+            }
+
+            $agentId = $this->chatModel->getChatAgentId($chatId);
+            $agentName = null;
+            if ($agentId) {
+                $agent = $this->agentModel->getById($agentId);
+                $agentName = $agent['name'] ?? null;
+            }
+
+            return Router::$response->status(200)->send([
+                "success" => true,
+                "bot_active" => $this->chatModel->isBotActive($chatId),
+                "agent_id" => $agentId,
+                "agent_name" => $agentName
+            ]);
+        } catch (Exception $e) {
+            error_log("Error en updateBotSettings: " . $e->getMessage());
+            return Router::$response->status(500)->send([
+                "success" => false,
+                "message" => "Error interno"
+            ]);
+        }
+    }
+
+    /**
+     * Endpoint para que n8n inyecte la respuesta del bot en un chat.
+     * Protegido por header X-N8N-Secret (no requiere login de usuario).
+     */
+    public function sendBotMessage()
+    {
+        try {
+            $body = Router::$request->body;
+            $chatId = (int)($body->chat_id ?? 0);
+            $contenido = trim((string)($body->contenido ?? ''));
+
+            if (!$chatId || !$contenido) {
+                return Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "Faltan parámetros: chat_id y contenido son obligatorios"
+                ]);
+            }
+
+            if (!$this->chatModel->chatExists($chatId)) {
+                return Router::$response->status(404)->send([
+                    "success" => false,
+                    "message" => "Chat no encontrado"
+                ]);
+            }
+
+            // El secreto se valida contra el agente especifico conectado a ESTE chat,
+            // no un secreto global -- cada agente de cada usuario tiene el suyo, para
+            // que un agente no pueda inyectar mensajes en chats ajenos.
+            $agentId = $this->chatModel->getChatAgentId($chatId);
+            if (!$agentId) {
+                return Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "Este chat no tiene un agente conectado"
+                ]);
+            }
+            $agent = $this->agentModel->getById($agentId);
+            if (!$agent) {
+                return Router::$response->status(400)->send([
+                    "success" => false,
+                    "message" => "El agente conectado a este chat ya no existe"
+                ]);
+            }
+
+            $secret = $_SERVER['HTTP_X_N8N_SECRET'] ?? '';
+            if (!hash_equals((string)$agent['secret'], (string)$secret)) {
+                return Router::$response->status(401)->send([
+                    "success" => false,
+                    "message" => "No autorizado"
+                ]);
+            }
+
+            $botUserId = (int)($_ENV['BOT_USER_ID'] ?? 0);
+            if (!$botUserId) {
+                return Router::$response->status(500)->send([
+                    "success" => false,
+                    "message" => "BOT_USER_ID no configurado en el servidor"
+                ]);
+            }
+
+            // NOTA: el metodo sendToWebSocket() (preexistente en esta clase) nunca
+            // funciono en produccion -- la libreria \WebSocket\Client de la que
+            // depende no esta instalada via composer. En vez de arreglar esa
+            // dependencia, insertamos el mensaje nosotros mismos y publicamos por
+            // Redis en el mismo canal que ya usan las instancias de SignalServer
+            // para replicarse mensajes entre si (ver SignalServer::handleRedisBroadcast).
+            $messageId = $this->chatModel->insertMessage([
+                'chat_id' => $chatId,
+                'user_id' => $botUserId,
+                'contenido' => $contenido,
+                'tipo' => 'texto',
+                'file_id' => null,
+            ]);
+
+            $payload = [
+                'type' => 'chat_message',
+                'message_id' => $messageId,
+                'chat_id' => $chatId,
+                'user_id' => $botUserId,
+                'contenido' => $contenido,
+                'tipo' => 'texto',
+                'timestamp' => date('c'),
+                'temp_id' => null,
+                'leido' => 0,
+                'user_name' => 'TuaniBot',
+                'status' => 'sent',
+                'action' => 'new_message',
+            ];
+
+            try {
+                $redis = new \Redis();
+                $redis->connect('127.0.0.1', 6379, 1.0);
+                $redis->publish('tuani:ws:broadcast', json_encode([
+                    'origin' => 'php-fpm-bot-message',
+                    'kind' => 'chat',
+                    'chat_id' => $chatId,
+                    'payload' => $payload,
+                ]));
+                $redis->close();
+            } catch (\Throwable $e) {
+                // El mensaje ya quedo guardado en la DB aunque falle el broadcast en vivo;
+                // el destinatario lo va a ver igual la proxima vez que cargue el chat.
+                error_log("sendBotMessage: fallo el publish a Redis: " . $e->getMessage());
+            }
+
+            return Router::$response->status(200)->send([
+                "success" => true,
+                "message" => "Mensaje del bot enviado",
+                "message_id" => $messageId
+            ]);
+        } catch (Exception $e) {
+            error_log("Error en sendBotMessage: " . $e->getMessage());
+            return Router::$response->status(500)->send([
+                "success" => false,
+                "message" => "Error interno: " . $e->getMessage()
+            ]);
+        }
+    }
+
     public function getMessages()
     {
         try {
@@ -1033,12 +1264,13 @@ private function notifyWebSocketAfterUpload($uploadResult, $userId, $chatId, $up
     {
         try {
             // NOTA: Tu tabla se llama chat_usuarios, no chat_users
-            $stmt = $this->chatModel->db->prepare("
-                SELECT 1 FROM chat_usuarios 
-                WHERE chat_id = ? AND user_id = ?
-            ");
-            $stmt->execute([$chatId, $userId]);
-            return $stmt->fetch() !== false;
+            // Bug real preexistente corregido: $this->chatModel->db es privado,
+            // no se puede acceder desde el controller -- se usa el metodo publico query().
+            $rows = $this->chatModel->query(
+                "SELECT 1 FROM chat_usuarios WHERE chat_id = ? AND user_id = ?",
+                [$chatId, $userId]
+            );
+            return !empty($rows);
         } catch (Exception $e) {
             error_log("Error verificando acceso al chat: " . $e->getMessage());
             return false;

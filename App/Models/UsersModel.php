@@ -8,6 +8,41 @@ use PDOException;
 
 class UsersModel
 {
+    public function setRestrictedMode(int $userId, string $pin): bool
+    {
+        $hashed = password_hash($pin, PASSWORD_BCRYPT);
+        $stmt = $this->db->prepare("UPDATE users SET restricted_mode = 1, restricted_pin = :pin WHERE id = :id");
+        return $stmt->execute([':pin' => $hashed, ':id' => $userId]);
+    }
+
+    public function disableRestrictedMode(int $userId, string $pin): bool
+    {
+        $stmt = $this->db->prepare("SELECT restricted_pin FROM users WHERE id = :id");
+        $stmt->execute([':id' => $userId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$row || !$row['restricted_pin'] || !password_verify($pin, $row['restricted_pin'])) {
+            return false;
+        }
+        $upd = $this->db->prepare("UPDATE users SET restricted_mode = 0, restricted_pin = NULL WHERE id = :id");
+        return $upd->execute([':id' => $userId]);
+    }
+
+    public function getAgeVerificationStatus(int $userId): string
+    {
+        $stmt = $this->db->prepare("SELECT age_verification_status FROM users WHERE id = :id");
+        $stmt->execute([':id' => $userId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row ? $row['age_verification_status'] : 'none';
+    }
+
+    public function isRestrictedMode(int $userId): bool
+    {
+        $stmt = $this->db->prepare("SELECT restricted_mode FROM users WHERE id = :id");
+        $stmt->execute([':id' => $userId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row ? (bool) $row['restricted_mode'] : false;
+    }
+
     private PDO $db;
 
     public function __construct()
@@ -149,7 +184,7 @@ class UsersModel
     public function getUser(int $id): array|bool
     {
         try {
-            $stmt = $this->db->prepare("SELECT id, name, email, phone, is_verified, avatar, rol, created_at FROM users WHERE id = :id");
+            $stmt = $this->db->prepare("SELECT id, name, email, phone, is_verified, avatar, rol, created_at, restricted_mode FROM users WHERE id = :id");
             $stmt->bindValue(':id', $id, PDO::PARAM_INT);
             $stmt->execute();
             return $stmt->fetch(PDO::FETCH_ASSOC) ?: [];

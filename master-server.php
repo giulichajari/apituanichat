@@ -28,7 +28,7 @@ try {
 
     // Chat Server
     $chatWebSock = new \React\Socket\Server("0.0.0.0:{$chatPort}", $loop);
-    $chatWsServer = new \Ratchet\WebSocket\WsServer(new \SignalServer());
+    $chatWsServer = new \Ratchet\WebSocket\WsServer(new \SignalServer($loop));
     $chatHttpServer = new \Ratchet\Http\HttpServer($chatWsServer);
     new \Ratchet\Server\IoServer($chatHttpServer, $chatWebSock, $loop);
 

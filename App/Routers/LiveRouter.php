@@ -64,6 +64,18 @@ class LiveRouter
         );
 
         $router->post(
+            '/live/{postId}/mute/{userId}',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $liveController->muteViewer()
+        );
+
+        $router->post(
+            '/live/{postId}/moderator/{userId}',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $liveController->setModerator()
+        );
+
+        $router->post(
             '/live/{postId}/gift',
             fn() => $tokenMiddleware->strict(),
             fn() => $liveController->sendGift()

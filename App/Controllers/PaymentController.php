@@ -5,6 +5,8 @@ namespace App\Controllers;
 use App\Models\PaymentModel;
 use App\Models\DriverModel;
 use App\Models\VerificationPaymentModel;
+use App\Models\WalletModel;
+use App\Models\ReceiptModel;
 use App\Services\FareCalculator;
 use EasyProjects\SimpleRouter\Router;
 
@@ -79,7 +81,23 @@ class PaymentController
             return;
         }
 
-        // 1️⃣ Crear ride request
+        // 1️⃣ Cobrar del wallet ANTES de crear el viaje (si no alcanza, no se crea nada)
+        $walletModel = new WalletModel();
+        $walletResult = $walletModel->debitForPurchase(
+            $userId,
+            $estimatedFare,
+            'ride_pending_' . $userId . '_' . time()
+        );
+
+        if (!$walletResult['success']) {
+            Router::$response->status(402)->json([
+                "message" => $walletResult['message'],
+                "insufficientBalance" => true
+            ]);
+            return;
+        }
+
+        // 2️⃣ Crear ride request (ya cobrado)
         $rideRequestId = $this->driverModel->createRideRequest([
             'user_id' => $userId,
             'driver_id' => $driverId,
@@ -100,42 +118,43 @@ class PaymentController
         ]);
 
         if (!$rideRequestId) {
+            // Ya cobramos: devolvemos la plata porque el viaje no se pudo crear
+            $walletModel->adjustBalance($userId, $estimatedFare, 'refund_ride_creation_failed');
             Router::$response->status(500)->json(["message" => "Error al crear la solicitud de viaje"]);
             return;
         }
 
-        // 2️⃣ Crear link de pago en Square (credenciales solo desde .env)
-        $square = $this->createSquarePaymentLink((int) $rideRequestId, $estimatedFare, $currency);
-        if (!empty($square['error'])) {
-            Router::$response->status(500)->json([
-                "message" => "Error creando link de pago",
-                "error" => $square['error']
-            ]);
-            return;
-        }
-
-        $paymentLinkUrl = $square['url'];
-        $idempotencyKey = $square['idempotency_key'];
-
-        // 3️⃣ Guardar en payments vinculando ride_request_id
+        // 3️⃣ Guardar en payments ya completado (wallet, sin Square)
         $paymentId = $this->paymentModel->create([
             'ride_request_id' => $rideRequestId,
             'user_id' => $userId,
             'driver_id' => $driverId,
             'amount' => $estimatedFare,
             'currency' => $currency,
-            'status' => 'pending',
-            'payment_link_url' => $paymentLinkUrl,
-            'idempotency_key' => $idempotencyKey
+            'status' => 'completed',
+            'payment_link_url' => null,
+            'idempotency_key' => null,
+            'payment_method' => 'wallet',
         ]);
 
+        // 4️⃣ Factura por email
+        $receiptModel = new ReceiptModel();
+        $receiptModel->createAndNotify(
+            $userId,
+            'ride',
+            $rideRequestId,
+            $estimatedFare,
+            'wallet',
+            'Viaje #' . $rideRequestId
+        );
+
         Router::$response->status(201)->json([
-            "message" => "Solicitud y link de pago creados correctamente",
+            "message" => "Viaje solicitado y pagado con tu wallet",
             "rideRequestId" => $rideRequestId,
             "payment_id" => $paymentId,
-            "paymentUrl" => $paymentLinkUrl,
             "estimatedFare" => $estimatedFare,
             "fareDetails" => $fareResult,
+            "newBalance" => $walletResult['new_balance'],
         ]);
     }
 
@@ -238,29 +257,44 @@ class PaymentController
         $amount = 100.00;
         $currency = 'USD';
 
-        $square = $this->createSquarePaymentLink(0, $amount, $currency, "Membresía de verificación anual");
-        if (!empty($square['error'])) {
-            Router::$response->status(500)->json([
-                "message" => "Error creando link de pago",
-                "error" => $square['error']
+        // Cobro directo del wallet, Square queda afuera de la membresia
+        $walletModel = new WalletModel();
+        $walletResult = $walletModel->debitForPurchase((int)$userId, $amount, 'verification_membership_' . $userId);
+
+        if (!$walletResult['success']) {
+            Router::$response->status(402)->json([
+                "message" => $walletResult['message'],
+                "insufficientBalance" => true
             ]);
             return;
         }
 
-        $this->verificationPaymentModel->create(
+        $paymentId = $this->verificationPaymentModel->create(
             (int)$userId,
             $amount,
             $currency,
-            (string)($square['payment_link_id'] ?? ''),
-            (string)$square['url'],
-            (string)$square['idempotency_key']
+            '',
+            '',
+            'wallet_' . $userId . '_' . time()
+        );
+        $this->verificationPaymentModel->markAsCompleted($paymentId);
+
+        $receiptModel = new ReceiptModel();
+        $receiptModel->createAndNotify(
+            (int)$userId,
+            'verification_membership',
+            $paymentId,
+            $amount,
+            'wallet',
+            'Membresía de verificación anual'
         );
 
         Router::$response->status(201)->json([
-            "message" => "Link de pago creado",
-            "paymentUrl" => $square['url'],
+            "message" => "Pagado con tu wallet, ya podés enviar tu solicitud de verificación",
+            "alreadyPaid" => true,
             "amount" => $amount,
             "currency" => $currency,
+            "newBalance" => $walletResult['new_balance'],
         ]);
     }
 

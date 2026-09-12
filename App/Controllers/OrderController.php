@@ -5,7 +5,10 @@ namespace App\Controllers;
 use App\Models\OrderModel;
 use App\Models\RestaurantModel;
 use App\Models\UsersModel;
+use App\Models\WalletModel;
+use App\Models\ReceiptModel;
 use App\Services\MailService;
+use App\Services\DeliveryDispatchService;
 use EasyProjects\SimpleRouter\Router;
 
 class OrderController
@@ -378,7 +381,46 @@ class OrderController
         return;
     }
 
-    // ================== SQUARE ==================
+    // Despacho automatico a conductores cercanos si es delivery
+    if (($order['order_type'] ?? '') === 'delivery' && !empty($restaurantId = $order['restaurant_id'])) {
+        $this->dispatchDeliveryDrivers($orderId, $order);
+    }
+
+    // ================== COBRO ==================
+    // Usuarios logueados: se cobra del wallet interno, es el unico metodo de pago.
+    // Invitados sin cuenta (sin wallet propio): siguen el flujo viejo de Square por email.
+    $isGuestOrder = empty($order['user_id']);
+    $paidViaWallet = false;
+    $walletErrorDetail = null;
+
+    if (!$isGuestOrder) {
+        $walletModel = new WalletModel();
+        $walletResult = $walletModel->debitForPurchase((int) $order['user_id'], (float) $order['total'], 'food_order_' . $orderId);
+        if ($walletResult['success']) {
+            $this->orderModel->markAsPaid($orderId);
+            $paidViaWallet = true;
+            $receiptModel = new ReceiptModel();
+            $receiptModel->createAndNotify(
+                (int) $order['user_id'],
+                'food_order',
+                $orderId,
+                (float) $order['total'],
+                'wallet',
+                'Pedido de comida #' . $orderId
+            );
+            $this->paymentLog("Pagado con wallet", $walletResult['new_balance']);
+        } else {
+            $walletErrorDetail = $walletResult['message'];
+            $this->paymentLog("Wallet insuficiente", $walletErrorDetail);
+        }
+    }
+
+    $paymentLinkUrl = null;
+    $squarePaymentLinkId = null;
+    $squareErrorDetail = null;
+
+    if ($isGuestOrder) {
+    // ================== SQUARE (solo pedidos de invitados sin cuenta) ==================
     // Soporte: SQUARE_ACCESS_TOKEN / SQUARE_LOCATION_ID o bien _PROD / _SANDBOX según APP_ENV
     $appEnv = isset($_ENV['APP_ENV']) ? strtolower((string) $_ENV['APP_ENV']) : '';
     $isProd = ($appEnv === 'production');
@@ -469,8 +511,9 @@ class OrderController
         $this->orderModel->updatePaymentLink($orderId, $paymentLinkUrl, $squarePaymentLinkId);
         $this->paymentLog("PaymentLink", $paymentLinkUrl);
     }
+    } // fin bloque Square (solo invitados)
 
-    // ================== EMAIL (siempre si hay comprador: con link o aviso de problema) ==================
+    // ================== EMAIL (siempre si hay comprador: con link, pagado, o aviso de saldo insuficiente) ==================
 
     $buyerEmail = $order['user_email'] ?? null;
 
@@ -489,8 +532,12 @@ class OrderController
     $emailSent = false;
 
     if ($buyerEmail) {
-        if ($paymentLinkUrl) {
+        if ($paidViaWallet) {
+            $emailSent = $this->sendPaymentEmailWalletPaid($buyerEmail, $order);
+        } elseif ($paymentLinkUrl) {
             $emailSent = $this->sendPaymentEmail($buyerEmail, $order, $paymentLinkUrl);
+        } elseif (!$isGuestOrder) {
+            $emailSent = $this->sendInsufficientWalletEmail($buyerEmail, $order, $walletErrorDetail);
         } else {
             $emailSent = $this->sendPaymentEmailConfirmOnly($buyerEmail, $order, $squareErrorDetail);
         }
@@ -507,10 +554,76 @@ class OrderController
 
     Router::$response->json([
         "message" => "Pedido confirmado",
+        "paid_via_wallet" => $paidViaWallet,
         "payment_link_sent" => (bool)$paymentLinkUrl,
-        "detail" => !$paymentLinkUrl ? ($squareErrorDetail ?? 'Link de pago no disponible') : null,
+        "detail" => (!$paymentLinkUrl && !$paidViaWallet) ? ($walletErrorDetail ?? $squareErrorDetail ?? 'Pago pendiente') : null,
         "data" => $this->orderModel->getById($orderId)
     ], 200);
+}
+
+/**
+ * Reintenta el cobro por wallet de un pedido confirmado (el comprador recargo y quiere reintentar).
+ */
+public function retryWalletPayment($orderId)
+{
+    try {
+        $orderId = (int) $orderId;
+        $userId = Router::$request->user->id ?? null;
+        if (!$userId) {
+            Router::$response->json(["message" => "No autenticado"], 401);
+            return;
+        }
+
+        $order = $this->orderModel->getById($orderId);
+        if (!$order || (int) ($order['user_id'] ?? 0) !== (int) $userId) {
+            Router::$response->json(["message" => "Pedido no encontrado"], 404);
+            return;
+        }
+        if ($order['status'] !== 'confirmed') {
+            Router::$response->json(["message" => "Este pedido no esta esperando pago"], 400);
+            return;
+        }
+
+        $walletModel = new WalletModel();
+        $result = $walletModel->debitForPurchase($userId, (float) $order['total'], 'food_order_' . $orderId);
+        if (!$result['success']) {
+            Router::$response->json(["message" => $result['message']], 400);
+            return;
+        }
+
+        $this->orderModel->markAsPaid($orderId);
+        $receiptModel = new ReceiptModel();
+        $receiptModel->createAndNotify(
+            $userId,
+            'food_order',
+            $orderId,
+            (float) $order['total'],
+            'wallet',
+            'Pedido de comida #' . $orderId
+        );
+
+        Router::$response->json([
+            "message" => "Pago realizado con wallet",
+            "new_balance" => $result['new_balance']
+        ], 200);
+    } catch (\Throwable $e) {
+        error_log("OrderController retryWalletPayment: " . $e->getMessage());
+        Router::$response->json(["message" => "Error al procesar el pago"], 500);
+    }
+}
+
+/**
+ * Pedidos confirmados del comprador logueado que todavia estan esperando pago.
+ */
+public function getMyPendingPayment()
+{
+    $userId = Router::$request->user->id ?? null;
+    if (!$userId) {
+        Router::$response->json(["message" => "No autenticado"], 401);
+        return;
+    }
+    $orders = $this->orderModel->getPendingPaymentForUser((int) $userId);
+    Router::$response->json(["data" => $orders], 200);
 }
 /**
  * Envía email cuando el pedido está confirmado pero no se pudo generar el link de pago (Square falló).
@@ -552,6 +665,72 @@ private function sendEmail(string $to, string $subject, string $body): bool
     $sent = MailService::send($to, $subject, $body, 'Tuani Eats');
     $this->paymentLog("sendEmail RESULT", $sent ? 'OK' : 'FAIL');
     return $sent;
+}
+
+private function sendPaymentEmailWalletPaid(string $to, array $order): bool
+{
+    $this->paymentLog("sendPaymentEmailWalletPaid TO", $to);
+
+    $subject = "Tuani Eats - Pedido #{$order['id']} confirmado y pagado";
+    $total = number_format((float)($order['total'] ?? 0), 2);
+
+    $body = "Hola,\n\n";
+    $body .= "Tu pedido #{$order['id']} ha sido confirmado por el restaurante y ya lo pagamos con tu wallet.\n\n";
+    $body .= "Total cobrado: \${$total}\n\n";
+    $body .= "Gracias por usar Tuani Eats.";
+
+    return $this->sendEmail($to, $subject, $body);
+}
+
+private function sendInsufficientWalletEmail(string $to, array $order, ?string $reason = null): bool
+{
+    $this->paymentLog("sendInsufficientWalletEmail TO", $to);
+
+    $subject = "Tuani Eats - Tu pedido #{$order['id']} necesita saldo en el wallet";
+    $total = number_format((float)($order['total'] ?? 0), 2);
+
+    $body = "Hola,\n\n";
+    $body .= "Tu pedido #{$order['id']} fue confirmado por el restaurante, pero no pudimos cobrarlo de tu wallet";
+    $body .= $reason ? " ({$reason}).\n\n" : ".\n\n";
+    $body .= "Total a pagar: \${$total}\n\n";
+    $body .= "Recargá tu wallet en la app y reintentá el pago desde la sección de pedidos pendientes en Eats.\n\n";
+    $body .= "Gracias por usar Tuani Eats.";
+
+    return $this->sendEmail($to, $subject, $body);
+}
+
+/**
+ * Despacha el pedido a conductores cercanos al restaurante (envio local).
+ * No bloquea la confirmacion si falla -- solo se loguea.
+ */
+private function dispatchDeliveryDrivers(int $orderId, array $order): void
+{
+    try {
+        $restaurant = $this->restaurantModel->getRestaurantById((int) $order['restaurant_id']);
+        if (!$restaurant || empty($restaurant['lat']) || empty($restaurant['lng'])) {
+            $this->paymentLog("dispatchDeliveryDrivers: restaurante sin lat/lng, no se despacha");
+            return;
+        }
+
+        $dispatch = new DeliveryDispatchService();
+        $result = $dispatch->dispatchToNearbyDrivers(
+            (float) $restaurant['lat'],
+            (float) $restaurant['lng'],
+            (string) ($restaurant['ubicacion'] ?? ''),
+            null,
+            null,
+            (string) ($order['delivery_address'] ?? ''),
+            (float) ($order['total'] ?? 0),
+            'comida',
+            'eats',
+            $orderId
+        );
+
+        $this->orderModel->updateDeliveryStatus($orderId, 'searching_driver');
+        $this->paymentLog("dispatchDeliveryDrivers RESULT", $result);
+    } catch (\Throwable $e) {
+        $this->paymentLog("dispatchDeliveryDrivers ERROR", $e->getMessage());
+    }
 }
 
 }

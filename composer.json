@@ -10,6 +10,8 @@
         "cboden/ratchet": "^0.4.4",
         "vlucas/phpdotenv": "^5.6",
         "predis/predis": "^3.3",
-        "phpmailer/phpmailer": "^6.9"
+        "phpmailer/phpmailer": "^6.9",
+        "lbuchs/webauthn": "^2.2",
+        "clue/redis-react": "^2.8"
     }
 }

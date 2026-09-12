@@ -30,8 +30,8 @@ class PaymentModel
   public function create(array $data): ?int
 {
     $stmt = $this->db->prepare("
-        INSERT INTO payments (ride_request_id, user_id, driver_id, amount, currency, status, payment_link_url, idempotency_key)
-        VALUES (:ride_request_id, :user_id, :driver_id, :amount, :currency, :status, :payment_link_url, :idempotency_key)
+        INSERT INTO payments (ride_request_id, user_id, driver_id, amount, currency, status, payment_link_url, idempotency_key, payment_method)
+        VALUES (:ride_request_id, :user_id, :driver_id, :amount, :currency, :status, :payment_link_url, :idempotency_key, :payment_method)
     ");
     $ok = $stmt->execute([
         ':ride_request_id' => $data['ride_request_id'],
@@ -41,7 +41,8 @@ class PaymentModel
         ':currency' => $data['currency'],
         ':status' => $data['status'] ?? 'pending',
         ':payment_link_url' => $data['payment_link_url'],
-        ':idempotency_key' => $data['idempotency_key']
+        ':idempotency_key' => $data['idempotency_key'],
+        ':payment_method' => $data['payment_method'] ?? null
     ]);
 
     return $ok ? (int)$this->db->lastInsertId() : null;

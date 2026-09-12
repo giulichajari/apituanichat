@@ -65,6 +65,18 @@ class UsersRouter
             $controller->register();
         });
 
+        $router->post(
+            '/user/restricted-mode/enable',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $usersController->enableRestrictedMode()
+        );
+
+        $router->post(
+            '/user/restricted-mode/disable',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $usersController->disableRestrictedMode()
+        );
+
         $router->post('/forgot-password', function () {
             $controller = new UsersController();
             $controller->forgotPassword();

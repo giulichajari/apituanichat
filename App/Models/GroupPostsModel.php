@@ -25,21 +25,23 @@ class GroupPostsModel
         return $key;
     }
 
-    public function createLivePost(int $groupId, int $userId, string $visibility = 'public', ?float $giftAmount = null)
+    public function createLivePost(int $groupId, int $userId, string $visibility = 'public', ?float $giftAmount = null, bool $isAdultContent = false, string $chatMode = 'all')
     {
         try {
             $streamKey = $this->generateStreamKey();
 
             $stmt = $this->db->prepare(
-                "INSERT INTO group_posts (group_id, user_id, type, visibility, gift_amount, stream_key, status, created_at)
-                 VALUES (:group_id, :user_id, 'live', :visibility, :gift_amount, :stream_key, 'scheduled', NOW())"
+                "INSERT INTO group_posts (group_id, user_id, type, visibility, gift_amount, stream_key, status, is_adult_content, chat_mode, created_at)
+                 VALUES (:group_id, :user_id, 'live', :visibility, :gift_amount, :stream_key, 'scheduled', :is_adult_content, :chat_mode, NOW())"
             );
             $stmt->execute([
-                ':group_id'    => $groupId,
-                ':user_id'     => $userId,
-                ':visibility'  => $visibility,
-                ':gift_amount' => $giftAmount,
-                ':stream_key'  => $streamKey,
+                ':group_id'         => $groupId,
+                ':user_id'          => $userId,
+                ':visibility'       => $visibility,
+                ':gift_amount'      => $giftAmount,
+                ':stream_key'       => $streamKey,
+                ':is_adult_content' => $isAdultContent ? 1 : 0,
+                ':chat_mode'        => $chatMode,
             ]);
 
             return [
@@ -50,6 +52,28 @@ class GroupPostsModel
             error_log("createLivePost ERROR: " . $e->getMessage());
             return false;
         }
+    }
+
+    public function addInvitedViewers(int $postId, array $userIds): bool
+    {
+        if (empty($userIds)) return true;
+        try {
+            $stmt = $this->db->prepare("INSERT IGNORE INTO live_invited_viewers (post_id, user_id) VALUES (:post_id, :user_id)");
+            foreach ($userIds as $uid) {
+                $stmt->execute([':post_id' => $postId, ':user_id' => (int) $uid]);
+            }
+            return true;
+        } catch (PDOException $e) {
+            error_log("addInvitedViewers ERROR: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function isInvitedViewer(int $postId, int $userId): bool
+    {
+        $stmt = $this->db->prepare("SELECT id FROM live_invited_viewers WHERE post_id = :post_id AND user_id = :user_id");
+        $stmt->execute([':post_id' => $postId, ':user_id' => $userId]);
+        return (bool) $stmt->fetch();
     }
 
     public function getPostById(int $postId)
@@ -254,7 +278,7 @@ class GroupPostsModel
     {
         try {
             $stmt = $this->db->prepare(
-                "SELECT gv.user_id, u.name
+                "SELECT gv.user_id, u.name, gv.muted, gv.is_moderator
                  FROM group_live_viewers gv
                  JOIN users u ON u.id = gv.user_id
                  WHERE gv.post_id = :post_id AND gv.kicked = 0
@@ -266,6 +290,64 @@ class GroupPostsModel
         } catch (PDOException $e) {
             error_log("getActiveViewersList ERROR: " . $e->getMessage());
             return [];
+        }
+    }
+
+    public function muteViewer(int $postId, int $userId, bool $muted): bool
+    {
+        try {
+            $stmt = $this->db->prepare(
+                "UPDATE group_live_viewers SET muted = :muted WHERE post_id = :post_id AND user_id = :user_id"
+            );
+            $stmt->execute([':muted' => $muted ? 1 : 0, ':post_id' => $postId, ':user_id' => $userId]);
+            return true;
+        } catch (PDOException $e) {
+            error_log("muteViewer ERROR: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function isViewerMuted(int $postId, int $userId): bool
+    {
+        try {
+            $stmt = $this->db->prepare(
+                "SELECT muted FROM group_live_viewers WHERE post_id = :post_id AND user_id = :user_id LIMIT 1"
+            );
+            $stmt->execute([':post_id' => $postId, ':user_id' => $userId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            return $row ? ((int) $row['muted'] === 1) : false;
+        } catch (PDOException $e) {
+            error_log("isViewerMuted ERROR: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function setViewerModerator(int $postId, int $userId, bool $isModerator): bool
+    {
+        try {
+            $stmt = $this->db->prepare(
+                "UPDATE group_live_viewers SET is_moderator = :is_moderator WHERE post_id = :post_id AND user_id = :user_id"
+            );
+            $stmt->execute([':is_moderator' => $isModerator ? 1 : 0, ':post_id' => $postId, ':user_id' => $userId]);
+            return true;
+        } catch (PDOException $e) {
+            error_log("setViewerModerator ERROR: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function isViewerModerator(int $postId, int $userId): bool
+    {
+        try {
+            $stmt = $this->db->prepare(
+                "SELECT is_moderator FROM group_live_viewers WHERE post_id = :post_id AND user_id = :user_id LIMIT 1"
+            );
+            $stmt->execute([':post_id' => $postId, ':user_id' => $userId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            return $row ? ((int) $row['is_moderator'] === 1) : false;
+        } catch (PDOException $e) {
+            error_log("isViewerModerator ERROR: " . $e->getMessage());
+            return false;
         }
     }
 

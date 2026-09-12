@@ -53,6 +53,25 @@ class ChatRouter
             fn() => $chatController->createChat()
         );
 
+        // Inyeccion de mensajes del bot de n8n (sin login de usuario,
+        // protegido por header X-N8N-Secret dentro del controller)
+        $router->post(
+            '/chats/{chat_id}/bot-message',
+            fn() => $chatController->sendBotMessage()
+        );
+
+        // Ver / editar la configuracion del bot de un chat (bot_active, n8n_webhook_url)
+        $router->get(
+            '/chats/{chat_id}/bot-settings',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $chatController->getBotSettings()
+        );
+        $router->patch(
+            '/chats/{chat_id}/bot-settings',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $chatController->updateBotSettings()
+        );
+
         // Marcar todo un chat como leído (el que ya tienes)
         $router->patch(
             '/chats/{chat_id}/read',

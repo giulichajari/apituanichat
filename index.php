@@ -7,18 +7,32 @@ use App\Routers\UsersRouter;
 use App\Routers\ProfileRouter;
 use App\Routers\SignalRouter; // <--- importar tu router nuevo
 use App\Routers\ChatRouter; // <--- importar tu router nuevo
+use App\Routers\AgentRouter;
 use App\Routers\DriversRouter;
 use App\Routers\PaymentsRouter;
+use App\Routers\WalletRouter;
+use App\Routers\CardsRouter;
+use App\Routers\AdminWalletRouter;
+use App\Routers\WebAuthnRouter;
 use App\Routers\RestaurantsRouter;
 use App\Routers\ProductsRouter;
 use App\Routers\CountryRatesRouter;
 use App\Routers\OrdersRouter;
 use App\Routers\StatusRouter;
 use App\Routers\GroupsRouter;
+use App\Routers\EncuestasRouter;
+use App\Routers\ScheduledPaymentsRouter;
+use App\Routers\E2eeRouter;
+use App\Routers\ShopStoresRouter;
+use App\Routers\ProductVariantsRouter;
+use App\Routers\ShopOrdersRouter;
 use App\Routers\AiRouter;
 use App\Routers\DeviceTokensRouter;
 use App\Routers\VerificationRouter;
 use App\Routers\LiveRouter;
+use App\Routers\AgeVerificationRouter;
+use App\Routers\FamilyRouter;
+use App\Routers\ReportRouter;
 use EasyProjects\SimpleRouter\Router;
 
 
@@ -61,18 +75,32 @@ try {
     new ProfileRouter($router);
     new SignalRouter($router);  // <--- aquí sumamos el signaling
     new ChatRouter($router);
+    new AgentRouter($router);
     new DriversRouter($router);
     new PaymentsRouter($router);
+    new WalletRouter($router);
+    new CardsRouter($router);
+    new AdminWalletRouter($router);
+    new WebAuthnRouter($router);
     new RestaurantsRouter($router);
     new ProductsRouter($router);
     new CountryRatesRouter($router);
     new OrdersRouter($router);
     new StatusRouter($router);
     new GroupsRouter($router);
+    new EncuestasRouter($router);
+    new ScheduledPaymentsRouter($router);
+    new E2eeRouter($router);
+    new ShopStoresRouter($router);
+    new ProductVariantsRouter($router);
+    new ShopOrdersRouter($router);
     new AiRouter($router);
     new DeviceTokensRouter($router);
         new VerificationRouter($router);
     new LiveRouter($router);
+    new AgeVerificationRouter($router);
+    new FamilyRouter($router);
+    new ReportRouter($router);
     // Ejecutamos router
     // Cargar variables de entorno desde la raíz del proyecto
 

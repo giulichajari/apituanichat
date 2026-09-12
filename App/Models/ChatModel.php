@@ -22,6 +22,78 @@ class ChatModel
         return $this->db;
     }
 
+    public function isBotActive(int $chatId): bool
+    {
+        try {
+            $stmt = $this->conn()->prepare("SELECT bot_active FROM chats WHERE id = ?");
+            $stmt->execute([$chatId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            return $row ? (bool)$row['bot_active'] : true;
+        } catch (Exception $e) {
+            error_log("isBotActive: " . $e->getMessage());
+            return true;
+        }
+    }
+
+    public function setBotActive(int $chatId, bool $active): bool
+    {
+        try {
+            $stmt = $this->conn()->prepare("UPDATE chats SET bot_active = ? WHERE id = ?");
+            return $stmt->execute([$active ? 1 : 0, $chatId]);
+        } catch (Exception $e) {
+            error_log("setBotActive: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function getN8nWebhookUrl(int $chatId): ?string
+    {
+        try {
+            $stmt = $this->conn()->prepare("SELECT n8n_webhook_url FROM chats WHERE id = ?");
+            $stmt->execute([$chatId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            return $row['n8n_webhook_url'] ?? null;
+        } catch (Exception $e) {
+            error_log("getN8nWebhookUrl: " . $e->getMessage());
+            return null;
+        }
+    }
+
+    public function setN8nWebhookUrl(int $chatId, ?string $url): bool
+    {
+        try {
+            $stmt = $this->conn()->prepare("UPDATE chats SET n8n_webhook_url = ? WHERE id = ?");
+            return $stmt->execute([$url, $chatId]);
+        } catch (Exception $e) {
+            error_log("setN8nWebhookUrl: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function getChatAgentId(int $chatId): ?int
+    {
+        try {
+            $stmt = $this->conn()->prepare("SELECT agent_id FROM chats WHERE id = ?");
+            $stmt->execute([$chatId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            return isset($row['agent_id']) && $row['agent_id'] !== null ? (int)$row['agent_id'] : null;
+        } catch (Exception $e) {
+            error_log("getChatAgentId: " . $e->getMessage());
+            return null;
+        }
+    }
+
+    public function setChatAgentId(int $chatId, ?int $agentId): bool
+    {
+        try {
+            $stmt = $this->conn()->prepare("UPDATE chats SET agent_id = ? WHERE id = ?");
+            return $stmt->execute([$agentId, $chatId]);
+        } catch (Exception $e) {
+            error_log("setChatAgentId: " . $e->getMessage());
+            return false;
+        }
+    }
+
 
     public function sendMessage($chatId, $userId, $contenido, $tipo = 'texto', $fileId = null, $otherUserId = null): int
     {

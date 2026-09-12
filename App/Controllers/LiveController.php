@@ -7,6 +7,10 @@ use App\Models\GroupsModel;
 use App\Models\GroupLiveGiftModel;
 use App\Models\GroupLiveRecordingModel;
 use App\Models\GroupLiveChatModel;
+use App\Models\WalletModel;
+use App\Models\ReceiptModel;
+use App\Models\UsersModel;
+use App\Models\FamilyModel;
 use EasyProjects\SimpleRouter\Router;
 
 class LiveController
@@ -24,13 +28,17 @@ class LiveController
         private ?GroupsModel $groupsModel = null,
         private ?GroupLiveGiftModel $giftModel = null,
         private ?GroupLiveRecordingModel $recordingModel = null,
-        private ?GroupLiveChatModel $chatModel = null
+        private ?GroupLiveChatModel $chatModel = null,
+        private ?UsersModel $usersModel = null,
+        private ?FamilyModel $familyModel = null
     ) {
         $this->groupPostsModel = $groupPostsModel ?? new GroupPostsModel();
         $this->groupsModel = $groupsModel ?? new GroupsModel();
         $this->giftModel = $giftModel ?? new GroupLiveGiftModel();
         $this->recordingModel = $recordingModel ?? new GroupLiveRecordingModel();
         $this->chatModel = $chatModel ?? new GroupLiveChatModel();
+        $this->usersModel = $usersModel ?? new UsersModel();
+        $this->familyModel = $familyModel ?? new FamilyModel();
     }
 
     public function startLive()
@@ -41,6 +49,12 @@ class LiveController
         $body       = Router::$request->body;
         $visibility = $body->visibility ?? 'public';
         $giftAmount = $body->gift_amount ?? null;
+        $isAdultContent = (bool) ($body->is_adult_content ?? false);
+        $chatMode = $body->chat_mode ?? 'all';
+        if (!in_array($chatMode, ['all', 'moderators', 'off'], true)) {
+            $chatMode = 'all';
+        }
+        $invitedUserIds = is_array($body->invited_user_ids ?? null) ? $body->invited_user_ids : [];
 
         if ($groupId <= 0 || $userId <= 0) {
             Router::$response->status(400)->send(["message" => "Invalid request"]);
@@ -57,16 +71,30 @@ class LiveController
             return;
         }
 
+        $group = $this->groupsModel->getGroupById($groupId);
+        if (!$group) {
+            Router::$response->status(404)->send(["message" => "Grupo no encontrado"]);
+            return;
+        }
+        if ((int) $group['created_by'] !== $userId) {
+            Router::$response->status(403)->send(["message" => "Solo el creador del grupo puede iniciar un live"]);
+            return;
+        }
+
         // Cierra cualquier live huérfano del grupo (nunca se llamó a /live/stop
         // o el cliente reintentó /live/start sin cerrar el anterior), para que
         // el espectador nunca quede apuntando a un stream_key viejo sin manifiesto.
         $this->groupPostsModel->endOrphanedLivesByGroup($groupId);
 
-        $result = $this->groupPostsModel->createLivePost($groupId, $userId, $visibility, $giftAmount);
+        $result = $this->groupPostsModel->createLivePost($groupId, $userId, $visibility, $giftAmount, $isAdultContent, $chatMode);
 
         if (!$result) {
             Router::$response->status(500)->send(["message" => "Error creando el live"]);
             return;
+        }
+
+        if ($visibility === 'private' && !empty($invitedUserIds)) {
+            $this->groupPostsModel->addInvitedViewers((int) $result['post_id'], $invitedUserIds);
         }
 
         Router::$response->status(201)->send([
@@ -101,6 +129,11 @@ class LiveController
             return;
         }
 
+        if ((string) $post['visibility'] === 'private' && (int) $post['user_id'] !== $userId && !$this->groupPostsModel->isInvitedViewer((int) $post['id'], $userId)) {
+            Router::$response->status(403)->send(["message" => "Este live es privado", "private_live" => true]);
+            return;
+        }
+
         Router::$response->status(200)->send([
             "data" => [
                 "post_id"      => $post['id'],
@@ -108,6 +141,9 @@ class LiveController
                 "playback_url" => self::HLS_BASE . '/' . $post['stream_key'] . '.m3u8',
                 "whep_url"     => self::WHEP_BASE . '?app=live&stream=' . $post['stream_key'],
                 "started_at"   => $post['started_at'],
+                "is_adult_content" => (bool) $post['is_adult_content'],
+                "visibility"   => $post['visibility'],
+                "chat_mode"    => $post['chat_mode'],
             ],
             "message" => "Live activo"
         ]);
@@ -183,13 +219,36 @@ class LiveController
                 Router::$response->status(403)->send(["message" => "No tenes acceso a este live", "blocked" => true]);
                 return;
             }
+            if ((string) $post['visibility'] === 'private' && (int) $post['user_id'] !== $userId && !$this->groupPostsModel->isInvitedViewer($postId, $userId)) {
+                Router::$response->status(403)->send(["message" => "Este live es privado", "private_live" => true]);
+                return;
+            }
+            if (!empty($post['is_adult_content'])) {
+                if ($this->familyModel->isBlockedFromAdultContent($userId)) {
+                    Router::$response->status(403)->send([
+                        "message" => "Tu cuenta tiene el contenido +18 bloqueado por control parental",
+                        "parental_block" => true,
+                    ]);
+                    return;
+                }
+                if ($this->usersModel->getAgeVerificationStatus($userId) !== 'approved') {
+                    Router::$response->status(403)->send([
+                        "message" => "Este live es +18. Necesitas verificar tu edad para poder verlo",
+                        "needs_age_verification" => true,
+                        "age_verification_status" => $this->usersModel->getAgeVerificationStatus($userId),
+                    ]);
+                    return;
+                }
+            }
         }
 
         $activeViewers = $this->groupPostsModel->registerViewerHeartbeat($postId, $userId);
+        $isModerator = $post ? $this->groupPostsModel->isViewerModerator($postId, $userId) : false;
 
         Router::$response->status(200)->send([
             "message" => "OK",
-            "active_viewers" => $activeViewers
+            "active_viewers" => $activeViewers,
+            "is_moderator" => $isModerator
         ]);
     }
 
@@ -243,6 +302,14 @@ class LiveController
         ]);
     }
 
+    private function canModerate(array $post, int $userId): bool
+    {
+        if ((int) $post['user_id'] === $userId) {
+            return true;
+        }
+        return $this->groupPostsModel->isViewerModerator((int) $post['id'], $userId);
+    }
+
     public function getViewers()
     {
         $postId = (int) (Router::$request->params->postId ?? 0);
@@ -254,8 +321,8 @@ class LiveController
             return;
         }
 
-        if ((int)$post["user_id"] !== $userId) {
-            Router::$response->status(403)->send(["message" => "Solo el anfitrion puede ver esta lista"]);
+        if (!$this->canModerate($post, $userId)) {
+            Router::$response->status(403)->send(["message" => "Solo el anfitrion o un moderador puede ver esta lista"]);
             return;
         }
 
@@ -276,8 +343,8 @@ class LiveController
             return;
         }
 
-        if ((int)$post["user_id"] !== $requesterId) {
-            Router::$response->status(403)->send(["message" => "Solo el anfitrion puede expulsar participantes"]);
+        if (!$this->canModerate($post, $requesterId)) {
+            Router::$response->status(403)->send(["message" => "Solo el anfitrion o un moderador puede expulsar participantes"]);
             return;
         }
 
@@ -304,14 +371,66 @@ class LiveController
             return;
         }
 
-        if ((int)$post["user_id"] !== $requesterId) {
-            Router::$response->status(403)->send(["message" => "Solo el anfitrion puede bloquear participantes"]);
+        if (!$this->canModerate($post, $requesterId)) {
+            Router::$response->status(403)->send(["message" => "Solo el anfitrion o un moderador puede bloquear participantes"]);
             return;
         }
 
         $this->groupPostsModel->blockViewer((int)$post["group_id"], $targetUserId, $requesterId, $scope, $postId);
 
         Router::$response->status(200)->send(["message" => "Usuario bloqueado"]);
+    }
+
+    public function muteViewer()
+    {
+        $postId = (int) (Router::$request->params->postId ?? 0);
+        $targetUserId = (int) (Router::$request->params->userId ?? 0);
+        $requesterId = (int) (Router::$request->user->id ?? 0);
+        $muted = (bool) (Router::$request->body->muted ?? true);
+
+        $post = $this->groupPostsModel->getPostById($postId);
+        if (!$post) {
+            Router::$response->status(404)->send(["message" => "Live not found"]);
+            return;
+        }
+
+        if (!$this->canModerate($post, $requesterId)) {
+            Router::$response->status(403)->send(["message" => "Solo el anfitrion o un moderador puede silenciar participantes"]);
+            return;
+        }
+
+        $this->groupPostsModel->muteViewer($postId, $targetUserId, $muted);
+
+        Router::$response->status(200)->send([
+            "message" => $muted ? "Usuario silenciado" : "Silencio removido",
+            "muted" => $muted
+        ]);
+    }
+
+    public function setModerator()
+    {
+        $postId = (int) (Router::$request->params->postId ?? 0);
+        $targetUserId = (int) (Router::$request->params->userId ?? 0);
+        $requesterId = (int) (Router::$request->user->id ?? 0);
+        $isModerator = (bool) (Router::$request->body->is_moderator ?? true);
+
+        $post = $this->groupPostsModel->getPostById($postId);
+        if (!$post) {
+            Router::$response->status(404)->send(["message" => "Live not found"]);
+            return;
+        }
+
+        if ((int)$post["user_id"] !== $requesterId) {
+            Router::$response->status(403)->send(["message" => "Solo el anfitrion puede asignar moderadores"]);
+            return;
+        }
+
+        $this->groupPostsModel->setViewerModerator($postId, $targetUserId, $isModerator);
+
+        Router::$response->status(200)->send([
+            "message" => $isModerator ? "Moderador asignado" : "Moderador removido",
+            "is_moderator" => $isModerator
+        ]);
     }
 
     private const GIFT_TIERS = [1, 5, 10, 20, 30, 50, 100, 200, 300, 500];
@@ -340,26 +459,33 @@ class LiveController
             return;
         }
 
-        $square = $this->createGiftPaymentLink($postId, $amount);
-        if (!empty($square['error'])) {
-            Router::$response->status(500)->send(["message" => "Error creando link de pago", "error" => $square["error"]]);
+        // Cobro directo del wallet, ya no via Square
+        $walletModel = new WalletModel();
+        $walletResult = $walletModel->debitForPurchase($userId, $amount, 'live_gift_post_' . $postId);
+        if (!$walletResult['success']) {
+            Router::$response->status(402)->send(["message" => $walletResult['message'], "insufficientBalance" => true]);
             return;
         }
 
-        $giftId = $this->giftModel->create(
-            $postId,
+        $giftId = $this->giftModel->create($postId, $userId, $amount, '', '', 'wallet_' . $userId . '_' . time());
+        $this->giftModel->markAsCompleted($giftId);
+
+        $receiptModel = new ReceiptModel();
+        $receiptModel->createAndNotify(
             $userId,
+            'live_gift',
+            $giftId,
             $amount,
-            (string) $square['payment_link_id'],
-            (string) $square['url'],
-            (string) $square['idempotency_key']
+            'wallet',
+            'Regalo en live #' . $postId
         );
 
         Router::$response->status(201)->send([
-            "message" => "Link de pago creado",
+            "message" => "Regalo enviado con tu wallet",
+            "success" => true,
             "gift_id" => $giftId,
-            "paymentUrl" => $square["url"],
-            "amount" => $amount
+            "amount" => $amount,
+            "newBalance" => $walletResult['new_balance'],
         ]);
     }
 
@@ -614,6 +740,19 @@ class LiveController
             Router::$response->status(404)->send(["message" => "Live no encontrado o no activo"]);
             return;
         }
+        if ($this->groupPostsModel->isViewerMuted($postId, $userId)) {
+            Router::$response->status(403)->send(["message" => "Estas silenciado en este live"]);
+            return;
+        }
+        $chatMode = $post['chat_mode'] ?? 'all';
+        if ($chatMode === 'off' && !$this->canModerate($post, $userId)) {
+            Router::$response->status(403)->send(["message" => "El chat esta desactivado en este live"]);
+            return;
+        }
+        if ($chatMode === 'moderators' && !$this->canModerate($post, $userId)) {
+            Router::$response->status(403)->send(["message" => "Solo los moderadores pueden comentar en este live"]);
+            return;
+        }
         $messageId = $this->chatModel->createFreeMessage($postId, $userId, $message);
         Router::$response->status(201)->send([
             "data" => ["id" => $messageId],
@@ -647,27 +786,35 @@ class LiveController
             Router::$response->status(404)->send(["message" => "Live no encontrado o no activo"]);
             return;
         }
-        $square = $this->createGiftPaymentLink($postId, $amount, "Mensaje anclado en live #{$postId} ({$minutes} min)");
-        if (!empty($square['error'])) {
-            Router::$response->status(500)->send(["message" => "Error creando link de pago", "error" => $square["error"]]);
+
+        // Cobro directo del wallet, ya no via Square
+        $walletModel = new WalletModel();
+        $walletResult = $walletModel->debitForPurchase($userId, $amount, 'live_pin_post_' . $postId);
+        if (!$walletResult['success']) {
+            Router::$response->status(402)->send(["message" => $walletResult['message'], "insufficientBalance" => true]);
             return;
         }
-        $pinId = $this->chatModel->createPinRequest(
-            $postId,
+
+        $pinId = $this->chatModel->createPinRequest($postId, $userId, $message, $amount, $minutes, '', '', 'wallet_' . $userId . '_' . time());
+        $this->chatModel->markPinCompleted($pinId);
+
+        $receiptModel = new ReceiptModel();
+        $receiptModel->createAndNotify(
             $userId,
-            $message,
+            'live_pin',
+            $pinId,
             $amount,
-            $minutes,
-            (string) $square['payment_link_id'],
-            (string) $square['url'],
-            (string) $square['idempotency_key']
+            'wallet',
+            'Mensaje anclado en live #' . $postId . " ({$minutes} min)"
         );
+
         Router::$response->status(201)->send([
-            "message" => "Link de pago creado",
+            "message" => "Mensaje anclado con tu wallet",
+            "success" => true,
             "pin_id" => $pinId,
-            "paymentUrl" => $square["url"],
             "amount" => $amount,
-            "minutes" => $minutes
+            "minutes" => $minutes,
+            "newBalance" => $walletResult['new_balance'],
         ]);
     }
 

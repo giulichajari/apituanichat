@@ -6,6 +6,10 @@ use App\Models\OrderModel;
 use App\Models\VerificationPaymentModel;
 use App\Models\GroupLiveGiftModel;
 use App\Models\GroupLiveChatModel;
+use App\Models\WalletModel;
+use App\Models\MensajesPagosModel;
+use App\Models\ReceiptModel;
+use App\Models\EncuestasPagosModel;
 use EasyProjects\SimpleRouter\Router;
 
 /**
@@ -22,6 +26,10 @@ class SquareWebhookController
     private VerificationPaymentModel $verificationPaymentModel;
     private GroupLiveGiftModel $giftModel;
     private GroupLiveChatModel $chatModel;
+    private WalletModel $walletModel;
+    private MensajesPagosModel $mensajesPagosModel;
+    private ReceiptModel $receiptModel;
+    private EncuestasPagosModel $encuestasPagosModel;
 
     public function __construct()
     {
@@ -29,6 +37,10 @@ class SquareWebhookController
         $this->verificationPaymentModel = new VerificationPaymentModel();
         $this->giftModel = new GroupLiveGiftModel();
         $this->chatModel = new GroupLiveChatModel();
+        $this->walletModel = new WalletModel();
+        $this->mensajesPagosModel = new MensajesPagosModel();
+        $this->receiptModel = new ReceiptModel();
+        $this->encuestasPagosModel = new EncuestasPagosModel();
     }
 
     public function handle(): void
@@ -116,6 +128,44 @@ class SquareWebhookController
             $ok = $this->chatModel->markPinCompleted((int)$pinnedMessage["id"]);
             if ($ok) {
                 error_log("Square webhook: Mensaje anclado #{$pinnedMessage["id"]} marcado como completado.");
+            }
+            return;
+        }
+
+        $groupMessagePayment = $this->mensajesPagosModel->getByPaymentLinkId($paymentLinkId);
+        if ($groupMessagePayment) {
+            $squarePaymentId = $payment['id'] ?? null;
+            $ok = $this->mensajesPagosModel->markCompleted((int)$groupMessagePayment["id"], $squarePaymentId);
+            if ($ok) {
+                error_log("Square webhook: Pago de mensaje de grupo #{$groupMessagePayment["id"]} marcado como completado.");
+                $this->receiptModel->createAndNotify(
+                    (int) $groupMessagePayment['usuario_id'],
+                    'group_message',
+                    (int) $groupMessagePayment['mensaje_id'],
+                    (float) $groupMessagePayment['monto'],
+                    'square',
+                    'Mensaje privado desbloqueado en un grupo',
+                    $squarePaymentId
+                );
+            }
+            return;
+        }
+
+        $encuestaPayment = $this->encuestasPagosModel->getByPaymentLinkId($paymentLinkId);
+        if ($encuestaPayment) {
+            $squarePaymentId = $payment['id'] ?? null;
+            $ok = $this->encuestasPagosModel->markCompleted((int)$encuestaPayment["id"], $squarePaymentId);
+            if ($ok) {
+                error_log("Square webhook: Pago de encuesta #{$encuestaPayment["id"]} marcado como completado.");
+            }
+            return;
+        }
+
+        $walletRecharge = $this->walletModel->getRechargeByPaymentLinkId($paymentLinkId);
+        if ($walletRecharge) {
+            $ok = $this->walletModel->markRechargeCompleted((int)$walletRecharge["id"]);
+            if ($ok) {
+                error_log("Square webhook: Recarga de wallet #{$walletRecharge["id"]} acreditada.");
             }
             return;
         }

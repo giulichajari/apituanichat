@@ -14,8 +14,12 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     protected $usersModel;
     protected $profileModel;
     protected $deviceTokenModel;
+    protected $loop;
+    protected $instanceId;
+    protected $redisPub;
+    protected $redisSub;
 
-    public function __construct()
+    public function __construct($loop = null)
     {
         $this->clients = new \SplObjectStorage();
         $this->statusManager = new UserStatusManager();
@@ -23,7 +27,81 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $this->initializeUsersModel();
         $this->initializeProfileModel();
         $this->initializeDeviceTokenModel();
+        $this->initializeRedisPubSub($loop);
         echo "🚀 SignalServer refactorizado inicializado\n";
+    }
+
+    // ------------------------------------------------------------------
+    // Redis pub/sub asincrono (multi-proceso): cada instancia de SignalServer
+    // publica los mensajes que entrega localmente, y escucha las publicaciones
+    // de las demas instancias para entregarlas a SUS propias conexiones locales.
+    // Con un solo proceso corriendo, esto no cambia nada (cada instancia ignora
+    // sus propios mensajes).
+    // ------------------------------------------------------------------
+    private function initializeRedisPubSub($loop)
+    {
+        $this->loop = $loop;
+        $this->instanceId = getmypid() . '_' . substr(md5(uniqid('', true)), 0, 6);
+
+        if (!$loop || !class_exists(\Clue\React\Redis\Factory::class)) {
+            echo "⚠️  Redis pub/sub deshabilitado (sin loop o sin clue/redis-react)\n";
+            return;
+        }
+
+        $factory = new \Clue\React\Redis\Factory($loop);
+
+        $factory->createClient('127.0.0.1:6379')->then(function ($client) {
+            $this->redisPub = $client;
+            echo "✅ Redis (publish) conectado - instancia {$this->instanceId}\n";
+        }, function (\Exception $e) {
+            echo "❌ Redis (publish) error: " . $e->getMessage() . "\n";
+        });
+
+        $factory->createClient('127.0.0.1:6379')->then(function ($client) {
+            $this->redisSub = $client;
+            $client->subscribe('tuani:ws:broadcast');
+            $client->on('message', function ($channel, $message) {
+                $this->handleRedisBroadcast($message);
+            });
+            echo "✅ Redis (subscribe) conectado, escuchando tuani:ws:broadcast\n";
+        }, function (\Exception $e) {
+            echo "❌ Redis (subscribe) error: " . $e->getMessage() . "\n";
+        });
+    }
+
+    private function publishToOtherInstances($kind, array $extra, array $payload)
+    {
+        if (!$this->redisPub) {
+            return;
+        }
+        try {
+            $msg = array_merge(
+                ['origin' => $this->instanceId, 'kind' => $kind, 'payload' => $payload],
+                $extra
+            );
+            $this->redisPub->publish('tuani:ws:broadcast', json_encode($msg));
+        } catch (\Throwable $e) {
+            error_log('publishToOtherInstances ERROR: ' . $e->getMessage());
+        }
+    }
+
+    private function handleRedisBroadcast($message)
+    {
+        try {
+            $data = json_decode($message, true);
+            if (!$data || ($data['origin'] ?? null) === $this->instanceId) {
+                return; // Mensaje propio, ya se entrego localmente.
+            }
+            if (($data['kind'] ?? null) === 'user' && isset($data['user_id'], $data['payload'])) {
+                $targets = $this->getConnectionsForUser((int) $data['user_id']);
+                $this->sendToConnections($targets, $data['payload']);
+            } elseif (($data['kind'] ?? null) === 'chat' && isset($data['chat_id'], $data['payload'])) {
+                $targets = $this->getChatTargetConnections($data['chat_id']);
+                $this->sendToConnections($targets, $data['payload']);
+            }
+        } catch (\Throwable $e) {
+            error_log('handleRedisBroadcast ERROR: ' . $e->getMessage());
+        }
     }
 
     public function onOpen(ConnectionInterface $conn)
@@ -540,6 +618,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     {
         $targets = $this->getConnectionsForUser($userId);
         $sent = $this->sendToConnections($targets, $payload, $excludeConnection);
+        $this->publishToOtherInstances('user', ['user_id' => (int) $userId], $payload);
 
         if ($this->isSignalPayloadType($payload['type'] ?? '')) {
             $this->traceSignal('route_user', [
@@ -911,7 +990,9 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
     private function broadcastToChat($chatId, array $message, ConnectionInterface $excludeConnection = null)
     {
-        return $this->sendToConnections($this->getChatTargetConnections($chatId), $message, $excludeConnection);
+        $sent = $this->sendToConnections($this->getChatTargetConnections($chatId), $message, $excludeConnection);
+        $this->publishToOtherInstances('chat', ['chat_id' => $chatId], $message);
+        return $sent;
     }
 
     private function getMessagePreview($content, $type)
@@ -1149,6 +1230,25 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             return;
         }
 
+        $normalizedCmd = mb_strtolower(trim($contenido));
+        if ($tipo === 'texto' && ($normalizedCmd === '/humano' || $normalizedCmd === '/bot')) {
+            $botActive = ($normalizedCmd === '/bot');
+            if ($this->chatModel) {
+                $this->chatModel->setBotActive((int)$chatId, $botActive);
+            }
+            if ($tempId) {
+                $this->sendJson($from, [
+                    'type' => 'message_sent',
+                    'temp_id' => $tempId,
+                    'chat_id' => $chatId,
+                    'status' => 'command_processed',
+                    'bot_active' => $botActive,
+                    'timestamp' => $this->nowIso(),
+                ], false);
+            }
+            return;
+        }
+
         $this->statusManager->updateActivity($userId);
 
         if ($tempId) {
@@ -1212,6 +1312,44 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $this->updateUnreadCounts($chatId, $userId);
         $this->pushOfflineMessageNotifications($chatId, $messagePayload, $userId);
         $this->maybeSendUnavailableAutoReply($chatId, $userId);
+        $this->forwardToN8nIfActive($chatId, $userId, $contenido, $messageId);
+    }
+
+    /**
+     * Si el chat tiene bot activo y una URL de webhook configurada, reenvia
+     * el mensaje a n8n via curl en background (no bloqueante para el loop).
+     */
+    private function forwardToN8nIfActive($chatId, $userId, $contenido, $messageId)
+    {
+        try {
+            if (!$this->chatModel || !$this->chatModel->isBotActive((int)$chatId)) {
+                return;
+            }
+            $agentId = $this->chatModel->getChatAgentId((int)$chatId);
+            if (!$agentId) {
+                return;
+            }
+            $agentRows = $this->chatModel->query("SELECT webhook_url FROM agents WHERE id = ?", [$agentId]);
+            $webhookUrl = $agentRows[0]['webhook_url'] ?? null;
+            if (!$webhookUrl) {
+                return;
+            }
+            $payload = json_encode([
+                'chat_id' => $chatId,
+                'user_id' => $userId,
+                'message_id' => $messageId,
+                'contenido' => $contenido,
+                'timestamp' => $this->nowIso(),
+            ]);
+            $escapedUrl = escapeshellarg($webhookUrl);
+            $escapedPayload = escapeshellarg($payload);
+            $cmd = "curl -s -m 8 -X POST -H " . escapeshellarg('Content-Type: application/json')
+                . " -d {$escapedPayload} {$escapedUrl} > /dev/null 2>&1 &";
+            exec($cmd);
+            $this->logToFile("➡️ Mensaje reenviado a n8n (chat {$chatId}, mensaje {$messageId})");
+        } catch (\Throwable $e) {
+            $this->logToFile("❌ Error reenviando a n8n: " . $e->getMessage());
+        }
     }
 
     private function handleFileUpload(ConnectionInterface $from, array $data)

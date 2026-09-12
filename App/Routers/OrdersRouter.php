@@ -44,5 +44,17 @@ class OrdersRouter
             fn() => $tokenMiddleware->strict(),
             fn() => $orderController->confirmOrder((int) self::param('orderId'))
         );
+
+        $router->post(
+            '/orders/{orderId:\d+}/retry-wallet-payment',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $orderController->retryWalletPayment((int) self::param('orderId'))
+        );
+
+        $router->get(
+            '/orders/my-pending-payment',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $orderController->getMyPendingPayment()
+        );
     }
 }
