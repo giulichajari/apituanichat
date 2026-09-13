@@ -754,30 +754,6 @@ class LiveController
             return;
         }
         $messageId = $this->chatModel->createFreeMessage($postId, $userId, $message);
-
-        try {
-            $senderName = Router::$request->user->name ?? null;
-            $redis = new \Redis();
-            $redis->connect('127.0.0.1', 6379, 1.0);
-            $redis->publish('tuani:ws:broadcast', json_encode([
-                'origin' => 'php-fpm-live-chat',
-                'kind' => 'live',
-                'live_id' => $postId,
-                'payload' => [
-                    'type' => 'live_chat_message',
-                    'post_id' => $postId,
-                    'id' => $messageId,
-                    'sender_user_id' => $userId,
-                    'sender_name' => $senderName,
-                    'message' => $message,
-                    'created_at' => date('c'),
-                ],
-            ]));
-            $redis->close();
-        } catch (\Throwable $e) {
-            error_log('sendChatMessage (live): fallo el publish a Redis: ' . $e->getMessage());
-        }
-
         Router::$response->status(201)->send([
             "data" => ["id" => $messageId],
             "message" => "Mensaje enviado"

@@ -6,6 +6,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 {
     protected $clients;
     protected $sessions = [];
+    protected $liveSessions = [];
     protected $userConnections = [];
     protected $calls = [];
     protected $statusManager;
@@ -98,6 +99,9 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             } elseif (($data['kind'] ?? null) === 'chat' && isset($data['chat_id'], $data['payload'])) {
                 $targets = $this->getChatTargetConnections($data['chat_id']);
                 $this->sendToConnections($targets, $data['payload']);
+            } elseif (($data['kind'] ?? null) === 'live' && isset($data['live_id'], $data['payload'])) {
+                $targets = $this->getLiveTargetConnections($data['live_id']);
+                $this->sendToConnections($targets, $data['payload']);
             }
         } catch (\Throwable $e) {
             error_log('handleRedisBroadcast ERROR: ' . $e->getMessage());
@@ -111,6 +115,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $conn->userId = null;
         $conn->userData = [];
         $conn->joinedChats = [];
+        $conn->joinedLives = [];
         $conn->openedAt = time();
 
         $this->sendJson($conn, [
@@ -175,6 +180,14 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
                 case 'join_chat':
                     $this->handleJoinChat($from, $data);
+                    return;
+
+                case 'join_live':
+                    $this->handleJoinLive($from, $data);
+                    return;
+
+                case 'leave_live':
+                    $this->handleLeaveLive($from, $data);
                     return;
 
                 case 'typing':
@@ -819,6 +832,76 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         if (!$alreadyPresent) {
             $this->notifyUserJoinedChat($chatId, $userId);
         }
+    }
+
+    private function handleJoinLive(ConnectionInterface $from, array $data)
+    {
+        $postId = (int) ($data['post_id'] ?? $data['live_id'] ?? 0);
+        if (!$postId) {
+            $this->sendError($from, 'join_live requiere post_id');
+            return;
+        }
+
+        if (!isset($this->liveSessions[$postId])) {
+            $this->liveSessions[$postId] = [];
+        }
+        $this->liveSessions[$postId][$from->resourceId] = $from;
+
+        if (!is_array($from->joinedLives ?? null)) {
+            $from->joinedLives = [];
+        }
+        $from->joinedLives[$postId] = true;
+
+        $this->sendJson($from, [
+            'type' => 'joined_live',
+            'post_id' => $postId,
+            'timestamp' => $this->nowIso(),
+        ], false);
+    }
+
+    private function handleLeaveLive(ConnectionInterface $from, array $data)
+    {
+        $postId = (int) ($data['post_id'] ?? $data['live_id'] ?? 0);
+        if (!$postId) {
+            return;
+        }
+        if (!empty($this->liveSessions[$postId][$from->resourceId])) {
+            unset($this->liveSessions[$postId][$from->resourceId]);
+            if (empty($this->liveSessions[$postId])) {
+                unset($this->liveSessions[$postId]);
+            }
+        }
+        if (is_array($from->joinedLives ?? null)) {
+            unset($from->joinedLives[$postId]);
+        }
+    }
+
+    private function getLiveTargetConnections($postId)
+    {
+        $targets = [];
+        if (!empty($this->liveSessions[$postId])) {
+            foreach ($this->liveSessions[$postId] as $connId => $conn) {
+                if ($conn instanceof ConnectionInterface && $this->clients->contains($conn)) {
+                    $targets[$connId] = $conn;
+                }
+            }
+        }
+        return $targets;
+    }
+
+    private function removeConnectionFromLiveSessions(ConnectionInterface $conn)
+    {
+        $connId = $conn->resourceId;
+        $joinedLives = is_array($conn->joinedLives ?? null) ? array_keys($conn->joinedLives) : [];
+        foreach ($joinedLives as $postId) {
+            if (!empty($this->liveSessions[$postId][$connId])) {
+                unset($this->liveSessions[$postId][$connId]);
+                if (empty($this->liveSessions[$postId])) {
+                    unset($this->liveSessions[$postId]);
+                }
+            }
+        }
+        $conn->joinedLives = [];
     }
 
     private function getOnlineUsersInChat($chatId)
@@ -2152,6 +2235,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $userId = isset($conn->userId) ? (int)$conn->userId : 0;
         $this->cancelHeartbeatTimer($conn);
         $this->removeConnectionFromSessions($conn, $userId);
+        $this->removeConnectionFromLiveSessions($conn);
         $this->removeConnectionFromUser($conn, $userId, true);
 
         foreach ($this->calls as $callId => $call) {
