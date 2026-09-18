@@ -9,6 +9,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     protected $liveSessions = [];
     protected $userConnections = [];
     protected $calls = [];
+    protected $groupCalls = [];
     protected $statusManager;
     protected $userTimers = [];
     protected $chatModel;
@@ -246,6 +247,10 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
                 case 'call_ended':
                     $this->handleCallEnded($from, $data);
+                    return;
+
+                case 'call_add_participant':
+                    $this->handleCallAddParticipant($from, $data);
                     return;
 
                 default:
@@ -846,6 +851,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             $this->liveSessions[$postId] = [];
         }
         $this->liveSessions[$postId][$from->resourceId] = $from;
+        $this->redisIncrLiveViewers($postId, 1);
 
         if (!is_array($from->joinedLives ?? null)) {
             $from->joinedLives = [];
@@ -867,6 +873,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
         if (!empty($this->liveSessions[$postId][$from->resourceId])) {
             unset($this->liveSessions[$postId][$from->resourceId]);
+            $this->redisIncrLiveViewers($postId, -1);
             if (empty($this->liveSessions[$postId])) {
                 unset($this->liveSessions[$postId]);
             }
@@ -889,6 +896,36 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         return $targets;
     }
 
+    private function redisIncrLiveViewers(int $postId, int $delta): void
+    {
+        if (!$this->redisPub) {
+            return;
+        }
+        try {
+            $key = "live:viewers:{$postId}";
+            $promise = $delta > 0 ? $this->redisPub->incr($key) : $this->redisPub->decr($key);
+            $promise->then(function ($count) use ($postId, $key) {
+                $count = max(0, (int) $count);
+                $this->redisPub->expire($key, 21600);
+
+                $payload = [
+                    'type' => 'live_viewer_count',
+                    'live_id' => $postId,
+                    'count' => $count,
+                ];
+
+                $targets = $this->getLiveTargetConnections($postId);
+                $this->sendToConnections($targets, $payload);
+
+                $this->publishToOtherInstances('live', ['live_id' => $postId], $payload);
+            }, function (\Exception $e) {
+                error_log('redisIncrLiveViewers ERROR: ' . $e->getMessage());
+            });
+        } catch (\Throwable $e) {
+            error_log('redisIncrLiveViewers ERROR: ' . $e->getMessage());
+        }
+    }
+
     private function removeConnectionFromLiveSessions(ConnectionInterface $conn)
     {
         $connId = $conn->resourceId;
@@ -896,6 +933,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         foreach ($joinedLives as $postId) {
             if (!empty($this->liveSessions[$postId][$connId])) {
                 unset($this->liveSessions[$postId][$connId]);
+                $this->redisIncrLiveViewers($postId, -1);
                 if (empty($this->liveSessions[$postId])) {
                     unset($this->liveSessions[$postId]);
                 }
@@ -1658,6 +1696,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $call['call_type'] = (($data['call_type'] ?? $call['call_type'] ?? 'audio') === 'video') ? 'video' : 'audio';
         $call['status'] = 'ringing';
         $call['updated_at'] = time();
+        $call['group_id'] = isset($data['group_id']) ? (string)$data['group_id'] : ($call['group_id'] ?? $callId);
         if ($offer) {
             $call['offer'] = $offer;
         }
@@ -1690,6 +1729,108 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         return [];
     }
 
+    private function handleCallAddParticipant(ConnectionInterface $from, array $data)
+    {
+        $requesterId = $this->resolveSenderUserId($from, $data);
+        $groupId = $this->normalizeCallId($data);
+        $newUserId = (int)($data['new_user_id'] ?? $data['to'] ?? $data['target_user_id'] ?? 0);
+        $chatId = $this->normalizeChatId($data);
+
+        if (!$requesterId || !$groupId || !$newUserId) {
+            $this->sendError($from, 'call_add_participant requiere call_id/session_id, new_user_id');
+            return;
+        }
+
+        $baseCall = $this->calls[$groupId] ?? null;
+        if (!$baseCall) {
+            $this->sendError($from, 'La llamada no existe', ['call_id' => $groupId], 'call_not_found');
+            return;
+        }
+
+        if (!isset($this->groupCalls[$groupId])) {
+            $this->groupCalls[$groupId] = [
+                'group_id' => $groupId,
+                'chat_id' => $baseCall['chat_id'] ?? $chatId,
+                'call_type' => $baseCall['call_type'] ?? 'audio',
+                'participants' => [
+                    (int)$baseCall['caller_id'] => ['status' => 'accepted', 'joined_at' => $baseCall['created_at'] ?? time()],
+                    (int)$baseCall['callee_id'] => ['status' => 'accepted', 'joined_at' => $baseCall['created_at'] ?? time()],
+                ],
+                'created_at' => time(),
+            ];
+        }
+
+        $group = $this->groupCalls[$groupId];
+
+        if (!isset($group['participants'][(int)$requesterId])) {
+            $this->sendError($from, 'No pertenecés a esta llamada', ['call_id' => $groupId], 'invalid_participant');
+            return;
+        }
+
+        if (isset($group['participants'][$newUserId])) {
+            $this->sendError($from, 'Ese usuario ya está en la llamada', ['call_id' => $groupId], 'already_in_call');
+            return;
+        }
+
+        $existingParticipantIds = array_keys($group['participants']);
+
+        $this->groupCalls[$groupId]['participants'][$newUserId] = [
+            'status' => 'ringing',
+            'joined_at' => time(),
+        ];
+
+        $callerName = trim((string)($data['caller_name'] ?? $this->getUserDisplayName($requesterId)));
+
+        $sentToNewUser = $this->sendToUser($newUserId, [
+            'type' => 'incoming_group_call',
+            'group_id' => $groupId,
+            'call_id' => $groupId,
+            'chat_id' => $group['chat_id'],
+            'from' => $requesterId,
+            'caller_name' => $callerName !== '' ? $callerName : 'Usuario',
+            'call_type' => $group['call_type'],
+            'existing_participants' => $existingParticipantIds,
+            'timestamp' => $this->nowIso(),
+        ]);
+
+        if ($sentToNewUser === 0) {
+            $this->sendFcmToUser($newUserId, [
+                'type' => 'incoming_group_call',
+                'caller_name' => $callerName !== '' ? $callerName : 'Usuario',
+                'group_id' => (string)$groupId,
+                'chat_id' => (string)$group['chat_id'],
+                'from' => (string)$requesterId,
+            ]);
+        }
+
+        foreach ($existingParticipantIds as $participantId) {
+            $this->sendToUser((int)$participantId, [
+                'type' => 'call_participant_joining',
+                'group_id' => $groupId,
+                'chat_id' => $group['chat_id'],
+                'new_user_id' => $newUserId,
+                'call_type' => $group['call_type'],
+                'timestamp' => $this->nowIso(),
+            ]);
+        }
+
+        $this->sendJson($from, [
+            'type' => 'call_add_participant_ack',
+            'group_id' => $groupId,
+            'new_user_id' => $newUserId,
+            'status' => $sentToNewUser > 0 ? 'ringing' : 'offline',
+            'timestamp' => $this->nowIso(),
+        ], false);
+
+        $this->traceSignal('call_add_participant', [
+            'group_id' => $groupId,
+            'requester_id' => $requesterId,
+            'new_user_id' => $newUserId,
+            'sent_to_new_user' => $sentToNewUser,
+            'existing_participants' => $existingParticipantIds,
+        ]);
+    }
+
     private function handleInitCall(ConnectionInterface $from, array $data)
     {
         $callerId = $this->resolveSenderUserId($from, $data);
@@ -1713,10 +1854,13 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
         $call = $this->buildCall($data, $callerId, $calleeId, $from);
         $callerName = trim((string)($data['caller_name'] ?? $this->getUserDisplayName($callerId)));
+        $isGroupLeg = !empty($data['is_group_leg']);
 
         $incomingPayload = [
-            'type' => 'incoming_call',
+            'type' => $isGroupLeg ? 'call_offer' : 'incoming_call',
             'signal_type' => 'offer',
+            'group_id' => $call['group_id'] ?? null,
+            'is_group_leg' => $isGroupLeg,
             'call_id' => $call['call_id'],
             'session_id' => $call['session_id'],
             'chat_id' => $chatId,
@@ -1735,6 +1879,8 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $this->sendJson($from, [
             'type' => 'call_initiated',
             'signal_type' => 'offer',
+            'group_id' => $call['group_id'] ?? null,
+            'is_group_leg' => $isGroupLeg,
             'call_id' => $call['call_id'],
             'session_id' => $call['session_id'],
             'chat_id' => $chatId,
@@ -1800,6 +1946,13 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $call['callee_conn_id'] = $from->resourceId;
         $call['answer'] = $answer;
         $call = $this->touchCall($call);
+
+        if (!empty($call['group_id']) && isset($this->groupCalls[$call['group_id']])) {
+            $this->groupCalls[$call['group_id']]['participants'][(int)$calleeId] = [
+                'status' => 'accepted',
+                'joined_at' => $this->groupCalls[$call['group_id']]['participants'][(int)$calleeId]['joined_at'] ?? time(),
+            ];
+        }
 
         $payload = [
             'type' => 'call_answer',
@@ -2098,6 +2251,18 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'sent_to_own_other_sockets' => $sentToOwnOtherSockets,
             'reason' => $reason,
         ]);
+
+        if (!empty($call['group_id']) && isset($this->groupCalls[$call['group_id']])) {
+            unset($this->groupCalls[$call['group_id']]['participants'][(int)$endedBy]);
+            foreach ($this->groupCalls[$call['group_id']]['participants'] as $pid => $pinfo) {
+                $this->sendToUser((int)$pid, [
+                    'type' => 'call_participant_left',
+                    'group_id' => $call['group_id'],
+                    'user_id' => $endedBy,
+                    'timestamp' => $this->nowIso(),
+                ]);
+            }
+        }
 
         if (!empty($call['chat_id'])) {
             $this->broadcastToChat($call['chat_id'], [

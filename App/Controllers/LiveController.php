@@ -194,7 +194,31 @@ class LiveController
             return;
         }
 
+        $post = $this->groupPostsModel->getPostByStreamKey($streamKey);
+
         $this->groupPostsModel->markLiveEnded($streamKey);
+
+        if ($post && isset($post['id'])) {
+            try {
+                $postId = (int) $post['id'];
+                $redis = new \Redis();
+                $redis->connect('127.0.0.1', 6379, 1.0);
+                $redis->publish('tuani:ws:broadcast', json_encode([
+                    'origin' => 'php-fpm-live-status',
+                    'kind' => 'live',
+                    'live_id' => $postId,
+                    'payload' => [
+                        'type' => 'live_status',
+                        'post_id' => $postId,
+                        'status' => 'ended',
+                        'ended_at' => date('c'),
+                    ],
+                ]));
+                $redis->close();
+            } catch (\Throwable $e) {
+                error_log('onPublishDone: fallo el publish a Redis: ' . $e->getMessage());
+            }
+        }
 
         Router::$response->status(200)->send(["message" => "OK"]);
     }
@@ -350,6 +374,24 @@ class LiveController
 
         $this->groupPostsModel->kickViewer($postId, $targetUserId);
 
+        try {
+            $redis = new \Redis();
+            $redis->connect('127.0.0.1', 6379, 1.0);
+            $redis->publish('tuani:ws:broadcast', json_encode([
+                'origin' => 'php-fpm-live-kicked',
+                'kind' => 'live',
+                'live_id' => $postId,
+                'payload' => [
+                    'type' => 'live_kicked',
+                    'post_id' => $postId,
+                    'target_user_id' => $targetUserId,
+                ],
+            ]));
+            $redis->close();
+        } catch (\Throwable $e) {
+            error_log('php-fpm-live-kicked: fallo el publish a Redis: ' . $e->getMessage());
+        }
+
         Router::$response->status(200)->send(["message" => "Usuario expulsado"]);
     }
 
@@ -378,6 +420,25 @@ class LiveController
 
         $this->groupPostsModel->blockViewer((int)$post["group_id"], $targetUserId, $requesterId, $scope, $postId);
 
+        try {
+            $redis = new \Redis();
+            $redis->connect('127.0.0.1', 6379, 1.0);
+            $redis->publish('tuani:ws:broadcast', json_encode([
+                'origin' => 'php-fpm-live-blocked',
+                'kind' => 'live',
+                'live_id' => $postId,
+                'payload' => [
+                    'type' => 'live_blocked',
+                    'post_id' => $postId,
+                    'target_user_id' => $targetUserId,
+                    'scope' => $scope,
+                ],
+            ]));
+            $redis->close();
+        } catch (\Throwable $e) {
+            error_log('php-fpm-live-blocked: fallo el publish a Redis: ' . $e->getMessage());
+        }
+
         Router::$response->status(200)->send(["message" => "Usuario bloqueado"]);
     }
 
@@ -400,6 +461,25 @@ class LiveController
         }
 
         $this->groupPostsModel->muteViewer($postId, $targetUserId, $muted);
+
+        try {
+            $redis = new \Redis();
+            $redis->connect('127.0.0.1', 6379, 1.0);
+            $redis->publish('tuani:ws:broadcast', json_encode([
+                'origin' => 'php-fpm-live-muted',
+                'kind' => 'live',
+                'live_id' => $postId,
+                'payload' => [
+                    'type' => 'live_muted',
+                    'post_id' => $postId,
+                    'target_user_id' => $targetUserId,
+                    'muted' => $muted,
+                ],
+            ]));
+            $redis->close();
+        } catch (\Throwable $e) {
+            error_log('php-fpm-live-muted: fallo el publish a Redis: ' . $e->getMessage());
+        }
 
         Router::$response->status(200)->send([
             "message" => $muted ? "Usuario silenciado" : "Silencio removido",
@@ -426,6 +506,25 @@ class LiveController
         }
 
         $this->groupPostsModel->setViewerModerator($postId, $targetUserId, $isModerator);
+
+        try {
+            $redis = new \Redis();
+            $redis->connect('127.0.0.1', 6379, 1.0);
+            $redis->publish('tuani:ws:broadcast', json_encode([
+                'origin' => 'php-fpm-live-moderator',
+                'kind' => 'live',
+                'live_id' => $postId,
+                'payload' => [
+                    'type' => 'live_moderator',
+                    'post_id' => $postId,
+                    'target_user_id' => $targetUserId,
+                    'is_moderator' => $isModerator,
+                ],
+            ]));
+            $redis->close();
+        } catch (\Throwable $e) {
+            error_log('php-fpm-live-moderator: fallo el publish a Redis: ' . $e->getMessage());
+        }
 
         Router::$response->status(200)->send([
             "message" => $isModerator ? "Moderador asignado" : "Moderador removido",
