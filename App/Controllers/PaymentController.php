@@ -76,7 +76,7 @@ class PaymentController
             error_log('PaymentController fare: ' . $e->getMessage());
             Router::$response->status(400)->json([
                 "message" => "No se pudo calcular la tarifa",
-                "error" => $e->getMessage()
+                "error" => 'No se pudo completar la operación'
             ]);
             return;
         }
@@ -254,7 +254,7 @@ class PaymentController
             return;
         }
 
-        $amount = 100.00;
+        $amount = 1000.00;
         $currency = 'USD';
 
         // Cobro directo del wallet, Square queda afuera de la membresia
@@ -313,26 +313,9 @@ class PaymentController
     }
     public function updateStatus($idempotencyKey)
     {
-        $body = json_decode(file_get_contents('php://input'), true);
-        $status = $body['status'] ?? null;
-        $squarePaymentId = $body['square_payment_id'] ?? null;
-
-        if (!$status) {
-            Router::$response->status(400)->json(["message" => "Falta el estado"]);
-            return;
-        }
-
-        $updated = $this->paymentModel->updateStatus($idempotencyKey, $status, $squarePaymentId);
-
-        if (!$updated) {
-            Router::$response->status(404)->json(["message" => "No se encontró el pago"]);
-            return;
-        }
-
-        Router::$response->json([
-            "message" => "Estado actualizado correctamente",
-            "idempotency_key" => $idempotencyKey,
-            "status" => $status
+        // A client-supplied status is never proof of payment (including admin requests).
+        Router::$response->status(403)->json([
+            'message' => 'El estado de pago solo puede actualizarse mediante confirmación verificada del servidor'
         ]);
     }
 

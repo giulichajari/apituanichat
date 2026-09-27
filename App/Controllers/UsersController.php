@@ -16,6 +16,7 @@ class UsersController
 
     public function enableRestrictedMode()
     {
+        if (!$this->reserveSecurityAction('pin', (string)(Router::$request->user->id ?? ''))) return;
         $userId = (int) (Router::$request->user->id ?? 0);
         $pin = trim((string) (Router::$request->body->pin ?? ''));
 
@@ -28,12 +29,13 @@ class UsersController
         if ($ok) {
             Router::$response->status(200)->send(["message" => "Modo restringido activado"]);
         } else {
-            Router::$response->status(500)->send(["message" => "Error activando modo restringido"]);
+            Router::$response->status(409)->send(["message" => "Desactiva el modo con tu PIN actual antes de establecer uno nuevo"]);
         }
     }
 
     public function disableRestrictedMode()
     {
+        if (!$this->reserveSecurityAction('pin', (string)(Router::$request->user->id ?? ''))) return;
         $userId = (int) (Router::$request->user->id ?? 0);
         $pin = trim((string) (Router::$request->body->pin ?? ''));
 
@@ -60,7 +62,8 @@ class UsersController
     }
     
     // Obtener el ID del usuario actual desde el token JWT
-    $currentUserId = $this->getCurrentUserId();
+    $currentUserId = (int)(Router::$request->user->id ?? 0);
+    if ($currentUserId < 1) return Router::$response->status(401)->send(['message'=>'Sesión requerida']);
     
     $users = $this->usuariosModel->getUsers($page, $limit, $currentUserId);
     if ($users) {
@@ -74,8 +77,6 @@ class UsersController
             return [
                 'id' => $user['id'],
                 'name' => $user['name'],
-                'email' => $user['email'],
-                'phone' => $user['phone'],
                 'role' => $user['rol'] ?? 'user',
                 'avatar' => $this->generateDefaultAvatar($user['name']),
                 'type' => $user['rol'] ?? 'user',
@@ -98,22 +99,6 @@ class UsersController
             "message" => "An error has occurred"
         ]);
     }
-}
-
-// Método para obtener el ID del usuario actual desde el token
-private function getCurrentUserId()
-{
-    // Dependiendo de cómo manejes los tokens JWT en tu aplicación
-    $headers = apache_request_headers();
-    $token = str_replace('Bearer ', '', $headers['Authorization'] ?? '');
-    
-    if ($token) {
-        // Decodificar el token JWT para obtener el user_id
-        $payload = json_decode(base64_decode(explode('.', $token)[1]), true);
-        return $payload['user_id'] ?? null;
-    }
-    
-    return null;
 }
 
     private function generateDefaultAvatar(string $name): string
@@ -163,20 +148,34 @@ private function getCurrentUserId()
             return;
         }
 
-        if ($this->usuariosModel->addUser(
-            Router::$request->body->id,
-            Router::$request->body->name,
-            Router::$request->body->email,
-            Router::$request->body->social,
-            Router::$request->body->rol
-        )) {
-            Router::$response->status(201)->send([
-                "message" => "The user has been created"
-            ]);
-        } else {
-            Router::$response->status(500)->send([
-                "message" => "An error has ocurred"
-            ]);
+        $body = Router::$request->body ?? (object) [];
+        $name = $body->name ?? null;
+        $email = $body->email ?? null;
+        $password = $body->password ?? null;
+        $phone = $body->phone ?? '';
+        $rol = $body->rol ?? 'user';
+        if (!is_string($name) || trim($name) === '' || strlen($name) > 255
+            || !is_string($email) || strlen($email) > 254 || !filter_var(trim($email), FILTER_VALIDATE_EMAIL)
+            || !is_string($password) || strlen($password) < 8 || strlen($password) > 72 || str_contains($password, "\0")
+            || !is_string($phone) || strlen($phone) > 40
+            || !is_string($rol) || !in_array(strtolower($rol), ['user', 'driver', 'admin'], true)) {
+            Router::$response->status(400)->send(['message' => 'Nombre, email, contraseña (8–72 bytes), teléfono o rol inválidos']);
+            return;
+        }
+        try {
+            $email = trim($email);
+            if ($this->usuariosModel->getUserByEmail($email)) {
+                Router::$response->status(409)->send(['message' => 'Email already registered']);
+                return;
+            }
+            $id = $this->usuariosModel->addUser(trim($name), $email,
+                password_hash($password, PASSWORD_BCRYPT), $phone, strtolower($rol));
+            Router::$response->status($id ? 201 : 500)->send($id
+                ? ['message' => 'The user has been created', 'user_id' => $id]
+                : ['message' => 'No se pudo crear el usuario']);
+        } catch (\Throwable $e) {
+            error_log('Admin user creation failed');
+            Router::$response->status(500)->send(['message' => 'No se pudo crear el usuario']);
         }
     }
 
@@ -241,11 +240,15 @@ private function getCurrentUserId()
         $requestedRol = strtolower(trim((string) (Router::$request->body->role ?? 'user')));
         $rol = in_array($requestedRol, ['user', 'driver'], true) ? $requestedRol : 'user';
 
-        if (!$name || !$email || !$password || !$phone) {
-            return Router::$response->status(400)->send([
-                "message" => "Missing required fields"
-            ]);
+        if (!is_string($name) || trim($name) === '' || strlen($name) > 255
+            || !is_string($email) || strlen($email) > 254 || !filter_var(trim($email), FILTER_VALIDATE_EMAIL)
+            || !is_string($password) || strlen($password) < 8 || strlen($password) > 72 || str_contains($password, "\0")
+            || !is_string($phone) || trim($phone) === '' || strlen($phone) > 40) {
+            return Router::$response->status(400)->send(['message' => 'Nombre, email, contraseña (8–72 bytes) y teléfono válidos requeridos']);
         }
+        $name = trim($name);
+        $email = trim($email);
+        $phone = trim($phone);
 
         // 🔎 Verificar si el email o el teléfono ya existen
         $existingByEmail = $this->usuariosModel->getUserByEmail($email);
@@ -380,7 +383,9 @@ private function getCurrentUserId()
      */
     public function forgotPassword()
     {
-        $email = strtolower(trim((string) (Router::$request->body->email ?? '')));
+        $email = Router::$request->body->email ?? '';
+        if (!is_string($email) || strlen($email)>254) return Router::$response->status(400)->send(['message'=>'Correo inválido']);
+        $email = strtolower(trim($email));
         $genericMessage = "Si el correo está registrado, recibirás un enlace para restablecer tu contraseña.";
 
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -389,6 +394,7 @@ private function getCurrentUserId()
             ]);
         }
 
+        if (!$this->reserveSecurityAction('recovery', $email)) return;
         $user = $this->usuariosModel->getUserByEmail($email);
         if (!$user) {
             MailService::logForgot('user_not_found', $email);
@@ -400,7 +406,10 @@ private function getCurrentUserId()
         MailService::logForgot('user_found', $email, (int) $user['id']);
 
         $token = bin2hex(random_bytes(16));
-        $this->usuariosModel->storeResetToken((int) $user["id"], $token);
+        if (!$this->usuariosModel->storeResetToken((int) $user['id'], $token)) {
+            error_log('Password recovery persistence failed');
+            return Router::$response->status(200)->send(['message'=>$genericMessage]);
+        }
 
         $frontendUrl = rtrim($_ENV['FRONTEND_URL'] ?? $_SERVER['FRONTEND_URL'] ?? getenv('FRONTEND_URL') ?: 'https://tuanichat.com', '/');
         $resetUrl = $frontendUrl . '/reset-password?token=' . urlencode($token);
@@ -412,6 +421,7 @@ private function getCurrentUserId()
             . '<p>Si el botón no funciona, copiá este enlace:<br>' . htmlspecialchars($resetUrl, ENT_QUOTES, 'UTF-8') . '</p>'
             . '<p>El enlace vence en 1 hora. Si no pediste este cambio, ignorá este correo.</p>';
 
+        try {
         $sent = MailService::send(
             $email,
             'Restablecé tu contraseña de Tuanichat',
@@ -420,12 +430,8 @@ private function getCurrentUserId()
             true
         );
 
-        if (!$sent) {
-            error_log('forgotPassword: no se pudo enviar el correo a ' . $email);
-            return Router::$response->status(500)->send([
-                "message" => "No se pudo enviar el correo. Intentá de nuevo en unos minutos."
-            ]);
-        }
+        } catch (\Throwable $e) { $sent = false; }
+        if (!$sent) error_log('Password recovery delivery failed');
 
         Router::$response->status(200)->send([
             "message" => $genericMessage
@@ -440,35 +446,20 @@ private function getCurrentUserId()
         $token = Router::$request->body->token ?? null;
         $newPassword = Router::$request->body->password ?? null;
 
-        if (!$token || !$newPassword) {
-            return Router::$response->status(400)->send([
-                "message" => "Token and new password are required"
-            ]);
+        if (!is_string($token) || !preg_match('/^[a-f0-9]{32}$/D', $token)
+            || !\App\Services\AccountSecurity::validPassword($newPassword)) {
+            return Router::$response->status(400)->send(['message'=>'Enlace inválido o contraseña inválida (8–72 bytes)']);
         }
-
-        if (strlen($newPassword) < 6) {
-            return Router::$response->status(400)->send([
-                "message" => "Password must be at least 6 characters"
-            ]);
-        }
-
-        $userId = $this->usuariosModel->getUserIdByResetToken($token);
-        if (!$userId) {
-            return Router::$response->status(400)->send([
-                "message" => "Invalid or expired token"
-            ]);
-        }
-
+        if (!$this->reserveSecurityAction('reset', $token)) return;
         $hashed = password_hash($newPassword, PASSWORD_BCRYPT);
-        $updated = $this->usuariosModel->updatePassword($userId, $hashed);
-
+        $updated = $this->usuariosModel->resetPasswordWithToken($token, $hashed);
         if ($updated) {
             Router::$response->status(200)->send([
                 "message" => "Password updated successfully"
             ]);
         } else {
-            Router::$response->status(500)->send([
-                "message" => "Error updating password"
+            Router::$response->status(400)->send([
+                "message" => "Enlace inválido, vencido o ya utilizado"
             ]);
         }
     }
@@ -481,5 +472,20 @@ private function getCurrentUserId()
         Router::$response->status(200)->send([
             "online" => true
         ]);
+    }
+    private function reserveSecurityAction(string $action, string $identity): bool
+    {
+        try { $wait = \App\Services\RecoveryThrottle::reserve($action, $identity, $_SERVER['REMOTE_ADDR'] ?? ''); }
+        catch (\Throwable $e) {
+            error_log('Security limiter unavailable');
+            Router::$response->status(503)->send(['message'=>'Servicio temporalmente no disponible']);
+            return false;
+        }
+        if ($wait > 0) {
+            if (!headers_sent()) header('Retry-After: '.$wait);
+            Router::$response->status(429)->send(['message'=>'Demasiados intentos; espera antes de reintentar']);
+            return false;
+        }
+        return true;
     }
 }

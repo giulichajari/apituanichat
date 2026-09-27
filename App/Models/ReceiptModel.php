@@ -11,9 +11,9 @@ class ReceiptModel
 {
     private PDO $db;
 
-    public function __construct()
+    public function __construct(?PDO $db = null)
     {
-        $this->db = Database::getInstance()->getConnection();
+        $this->db = $db ?? Database::getInstance()->getConnection();
     }
 
     // Guarda el recibo y ademas manda el email de confirmacion.
@@ -24,10 +24,10 @@ class ReceiptModel
         float $amount,
         string $paymentMethod,
         string $description,
-        ?string $squarePaymentId = null
+        ?string $squarePaymentId = null, bool $notify = true
     ): bool {
         $ok = $this->create($userId, $type, $referenceId, $amount, $paymentMethod, $description, $squarePaymentId);
-        if ($ok) {
+        if ($ok && $notify) {
             $this->emailReceipt($userId, $amount, $description, $paymentMethod);
         }
         return $ok;
@@ -83,6 +83,12 @@ class ReceiptModel
             error_log("ReceiptModel getForUser ERROR: " . $e->getMessage());
             return [];
         }
+    }
+
+    // Used after a purchase commit; no new receipt row is created here.
+    public function notifyCreatedPurchase(int $userId, float $amount, string $description, string $paymentMethod): void
+    {
+        $this->emailReceipt($userId, $amount, $description, $paymentMethod);
     }
 
     private function emailReceipt(int $userId, float $amount, string $description, string $paymentMethod): void

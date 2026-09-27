@@ -81,6 +81,11 @@ class LiveController
             return;
         }
 
+        if (empty(Router::$request->user->is_verified)) {
+            Router::$response->status(403)->send(["message" => "Tenés que tener tu cuenta verificada para poder acceder"]);
+            return;
+        }
+
         // Cierra cualquier live huérfano del grupo (nunca se llamó a /live/stop
         // o el cliente reintentó /live/start sin cerrar el anterior), para que
         // el espectador nunca quede apuntando a un stream_key viejo sin manifiesto.
@@ -547,45 +552,48 @@ class LiveController
             return;
         }
 
-        if (!in_array((int)$amount, self::GIFT_TIERS, true)) {
+        if ($amount !== (float) (int) $amount || !in_array((int)$amount, self::GIFT_TIERS, true)) {
             Router::$response->status(400)->send(["message" => "Monto invalido"]);
             return;
         }
 
+        try {
+            $completed = (new \App\Services\WalletCheckout())->completed($userId, 'live-gift', (string) ($_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? ''), ['post' => $postId, 'amount' => $amount, 'message' => '']);
+            if ($completed !== null) { Router::$response->status(200)->send($completed); return; }
+        } catch (\InvalidArgumentException $e) { Router::$response->status(409)->send(['message' => $e->getMessage()]); return; }
         $post = $this->groupPostsModel->getPostById($postId);
         if (!$post || $post['status'] !== 'live') {
             Router::$response->status(404)->send(["message" => "Live no encontrado o no activo"]);
             return;
         }
 
-        // Cobro directo del wallet, ya no via Square
-        $walletModel = new WalletModel();
-        $walletResult = $walletModel->debitForPurchase($userId, $amount, 'live_gift_post_' . $postId);
-        if (!$walletResult['success']) {
-            Router::$response->status(402)->send(["message" => $walletResult['message'], "insufficientBalance" => true]);
-            return;
+        if (!$this->requireLiveAccess($postId, $userId)) return;
+        try {
+            $key = (string) ($_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? '');
+            $intent = ['post' => $postId, 'amount' => $amount, 'message' => $message ?? ''];
+            $result = (new \App\Services\WalletCheckout())->run($userId, 'live-gift', $key, $intent, function () use ($postId, $userId, $amount, $post, $key) {
+                $db = \App\Configs\Database::getInstance()->getConnection();
+                $lock = $db->prepare('SELECT * FROM group_posts WHERE id = ? FOR UPDATE');
+                $lock->execute([$postId]);$post = $lock->fetch(\PDO::FETCH_ASSOC);
+                if (!$post || $post['status'] !== 'live') throw new \DomainException('El Live terminó; no se realizó el cobro');
+                if (!$this->requireLiveAccess($postId, $userId, false)) throw new \DomainException('Acceso al Live revocado');
+                $debit = (new WalletModel())->debitForPurchase($userId, $amount, 'live-gift_' . $postId);
+                if (!$debit['success']) throw new \DomainException($debit['message']);
+                $id = $this->giftModel->create($postId, $userId, $amount, '', '', $key);
+                if (!$id || !$this->giftModel->markAsCompleted($id)) throw new \RuntimeException('No se pudo registrar el beneficio');
+                (new \App\Services\CommerceSettlement())->hold('live-gift_' . $id, $debit['transaction_id'], (int) $post['user_id']);
+                (new \App\Services\CommerceSettlement())->resolve('live-gift_' . $id, 'release', $userId, 'Entrega digital confirmada');
+                return ['success' => true, 'gift_id' => $id, 'amount' => $amount, 'newBalance' => $debit['new_balance']];
+            });
+            if (empty($result['replayed'])) {
+                try { (new ReceiptModel())->createAndNotify($userId, 'live_gift', $result['gift_id'], $amount, 'wallet', 'Live #' . $postId); }
+                catch (\Throwable $e) { error_log('Live receipt pending'); }
+            }
+            Router::$response->status(201)->send($result);
+        } catch (\Throwable $e) {
+            error_log('Live checkout: ' . $e->getMessage());
+            Router::$response->status(409)->send(['message' => 'No se completó el pago. Revisa el saldo y reintenta.']);
         }
-
-        $giftId = $this->giftModel->create($postId, $userId, $amount, '', '', 'wallet_' . $userId . '_' . time());
-        $this->giftModel->markAsCompleted($giftId);
-
-        $receiptModel = new ReceiptModel();
-        $receiptModel->createAndNotify(
-            $userId,
-            'live_gift',
-            $giftId,
-            $amount,
-            'wallet',
-            'Regalo en live #' . $postId
-        );
-
-        Router::$response->status(201)->send([
-            "message" => "Regalo enviado con tu wallet",
-            "success" => true,
-            "gift_id" => $giftId,
-            "amount" => $amount,
-            "newBalance" => $walletResult['new_balance'],
-        ]);
     }
 
     public function getGiftStatus()
@@ -629,90 +637,12 @@ class LiveController
         ]);
     }
 
-    private function createGiftPaymentLink(int $postId, float $amount, ?string $itemName = null): array
-    {
-        $appEnv = isset($_ENV['APP_ENV']) ? strtolower((string) $_ENV['APP_ENV']) : '';
-        $isProd = ($appEnv === 'production');
 
-        if ($isProd) {
-            $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_PROD'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
-            $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_PROD'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
-        } else {
-            $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_SANDBOX'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
-            $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_SANDBOX'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
-        }
-        $locationId = preg_replace('/[^a-zA-Z0-9_-]/', '', trim($locationId));
-
-        $sandboxEnv = $_ENV['SQUARE_SANDBOX'] ?? '';
-        $sandbox = ($sandboxEnv === 'true' || $sandboxEnv === '1') ? true : !$isProd;
-        $squareBaseUrl = $sandbox ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com';
-
-        if (empty($accessToken) || empty($locationId)) {
-            return [
-                'url' => null,
-                'payment_link_id' => null,
-                'idempotency_key' => null,
-                'error' => empty($accessToken) ? 'SQUARE_ACCESS_TOKEN no configurado' : 'SQUARE_LOCATION_ID no configurado'
-            ];
-        }
-
-        $amountCents = (int) round($amount * 100);
-        $idempotencyKey = uniqid('gift_', true);
-        $postData = [
-            "idempotency_key" => $idempotencyKey,
-            "quick_pay" => [
-                "name" => $itemName ?? "Regalo en live #{$postId}",
-                "price_money" => [
-                    "amount" => $amountCents,
-                    "currency" => "USD"
-                ],
-                "location_id" => $locationId
-            ]
-        ];
-
-        $ch = curl_init($squareBaseUrl . "/v2/online-checkout/payment-links");
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            "Content-Type: application/json",
-            "Authorization: Bearer $accessToken",
-            "Square-Version: 2024-11-20"
-        ]);
-        curl_setopt($ch, CURLOPT_POST, 1);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-
-        $response = curl_exec($ch);
-        $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlError = curl_error($ch);
-        curl_close($ch);
-
-        $result = is_string($response) ? json_decode($response, true) : [];
-        $paymentLinkUrl = $result['payment_link']['url'] ?? null;
-        $squarePaymentLinkId = $result['payment_link']['id'] ?? null;
-
-        $error = null;
-        if ($curlError) {
-            $error = $curlError;
-        } elseif (($httpcode !== 200 && $httpcode !== 201) || !$paymentLinkUrl) {
-            if (!empty($result['errors']) && is_array($result['errors'])) {
-                $first = $result['errors'][0] ?? [];
-                $error = ($first['code'] ?? '') . ': ' . ($first['detail'] ?? $first['message'] ?? json_encode($first));
-            } else {
-                $error = 'Square no devolvio payment link';
-            }
-        }
-
-        return [
-            'url' => $paymentLinkUrl,
-            'payment_link_id' => $squarePaymentLinkId,
-            'idempotency_key' => $idempotencyKey,
-            'error' => $error
-        ];
-    }
 
     public function getNewGifts()
     {
         $postId = (int) (Router::$request->params->postId ?? 0);
+        if (!$this->requireLiveAccess($postId, (int) (Router::$request->user->id ?? 0))) return;
         $userId = (int) (Router::$request->user->id ?? 0);
         $sinceId = (int) ($_GET['since_id'] ?? 0);
 
@@ -899,51 +829,54 @@ class LiveController
             return;
         }
         $amountKey = (int) $amount;
-        if (!array_key_exists($amountKey, self::PIN_TIERS)) {
+        if ($amount !== (float) $amountKey || !array_key_exists($amountKey, self::PIN_TIERS)) {
             Router::$response->status(400)->send(["message" => "Monto invalido"]);
             return;
         }
         $minutes = self::PIN_TIERS[$amountKey];
+        try {
+            $completed = (new \App\Services\WalletCheckout())->completed($userId, 'live-pin', (string) ($_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? ''), ['post' => $postId, 'amount' => $amount, 'message' => $message]);
+            if ($completed !== null) { Router::$response->status(200)->send($completed); return; }
+        } catch (\InvalidArgumentException $e) { Router::$response->status(409)->send(['message' => $e->getMessage()]); return; }
         $post = $this->groupPostsModel->getPostById($postId);
         if (!$post || $post['status'] !== 'live') {
             Router::$response->status(404)->send(["message" => "Live no encontrado o no activo"]);
             return;
         }
 
-        // Cobro directo del wallet, ya no via Square
-        $walletModel = new WalletModel();
-        $walletResult = $walletModel->debitForPurchase($userId, $amount, 'live_pin_post_' . $postId);
-        if (!$walletResult['success']) {
-            Router::$response->status(402)->send(["message" => $walletResult['message'], "insufficientBalance" => true]);
-            return;
+        if (!$this->requireLiveAccess($postId, $userId)) return;
+        try {
+            $key = (string) ($_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? '');
+            $intent = ['post' => $postId, 'amount' => $amount, 'message' => $message ?? ''];
+            $result = (new \App\Services\WalletCheckout())->run($userId, 'live-pin', $key, $intent, function () use ($postId, $userId, $amount, $post, $key, $message, $minutes) {
+                $db = \App\Configs\Database::getInstance()->getConnection();
+                $lock = $db->prepare('SELECT * FROM group_posts WHERE id = ? FOR UPDATE');
+                $lock->execute([$postId]);$post = $lock->fetch(\PDO::FETCH_ASSOC);
+                if (!$post || $post['status'] !== 'live') throw new \DomainException('El Live terminó; no se realizó el cobro');
+                if (!$this->requireLiveAccess($postId, $userId, false)) throw new \DomainException('Acceso al Live revocado');
+                $debit = (new WalletModel())->debitForPurchase($userId, $amount, 'live-pin_' . $postId);
+                if (!$debit['success']) throw new \DomainException($debit['message']);
+                $id = $this->chatModel->createPinRequest($postId, $userId, $message, $amount, $minutes, '', '', $key);
+                if (!$id || !$this->chatModel->markPinCompleted($id)) throw new \RuntimeException('No se pudo registrar el beneficio');
+                (new \App\Services\CommerceSettlement())->hold('live-pin_' . $id, $debit['transaction_id'], (int) $post['user_id']);
+                (new \App\Services\CommerceSettlement())->resolve('live-pin_' . $id, 'release', $userId, 'Entrega digital confirmada');
+                return ['success' => true, 'pin_id' => $id, 'minutes' => $minutes, 'amount' => $amount, 'newBalance' => $debit['new_balance']];
+            });
+            if (empty($result['replayed'])) {
+                try { (new ReceiptModel())->createAndNotify($userId, 'live_pin', $result['pin_id'], $amount, 'wallet', 'Live #' . $postId); }
+                catch (\Throwable $e) { error_log('Live receipt pending'); }
+            }
+            Router::$response->status(201)->send($result);
+        } catch (\Throwable $e) {
+            error_log('Live checkout: ' . $e->getMessage());
+            Router::$response->status(409)->send(['message' => 'No se completó el pago. Revisa el saldo y reintenta.']);
         }
-
-        $pinId = $this->chatModel->createPinRequest($postId, $userId, $message, $amount, $minutes, '', '', 'wallet_' . $userId . '_' . time());
-        $this->chatModel->markPinCompleted($pinId);
-
-        $receiptModel = new ReceiptModel();
-        $receiptModel->createAndNotify(
-            $userId,
-            'live_pin',
-            $pinId,
-            $amount,
-            'wallet',
-            'Mensaje anclado en live #' . $postId . " ({$minutes} min)"
-        );
-
-        Router::$response->status(201)->send([
-            "message" => "Mensaje anclado con tu wallet",
-            "success" => true,
-            "pin_id" => $pinId,
-            "amount" => $amount,
-            "minutes" => $minutes,
-            "newBalance" => $walletResult['new_balance'],
-        ]);
     }
 
     public function getChatMessages()
     {
         $postId = (int) (Router::$request->params->postId ?? 0);
+        if (!$this->requireLiveAccess($postId, (int) (Router::$request->user->id ?? 0))) return;
         $sinceId = (int) ($_GET['since_id'] ?? 0);
         if ($postId <= 0) {
             Router::$response->status(400)->send(["message" => "Invalid request"]);
@@ -956,12 +889,151 @@ class LiveController
     public function getPinnedMessages()
     {
         $postId = (int) (Router::$request->params->postId ?? 0);
+        if (!$this->requireLiveAccess($postId, (int) (Router::$request->user->id ?? 0))) return;
         if ($postId <= 0) {
             Router::$response->status(400)->send(["message" => "Invalid request"]);
             return;
         }
         $pinned = $this->chatModel->getActivePinned($postId);
         Router::$response->status(200)->send(["data" => $pinned]);
+    }
+
+    public function liveGuest()
+    {
+        $postId = (int) (Router::$request->params->postId ?? 0);
+        $actor = (int) (Router::$request->user->id ?? 0);
+        if (!$this->requireCaptionAccess($postId, $actor)) return;
+        $post = $this->groupPostsModel->getPostById($postId);
+        if (($post['type'] ?? '') !== 'live' || ($post['status'] ?? '') === 'ended') {
+            Router::$response->status(409)->send(['message' => 'Este live ya no está disponible.']); return;
+        }
+        $body = json_decode(json_encode(Router::$request->body ?? []), true);
+        if (!is_array($body)) $body = [];
+        $host = (int) $post['user_id'];
+        if (($body['action'] ?? '') === 'invite') {
+            $guest = (int) ($body['guest_id'] ?? 0);
+            if ($actor !== $host || $guest <= 0 || $guest === $host
+                || !$this->groupsModel->isUserInGroup((int) $post['group_id'], $guest)
+                || !$this->requireLiveAccess($postId, $guest, false)) {
+                Router::$response->status(403)->send(['message' => 'No se puede invitar a esa persona a este live.']); return;
+            }
+        }
+        header('Cache-Control: no-store');
+        try {
+            $result = (new \App\Services\LiveGuestService())->exchange($postId, $host, $actor, $body);
+            Router::$response->status(200)->send($result);
+        } catch (\Throwable $e) {
+            $code = (int) $e->getCode();
+            $known = in_array($code, [400, 403, 409, 429], true);
+            Router::$response->status($known ? $code : 503)->send(['message' => $known ? $e->getMessage() : 'Live compartido temporalmente no disponible.']);
+        }
+    }
+
+    public function getCaptions()
+    {
+        $postId = (int) (Router::$request->params->postId ?? 0);
+        if (!$this->requireCaptionAccess($postId, (int) (Router::$request->user->id ?? 0))) return;
+        header('Cache-Control: no-store');
+        if (($_GET['publisher'] ?? '') === '1') {
+            $post = $this->groupPostsModel->getPostById($postId);
+            if ((int) $post['user_id'] !== (int) (Router::$request->user->id ?? 0)) {
+                Router::$response->status(403)->send(['message' => 'Solo el transmisor puede activar la traducción.']);
+                return;
+            }
+            if (trim((string) ($_ENV['OPENAI_API_KEY'] ?? getenv('OPENAI_API_KEY') ?: '')) === '') {
+                Router::$response->status(503)->send(['message' => 'La traducción no está configurada: falta OPENAI_API_KEY en el servidor.']);
+                return;
+            }
+        }
+        $post = $this->groupPostsModel->getPostById($postId);
+        if (($post['status'] ?? '') === 'ended') {
+            Router::$response->status(200)->send(['caption' => null]);
+            return;
+        }
+        try {
+            $caption = (new \App\Services\LiveCaptionService())->read($postId);
+            Router::$response->status(200)->send(['caption' => $caption ?: null]);
+        } catch (\Throwable $e) {
+            // Return only a category and source location; never expose exception text.
+            $category = 'OTRO';
+            $detail = strtolower($e->getMessage());
+            foreach (['class' => 'CLASE', 'undefined' => 'FUNCION',
+                'connection refused' => 'CONEXION', 'noauth' => 'REDIS-AUTH',
+                'permission denied' => 'PERMISO', 'timeout' => 'TIEMPO',
+                'failed opening' => 'ARCHIVO', 'open_basedir' => 'RUTA'] as $match => $label) {
+                if (str_contains($detail, $match)) { $category = $label; break; }
+            }
+            $type = preg_replace('/[^A-Za-z0-9]/', '', get_class($e));
+            $file = preg_replace('/[^A-Za-z0-9_.-]/', '', basename($e->getFile()));
+            $reference = 'CAP-READ-' . $category . '-' . $type . '-' . $file . '-L' . $e->getLine();
+            error_log($reference);
+            Router::$response->status(503)->send(['message' => 'Subtítulos no disponibles. Diagnóstico: ' . $reference]);
+        }
+    }
+
+    public function translateCaption()
+    {
+        $postId = (int) (Router::$request->params->postId ?? 0);
+        $userId = (int) (Router::$request->user->id ?? 0);
+        if (!$this->requireCaptionAccess($postId, $userId)) return;
+        $post = $this->groupPostsModel->getPostById($postId);
+        if (($post['type'] ?? '') !== 'live') {
+            Router::$response->status(400)->send(['message' => 'El contenido no es un live.']);
+            return;
+        }
+        if ((int) $post['user_id'] !== $userId) {
+            Router::$response->status(403)->send(['message' => 'Solo el transmisor puede generar subtítulos.']);
+            return;
+        }
+        if (($post['status'] ?? '') === 'ended') {
+            Router::$response->status(409)->send(['message' => 'Este live ya terminó.']);
+            return;
+        }
+        try {
+            $caption = (new \App\Services\LiveCaptionService())->translate($postId, $_FILES['audio'] ?? [], is_string($_POST['target_language'] ?? 'en') ? ($_POST['target_language'] ?? 'en') : 'invalid');
+            Router::$response->status(200)->send(['caption' => $caption]);
+        } catch (\Throwable $e) {
+            $code = (int) $e->getCode();
+            $known = in_array($code, [400, 415, 429, 502, 503], true);
+            Router::$response->status($known ? $code : 503)->send(['message' => $known ? $e->getMessage() : 'No se pudo iniciar la traducción en el servidor.']);
+        }
+    }
+
+    private function requireCaptionAccess(int $postId, int $userId): bool
+    {
+        if ($userId <= 0) {
+            Router::$response->status(401)->send(['message' => 'Sesión vencida. Vuelve a iniciar sesión para traducir.']);
+            return false;
+        }
+        $post = $this->groupPostsModel->getPostById($postId);
+        if (!$post) {
+            Router::$response->status(404)->send(['message' => 'No se pudo consultar este live en el servidor. Se necesita revisar el registro PHP.']);
+            return false;
+        }
+        if (!$this->groupsModel->isUserInGroup((int) $post['group_id'], $userId)) {
+            Router::$response->status(403)->send(['message' => 'Tu cuenta no figura como miembro activo del grupo del live.']);
+            return false;
+        }
+        if (!$this->requireLiveAccess($postId, $userId, false)) {
+            $message = !empty($post['is_adult_content'])
+                ? 'Acceso rechazado. Este live es +18: comprueba la verificación de edad y las restricciones de tu cuenta.'
+                : 'Acceso rechazado al live. Comprueba invitación, expulsión o bloqueo.';
+            Router::$response->status(403)->send(['message' => $message]);
+            return false;
+        }
+        return true;
+    }
+
+    private function requireLiveAccess(int $postId, int $userId, bool $respond = true): bool
+    {
+        $post = $this->groupPostsModel->getPostById($postId);
+        $allowed = $post && $userId > 0 && $this->groupsModel->isUserInGroup((int) $post['group_id'], $userId)
+            && !$this->groupPostsModel->isViewerKicked($postId, $userId)
+            && !$this->groupPostsModel->isViewerBlocked((int) $post['group_id'], $userId, $postId)
+            && (($post['visibility'] ?? '') !== 'private' || (int) $post['user_id'] === $userId || $this->groupPostsModel->isInvitedViewer($postId, $userId));
+        if ($allowed && !empty($post['is_adult_content'])) $allowed = !$this->familyModel->isBlockedFromAdultContent($userId) && $this->usersModel->getAgeVerificationStatus($userId) === 'approved';
+        if (!$allowed && $respond) Router::$response->status(403)->send(['message' => 'No tienes acceso a este live']);
+        return (bool) $allowed;
     }
 
     private function isInternalRequest(): bool

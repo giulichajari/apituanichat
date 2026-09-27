@@ -11,6 +11,10 @@ use Exception;
  */
 class FcmService
 {
+    private static bool $unregistered = false;
+    private static int $retryAfter = 0;
+    public static function lastTokenWasUnregistered(): bool { return self::$unregistered; }
+    public static function retryAfterSeconds(): int { return self::$retryAfter; }
     private static ?array $credentials = null;
     private static ?string $accessToken = null;
     private static ?int $tokenExpiry = 0;
@@ -20,7 +24,7 @@ class FcmService
         if (self::$credentials !== null) {
             return true;
         }
-        $path = getenv('FIREBASE_CREDENTIALS') ?: (__DIR__ . '/../../firebase-credentials.json');
+        $path = ($_ENV['FIREBASE_CREDENTIALS'] ?? getenv('FIREBASE_CREDENTIALS')) ?:  (__DIR__ . '/../../firebase-credentials.json');
         if (!is_file($path) || !is_readable($path)) {
             error_log('FcmService: FIREBASE_CREDENTIALS no encontrado o no legible: ' . $path);
             return false;
@@ -58,6 +62,8 @@ class FcmService
             $ch = curl_init('https://oauth2.googleapis.com/token');
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_CONNECTTIMEOUT => 5,
+                CURLOPT_TIMEOUT => 15,
                 CURLOPT_POST => true,
                 CURLOPT_POSTFIELDS => 'grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=' . $jwt,
                 CURLOPT_HTTPHEADER => ['Content-Type: application/x-www-form-urlencoded'],
@@ -66,7 +72,7 @@ class FcmService
             $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
             if ($code !== 200 || !$response) {
-                error_log('FcmService: OAuth2 error ' . $code . ' ' . $response);
+                error_log('FcmService: OAuth2 error HTTP ' . $code);
                 return null;
             }
             $data = json_decode($response, true);
@@ -87,21 +93,28 @@ class FcmService
      */
     public static function sendDataMessage(string $fcmToken, array $data): bool
     {
+        self::$unregistered = false;
+        self::$retryAfter = 0;
         $token = self::getAccessToken();
         if (!$token || !self::loadCredentials()) {
             return false;
         }
         $projectId = self::$credentials['project_id'];
         $url = 'https://fcm.googleapis.com/v1/projects/' . $projectId . '/messages:send';
-        $payload = [
-            'message' => [
-                'token' => $fcmToken,
-                'data' => array_map('strval', $data),
-            ],
-        ];
+        $payload = self::buildPayload($fcmToken, $data, time());
+        if ($payload === null) return false;
         $ch = curl_init($url);
         curl_setopt_array($ch, [
+            CURLOPT_HEADERFUNCTION => static function ($curl, string $line): int {
+                if (stripos($line, 'Retry-After:') === 0) {
+                    $value = trim(substr($line, 12));
+                    self::$retryAfter = max(0, ctype_digit($value) ? (int)$value : ((strtotime($value) ?: time()) - time()));
+                }
+                return strlen($line);
+            },
             CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_CONNECTTIMEOUT => 5,
+                CURLOPT_TIMEOUT => 15,
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => json_encode($payload),
             CURLOPT_HTTPHEADER => [
@@ -113,9 +126,33 @@ class FcmService
         $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
         if ($code !== 200) {
-            error_log('FcmService: FCM send error ' . $code . ' ' . $response);
+            if ($code === 429) self::$retryAfter = max(60, self::$retryAfter);
+            if ($code === 401) { self::$accessToken = null; self::$tokenExpiry = 0; }
+            $errorData = json_decode((string) $response, true);
+            foreach (($errorData['error']['details'] ?? []) as $detail) {
+                if (($detail['errorCode'] ?? '') === 'UNREGISTERED') self::$unregistered = true;
+            }
+            error_log('FcmService: FCM send error HTTP ' . $code);
             return false;
         }
         return true;
     }
+    public static function buildPayload(string $fcmToken, array $data, int $now): ?array
+    {
+        // 'from' is reserved by FCM, although our WebSocket protocol uses it.
+        if (isset($data['from'])) { $data['caller_id'] = $data['from']; unset($data['from']); }
+        $isCall = ($data['type'] ?? '') === 'incoming_call';
+        $ttl = min($isCall ? 60 : 86400, (int) ($data['expires_at'] ?? ($now + ($isCall ? 60 : 86400))) - $now);
+        if ($ttl <= 0) return null;
+        foreach (array_keys($data) as $key) {
+            if ($key === 'gcm' || $key === 'message_type' || str_starts_with($key, 'google.')) unset($data[$key]);
+        }
+        return ['message' => [
+            'token' => $fcmToken,
+            'data' => array_map('strval', $data),
+            'webpush' => ['headers' => ['TTL' => (string) $ttl, 'Urgency' => 'high']],
+            'android' => ['priority' => 'high', 'ttl' => $ttl . 's'],
+        ]];
+    }
+
 }

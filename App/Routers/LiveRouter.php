@@ -24,6 +24,11 @@ class LiveRouter
             fn() => $liveController->getCurrentLive()
         );
 
+        $router->post('/live/{postId}/guest', fn() => $tokenMiddleware->strict(), fn() => $liveController->liveGuest());
+
+        $router->get('/live/{postId}/captions', fn() => $tokenMiddleware->strict(), fn() => $liveController->getCaptions());
+        $router->post('/live/{postId}/captions', fn() => $tokenMiddleware->strict(), fn() => $liveController->translateCaption());
+
         $router->post('/live/on-publish', fn() => $liveController->onPublish());
         $router->post('/live/on-publish-done', fn() => $liveController->onPublishDone());
 

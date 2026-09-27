@@ -1,5 +1,4 @@
 <?php
-
 namespace App\Controllers;
 
 use App\Models\SignalModel;
@@ -7,150 +6,45 @@ use EasyProjects\SimpleRouter\Router;
 
 class SignalController
 {
-    public function __construct(
-        private ?SignalModel $signalModel = new SignalModel(),
-    ) {}
+    public function __construct(private ?SignalModel $signalModel = new SignalModel()) {}
+    public function addOffer() { $this->handle('offer', true); }
+    public function getOffer() { $this->handle('offer', false); }
+    public function addAnswer() { $this->handle('answer', true); }
+    public function getAnswer() { $this->handle('answer', false); }
+    public function addCandidate() { $this->handle('candidate', true); }
+    public function getCandidates() { $this->handle('candidate', false); }
 
-    // Guardar una oferta (User A inicia llamada)
-   public function addOffer() {
-    $sessionId = Router::$request->body->session_id ?? Router::$request->body->chatId;
-    $payload = Router::$request->body->sdp ?? null;
-
-    // Preparar log personalizado
-    $logFile = __DIR__ . '/ws.log';
-    $logMsg = date('Y-m-d H:i:s') . " | addOffer | sessionId: " . $sessionId . " | payload: " . json_encode($payload) . "\n";
-    file_put_contents($logFile, $logMsg, FILE_APPEND);
-
-    if (!$sessionId || !$payload) {
-        $errorLog = date('Y-m-d H:i:s') . " | addOffer | Missing session_id or sdp\n";
-        file_put_contents($logFile, $errorLog, FILE_APPEND);
-        Router::$response->status(400)->send(["message" => "Missing session_id or sdp"]);
-        return;
-    }
-
-    // Convertir stdClass a array si hace falta
-    if (is_object($payload)) {
-        $payload = json_decode(json_encode($payload), true);
-    }
-
-    if ($this->signalModel->addSignal($sessionId, 'offer', $payload)) {
-        $successLog = date('Y-m-d H:i:s') . " | addOffer | Offer stored successfully\n";
-        file_put_contents($logFile, $successLog, FILE_APPEND);
-        Router::$response->status(201)->send(["message" => "Offer stored"]);
-    } else {
-        $failLog = date('Y-m-d H:i:s') . " | addOffer | Error storing offer\n";
-        file_put_contents($logFile, $failLog, FILE_APPEND);
-        Router::$response->status(500)->send(["message" => "Error storing offer"]);
-    }
-}
-
-    // Obtener oferta (User B recibe)
-    public function getOffer()
+    private function handle(string $type, bool $write): void
     {
-        $sessionId = Router::$request->params->session_id ?? Router::$request->params->chatId;
-
-        if (!$sessionId) {
-            Router::$response->status(400)->send(["message" => "Missing session_id"]);
+        $id = Router::$request->user->id ?? null;
+        if ((!is_int($id) && !is_string($id)) || !ctype_digit((string)$id)
+            || filter_var($id, FILTER_VALIDATE_INT, ['options'=>['min_range'=>1]]) === false) {
+            Router::$response->status(401)->send(['message'=>'Unauthorized']);
             return;
         }
-
-        $offer = $this->signalModel->getSignal($sessionId, 'offer');
-
-        if ($offer) {
-            Router::$response->status(200)->send([
-                "data" => $offer,
-                "message" => "Offer retrieved"
-            ]);
-        } else {
-            Router::$response->status(404)->send(["message" => "Offer not found"]);
-        }
-    }
-
-    // Guardar una respuesta (User B responde)
-    public function addAnswer()
-    {
-        $sessionId = Router::$request->body->session_id ?? Router::$request->body->chatId;
-        $payload = Router::$request->body->sdp ?? null;
-
-        if (!$sessionId || !$payload) {
-            Router::$response->status(400)->send(["message" => "Missing session_id or sdp"]);
+        $input = $write ? (Router::$request->body ?? null) : (Router::$request->params ?? null);
+        $session = $input->session_id ?? $input->chatId ?? null;
+        // chatId is only an alias for a registered call ID, never authorization by chat membership.
+        if (!is_string($session) || !preg_match('/^[a-zA-Z0-9_.:-]{1,120}$/D', $session)) {
+            Router::$response->status(400)->send(['message'=>'Invalid session_id']);
             return;
         }
-
-        if (is_object($payload)) {
-            $payload = json_decode(json_encode($payload), true);
-        }
-
-        if ($this->signalModel->addSignal($sessionId, 'answer', $payload)) {
-            Router::$response->status(201)->send(["message" => "Answer stored"]);
-        } else {
-            Router::$response->status(500)->send(["message" => "Error storing answer"]);
-        }
-    }
-
-    // Obtener respuesta (User A recibe)
-    public function getAnswer()
-    {
-        $sessionId = Router::$request->params->session_id ?? Router::$request->params->chatId;
-
-        if (!$sessionId) {
-            Router::$response->status(400)->send(["message" => "Missing session_id"]);
-            return;
-        }
-
-        $answer = $this->signalModel->getSignal($sessionId, 'answer');
-
-        if ($answer) {
-            Router::$response->status(200)->send([
-                "data" => $answer,
-                "message" => "Answer retrieved"
-            ]);
-        } else {
-            Router::$response->status(404)->send(["message" => "Answer not found"]);
-        }
-    }
-
-    // Guardar un candidato ICE
-    public function addCandidate()
-    {
-        $sessionId = Router::$request->body->session_id ?? Router::$request->body->chatId;
-        $payload = Router::$request->body->candidate ?? null;
-
-        if (!$sessionId || !$payload) {
-            Router::$response->status(400)->send(["message" => "Missing session_id or candidate"]);
-            return;
-        }
-
-        if (is_object($payload)) {
-            $payload = json_decode(json_encode($payload), true);
-        }
-
-        if ($this->signalModel->addSignal($sessionId, 'candidate', $payload)) {
-            Router::$response->status(201)->send(["message" => "Candidate stored"]);
-        } else {
-            Router::$response->status(500)->send(["message" => "Error storing candidate"]);
-        }
-    }
-
-    // Obtener candidatos ICE
-    public function getCandidates()
-    {
-        $sessionId = Router::$request->params->session_id ?? Router::$request->params->chatId;
-
-        if (!$sessionId) {
-            Router::$response->status(400)->send(["message" => "Missing session_id"]);
-            return;
-        }
-
-        $candidates = $this->signalModel->getCandidates($sessionId);
-
-        if ($candidates) {
-            Router::$response->status(200)->send([
-                "data" => $candidates,
-                "message" => "Candidates retrieved"
-            ]);
-        } else {
-            Router::$response->status(404)->send(["message" => "Candidates not found"]);
+        try {
+            $payload = $type === 'candidate' ? ($input->candidate ?? null) : ($input->sdp ?? null);
+            $data = $this->signalModel->exchange($session, (int)$id, $type, $write, $payload);
+            if ($write) Router::$response->status(201)->send(['message'=>'Signal stored']);
+            elseif ($data === null || $data === []) Router::$response->status(404)->send(['message'=>'Signal not found']);
+            else Router::$response->status(200)->send(['data'=>$data,'message'=>'Signal retrieved']);
+        } catch (\LengthException $e) {
+            Router::$response->status(413)->send(['message'=>'Signal too large']);
+        } catch (\InvalidArgumentException $e) {
+            Router::$response->status(400)->send(['message'=>'Invalid signal']);
+        } catch (\DomainException $e) {
+            $code = in_array($e->getCode(), [403,404,409,429], true) ? $e->getCode() : 403;
+            Router::$response->status($code)->send(['message'=>'Signal unavailable or not authorized']);
+        } catch (\Throwable $e) {
+            error_log('HTTP signaling operation failed');
+            Router::$response->status(500)->send(['message'=>'Signaling unavailable']);
         }
     }
 }

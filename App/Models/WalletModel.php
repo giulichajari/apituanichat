@@ -2,15 +2,16 @@
 namespace App\Models;
 use App\Configs\Database;
 use PDO;
+use App\Services\UsdMoney;
 use Exception;
 
 class WalletModel
 {
     private PDO $db;
 
-    public function __construct()
+    public function __construct(?PDO $db = null)
     {
-        $this->db = Database::getInstance()->getConnection();
+        $this->db = $db ?? Database::getInstance()->getConnection();
     }
 
     private function generateAccountNumber(): string
@@ -131,7 +132,7 @@ class WalletModel
     // Transferencia atómica entre dos wallets, con bloqueo de filas para evitar condiciones de carrera.
     public function transfer(int $fromUserId, string $toAccountNumber, float $amount): array
     {
-        if ($amount <= 0) {
+        if (!is_finite($amount) || $amount <= 0) {
             return ['success' => false, 'message' => 'Monto inválido'];
         }
 
@@ -201,14 +202,69 @@ class WalletModel
         }
     }
 
+    // Cuenta de wallet interna del negocio que recibe los retiros en efectivo.
+    private const WITHDRAWAL_ADMIN_ACCOUNT = '1985131556';
+
+    public function requestWithdrawal(int $userId, float $amount): array
+    {
+        $result = $this->transfer($userId, self::WITHDRAWAL_ADMIN_ACCOUNT, $amount);
+        if (!$result['success']) {
+            return $result;
+        }
+
+        $stmt = $this->db->prepare("
+            INSERT INTO wallet_withdrawals (user_id, amount, admin_account_number, status)
+            VALUES (?, ?, ?, 'pending')
+        ");
+        $stmt->execute([$userId, $amount, self::WITHDRAWAL_ADMIN_ACCOUNT]);
+
+        return [
+            'success' => true,
+            'new_balance' => $result['new_balance'],
+            'withdrawal_id' => (int) $this->db->lastInsertId(),
+        ];
+    }
+
+    public function getWithdrawals(string $status = ''): array
+    {
+        $sql = "
+            SELECT wd.id, wd.user_id, wd.amount, wd.admin_account_number, wd.status, wd.created_at, wd.updated_at, u.name, u.email
+            FROM wallet_withdrawals wd
+            LEFT JOIN users u ON u.id = wd.user_id
+        ";
+        $params = [];
+        if ($status !== '') {
+            $sql .= " WHERE wd.status = :status ";
+            $params[':status'] = $status;
+        }
+        $sql .= " ORDER BY wd.created_at DESC LIMIT 200";
+
+        $stmt = $this->db->prepare($sql);
+        foreach ($params as $k => $v) {
+            $stmt->bindValue($k, $v);
+        }
+        $stmt->execute();
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function updateWithdrawalStatus(int $id, string $status): bool
+    {
+        if (!in_array($status, ['pending', 'sent'], true)) {
+            return false;
+        }
+        $stmt = $this->db->prepare("UPDATE wallet_withdrawals SET status = ?, updated_at = NOW() WHERE id = ?");
+        return $stmt->execute([$status, $id]);
+    }
+
     // Débito para compras (Shop/Eats/Ride) sin pasar por Square.
     public function debitForPurchase(int $userId, float $amount, string $reference): array
     {
-        if ($amount <= 0) {
+        if (!is_finite($amount) || $amount <= 0) {
             return ['success' => false, 'message' => 'Monto inválido'];
         }
 
-        $this->db->beginTransaction();
+        $ownsTransaction = !$this->db->inTransaction();
+        if ($ownsTransaction) $this->db->beginTransaction();
         try {
             $wallet = $this->getOrCreateWallet($userId);
 
@@ -217,7 +273,7 @@ class WalletModel
             $wallet = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if (($wallet['status'] ?? 'active') === 'frozen') {
-                $this->db->rollBack();
+                if ($ownsTransaction && $this->db->inTransaction()) $this->db->rollBack();
                 return ['success' => false, 'message' => 'Tu wallet está congelada. Contacta a soporte.'];
             }
 
@@ -229,7 +285,7 @@ class WalletModel
                 $parentId = $familyModel->getWalletSharePayer($userId);
 
                 if (!$parentId) {
-                    $this->db->rollBack();
+                    if ($ownsTransaction && $this->db->inTransaction()) $this->db->rollBack();
                     return ['success' => false, 'message' => 'Saldo insuficiente'];
                 }
 
@@ -239,11 +295,11 @@ class WalletModel
                 $parentWallet = $stmt2->fetch(PDO::FETCH_ASSOC);
 
                 if (($parentWallet['status'] ?? 'active') === 'frozen') {
-                    $this->db->rollBack();
+                    if ($ownsTransaction && $this->db->inTransaction()) $this->db->rollBack();
                     return ['success' => false, 'message' => 'Saldo insuficiente y la wallet familiar esta congelada'];
                 }
                 if ((float) $parentWallet['balance'] < $amount) {
-                    $this->db->rollBack();
+                    if ($ownsTransaction && $this->db->inTransaction()) $this->db->rollBack();
                     return ['success' => false, 'message' => 'Saldo insuficiente (tampoco alcanza en la wallet familiar)'];
                 }
 
@@ -251,7 +307,7 @@ class WalletModel
                 $viaFamily = true;
             }
 
-            $newBalance = round((float) $chargeWallet['balance'] - $amount, 2);
+            $newBalance = UsdMoney::decimal(UsdMoney::cents($chargeWallet['balance'], true) - UsdMoney::cents($amount));
 
             $stmt = $this->db->prepare("UPDATE wallets SET balance = ? WHERE id = ?");
             $stmt->execute([$newBalance, $chargeWallet['id']]);
@@ -264,10 +320,11 @@ class WalletModel
             ");
             $stmt->execute([$chargeWallet['id'], $amount, $newBalance, $finalReference]);
 
-            $this->db->commit();
-            return ['success' => true, 'new_balance' => $newBalance, 'via_family' => $viaFamily];
-        } catch (Exception $e) {
-            $this->db->rollBack();
+            $transactionId = (int) $this->db->lastInsertId();
+            if ($ownsTransaction) $this->db->commit();
+            return ['success' => true, 'new_balance' => $newBalance, 'via_family' => $viaFamily, 'transaction_id' => $transactionId];
+        } catch (\Throwable $e) {
+            if ($ownsTransaction && $this->db->inTransaction()) $this->db->rollBack();
             error_log('WalletModel::debitForPurchase error: ' . $e->getMessage());
             return ['success' => false, 'message' => 'Error interno al debitar'];
         }
@@ -428,7 +485,9 @@ class WalletModel
     // Ajuste manual de saldo por un admin (positivo suma, negativo resta). Queda registrado en el libro contable.
     public function adjustBalance(int $userId, float $amount, string $reason): array
     {
-        $this->db->beginTransaction();
+        if (!is_finite($amount)) return ['success'=>false,'message'=>'Monto inválido'];
+        $ownsTransaction = !$this->db->inTransaction();
+        if ($ownsTransaction) $this->db->beginTransaction();
         try {
             $wallet = $this->getOrCreateWallet($userId);
             $stmt = $this->db->prepare("SELECT * FROM wallets WHERE id = ? FOR UPDATE");
@@ -437,7 +496,7 @@ class WalletModel
 
             $newBalance = round((float) $wallet['balance'] + $amount, 2);
             if ($newBalance < 0) {
-                $this->db->rollBack();
+                if ($ownsTransaction && $this->db->inTransaction()) $this->db->rollBack();
                 return ['success' => false, 'message' => 'El ajuste dejaría el saldo en negativo'];
             }
 
@@ -450,10 +509,10 @@ class WalletModel
             ");
             $stmt->execute([$wallet['id'], abs($amount), $newBalance, 'admin_adjustment: ' . $reason]);
 
-            $this->db->commit();
+            if ($ownsTransaction) $this->db->commit();
             return ['success' => true, 'new_balance' => $newBalance];
-        } catch (\Exception $e) {
-            $this->db->rollBack();
+        } catch (\Throwable $e) {
+            if ($ownsTransaction && $this->db->inTransaction()) $this->db->rollBack();
             error_log('WalletModel::adjustBalance error: ' . $e->getMessage());
             return ['success' => false, 'message' => 'Error interno al ajustar saldo'];
         }

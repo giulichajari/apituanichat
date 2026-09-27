@@ -32,7 +32,7 @@ class CountryRateController
             error_log('CountryRateController::listRates: ' . $e->getMessage());
             Router::$response->status(500)->json([
                 'message' => 'No se pudieron cargar las tarifas. Verificá que exista la tabla countries y country_rates.',
-                'error' => $e->getMessage(),
+                'error' => 'No se pudo completar la operación',
                 'data' => [],
             ]);
         }
@@ -84,7 +84,7 @@ class CountryRateController
         } catch (\Throwable $e) {
             error_log('CountryRateController::seedRates: ' . $e->getMessage());
             Router::$response->status(500)->json([
-                'message' => 'Error al cargar tarifas: ' . $e->getMessage(),
+                'message' => 'Error al cargar tarifas: ' . 'No se pudo completar la operación',
                 'data' => [],
             ]);
         }

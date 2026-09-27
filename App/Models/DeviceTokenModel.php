@@ -45,6 +45,11 @@ class DeviceTokenModel
         return $stmt->execute([$fcmToken]);
     }
 
+    public function deactivateTokenForUser(int $userId, string $fcmToken): bool
+    {
+        return $this->db->prepare('UPDATE device_tokens SET is_active=0 WHERE user_id=? AND fcm_token=?')->execute([$userId, $fcmToken]);
+    }
+
     public function getActiveTokensForUser(int $userId): array
     {
         $stmt = $this->db->prepare("

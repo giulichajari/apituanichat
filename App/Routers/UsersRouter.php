@@ -17,6 +17,12 @@ class UsersRouter
 
     ) {
 
+        // Public contact fields only; session is mandatory.
+        $router->get('/chat-contact/{idUser}',
+            fn() => $tokenMiddleware->strict(),
+            fn() => (new \App\Controllers\ChatContactController())->show()
+        );
+
         //First param, the route
         $router->get(
             '/users/page/{page}',

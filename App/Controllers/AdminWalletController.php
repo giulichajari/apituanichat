@@ -113,4 +113,31 @@ class AdminWalletController
         }
         Router::$response->status(200)->json(['message' => 'Alerta resuelta']);
     }
+
+    public function listWithdrawals()
+    {
+        if (!$this->requireAdmin()) return;
+        $status = (string) (Router::$request->query['status'] ?? '');
+        Router::$response->status(200)->json($this->walletModel->getWithdrawals($status));
+    }
+
+    public function updateWithdrawalStatus($id)
+    {
+        if (!$this->requireAdmin()) return;
+        $body = json_decode(file_get_contents('php://input'), true);
+        $status = $body['status'] ?? '';
+
+        if (!in_array($status, ['pending', 'sent'], true)) {
+            Router::$response->status(400)->json(['message' => "status debe ser 'pending' o 'sent'"]);
+            return;
+        }
+
+        $ok = $this->walletModel->updateWithdrawalStatus((int) $id, $status);
+        if (!$ok) {
+            Router::$response->status(400)->json(['message' => 'No se pudo actualizar']);
+            return;
+        }
+
+        Router::$response->status(200)->json(['message' => "Retiro marcado como $status"]);
+    }
 }

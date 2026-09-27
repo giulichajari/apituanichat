@@ -14,6 +14,37 @@ class ProductModel
         $this->db = Database::getInstance()->getConnection();
     }
 
+    // Absolute inventory adjustment, restricted to its seller and serialized with checkout.
+    public function updateStock($productId, $quantity, $userId): bool
+    {
+        foreach ([$productId, $userId] as $id) {
+            if ((!is_int($id) && !is_string($id)) || !preg_match('/^[1-9][0-9]*$/D', (string)$id)
+                || filter_var($id, FILTER_VALIDATE_INT) === false) {
+                throw new \InvalidArgumentException('Invalid identity');
+            }
+        }
+        if ((!is_int($quantity) && !is_string($quantity)) || !preg_match('/^(0|[1-9][0-9]*)$/D', (string)$quantity)
+            || strlen((string)$quantity) > 10 || (float)$quantity > 2147483647) {
+            throw new \InvalidArgumentException('Stock must be a nonnegative integer');
+        }
+        $ownTransaction = !$this->db->inTransaction();
+        if ($ownTransaction) $this->db->beginTransaction();
+        try {
+            $query = $this->db->prepare('SELECT id FROM products WHERE id = ? AND seller_id = ? FOR UPDATE');
+            $query->execute([(int)$productId, (int)$userId]);
+            $found = (bool)$query->fetchColumn();
+            if ($found) {
+                $query = $this->db->prepare('UPDATE products SET stock_quantity = ? WHERE id = ? AND seller_id = ?');
+                $query->execute([(int)$quantity, (int)$productId, (int)$userId]);
+            }
+            if ($ownTransaction) $this->db->commit();
+            return $found;
+        } catch (\Throwable $e) {
+            if ($ownTransaction && $this->db->inTransaction()) $this->db->rollBack();
+            throw $e;
+        }
+    }
+
     /**
      * Obtener productos por vendedor
      */

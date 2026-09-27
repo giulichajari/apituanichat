@@ -47,5 +47,15 @@ class AdminWalletRouter
             fn() => $tokenMiddleware->strict(),
             fn($id) => $adminWalletController->resolveAlert($id)
         );
+        $router->get(
+            '/admin/wallet/withdrawals',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $adminWalletController->listWithdrawals()
+        );
+        $router->patch(
+            '/admin/wallet/withdrawals/{id}/status',
+            fn() => $tokenMiddleware->strict(),
+            fn($id) => $adminWalletController->updateWithdrawalStatus($id)
+        );
     }
 }

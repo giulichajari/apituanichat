@@ -111,7 +111,7 @@ class WebAuthnController
             Router::$response->status(201)->json(["message" => "Face ID / huella registrada correctamente"]);
         } catch (\Throwable $e) {
             error_log('WebAuthnController::registerVerify error: ' . $e->getMessage());
-            Router::$response->status(400)->json(["message" => "No se pudo verificar el registro", "error" => $e->getMessage()]);
+            Router::$response->status(400)->json(["message" => "No se pudo verificar el registro", "error" => 'No se pudo completar la operación']);
         }
     }
 

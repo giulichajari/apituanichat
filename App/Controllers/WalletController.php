@@ -249,6 +249,64 @@ class WalletController
         ]);
     }
 
+    public function requestWithdrawal()
+    {
+        $userId = Router::$request->user->id ?? null;
+        if (!$userId) {
+            Router::$response->status(401)->json(["message" => "Usuario no autenticado"]);
+            return;
+        }
+
+        $body = json_decode(file_get_contents('php://input'), true);
+        $amount = (float) ($body['amount'] ?? 0);
+        $pin = isset($body['pin']) ? (string) $body['pin'] : null;
+        $webauthnAssertion = $body['webauthn'] ?? null;
+
+        if ($amount <= 0) {
+            Router::$response->status(400)->json(["message" => "Monto inválido"]);
+            return;
+        }
+
+        $hasWebAuthn = $this->webAuthnModel->hasAnyCredential((int) $userId);
+        $hasPin = $this->walletModel->isPinEnabled((int) $userId);
+
+        if ($hasWebAuthn || $hasPin) {
+            if ($webauthnAssertion) {
+                $waController = new WebAuthnController();
+                $waResult = $waController->verifyAssertion((int) $userId, $webauthnAssertion);
+                if (!$waResult['ok']) {
+                    Router::$response->status(400)->json(["message" => $waResult['message']]);
+                    return;
+                }
+            } elseif ($hasPin) {
+                if (!$pin) {
+                    Router::$response->status(400)->json(["message" => "Se requiere tu PIN para retirar", "pin_required" => true]);
+                    return;
+                }
+                $pinCheck = $this->walletModel->verifyPin((int) $userId, $pin);
+                if (!$pinCheck['ok']) {
+                    Router::$response->status(!empty($pinCheck['locked']) ? 423 : 400)->json(["message" => $pinCheck['message']]);
+                    return;
+                }
+            } else {
+                Router::$response->status(400)->json(["message" => "Se requiere verificación (Face ID/huella)", "webauthn_required" => true]);
+                return;
+            }
+        }
+
+        $result = $this->walletModel->requestWithdrawal((int) $userId, $amount);
+
+        if (!$result['success']) {
+            Router::$response->status(400)->json(["message" => $result['message']]);
+            return;
+        }
+
+        Router::$response->status(200)->json([
+            "message" => "Solicitud de retiro enviada. El dinero llega a tu tarjeta en 3 a 7 días hábiles.",
+            "new_balance" => $result['new_balance'],
+        ]);
+    }
+
     private function notifyTransfer(int $fromUserId, string $toAccountNumber, float $amount): void
     {
         try {

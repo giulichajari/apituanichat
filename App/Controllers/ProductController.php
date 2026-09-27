@@ -179,7 +179,7 @@ class ProductController
         } catch (\Exception $e) {
             $errorMsg = "❌ Exception in uploadProductImage: " . $e->getMessage() . "\n";
             file_put_contents('../../php-error.log', $errorMsg, FILE_APPEND);
-            Router::$response->status(500)->send(["message" => "Server error: " . $e->getMessage()]);
+            Router::$response->status(500)->send(["message" => "Server error: " . 'No se pudo completar la operación']);
         }
     }
     // ✅ Crear nuevo producto
@@ -190,6 +190,11 @@ class ProductController
 
         if (!$userId) {
             Router::$response->status(401)->send(["message" => "Unauthorized"]);
+            return;
+        }
+
+        if (empty($user->is_verified)) {
+            Router::$response->status(403)->send(["message" => "Tenés que tener tu cuenta verificada para poder acceder"]);
             return;
         }
 
@@ -597,7 +602,7 @@ public function updateProduct($id)
         } catch (\Exception $e) {
             $errorMsg = "❌ Exception: " . $e->getMessage() . "\n";
             file_put_contents('../../php-error.log', $errorMsg, FILE_APPEND);
-            Router::$response->status(500)->send(["message" => "Server error: " . $e->getMessage()]);
+            Router::$response->status(500)->send(["message" => "Server error: " . 'No se pudo completar la operación']);
         }
     }
 
@@ -766,31 +771,22 @@ public function updateProduct($id)
     // ✅ Actualizar stock
     public function updateStock($id)
     {
-        $user = Router::$request->user;
-        $userId = $user->id ?? null;
-
+        $userId = Router::$request->user->id ?? null;
         if (!$userId) {
-            Router::$response->status(401)->send(["message" => "Unauthorized"]);
+            Router::$response->status(401)->send(['message' => 'Unauthorized']);
             return;
         }
-
-        $body = Router::$request->body;
-        $stockQuantity = $body->stock_quantity ?? null;
-
-        if ($stockQuantity === null) {
-            Router::$response->status(400)->send(["message" => "Missing stock_quantity"]);
-            return;
-        }
-
-        $result = $this->productModel->updateStock($id, $stockQuantity, $userId);
-
-        if ($result) {
-            Router::$response->status(200)->send([
-                "success" => true,
-                "message" => "Stock updated successfully"
-            ]);
-        } else {
-            Router::$response->status(500)->send(["message" => "Error updating stock"]);
+        try {
+            $quantity = Router::$request->body->stock_quantity ?? null;
+            $updated = $this->productModel->updateStock($id, $quantity, $userId);
+            Router::$response->status($updated ? 200 : 404)->send($updated
+                ? ['success' => true, 'message' => 'Stock updated successfully']
+                : ['message' => 'Product not found or not owned']);
+        } catch (\InvalidArgumentException $e) {
+            Router::$response->status(400)->send(['message' => 'Invalid product or stock_quantity; use a nonnegative integer']);
+        } catch (\Throwable $e) {
+            error_log('Product stock update failed');
+            Router::$response->status(500)->send(['message' => 'Error updating stock']);
         }
     }
 

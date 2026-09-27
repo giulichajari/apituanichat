@@ -93,7 +93,7 @@ class GroupLiveChatModel
                 UPDATE group_live_chat_messages
                 SET estado = 'completado',
                     pinned_until = DATE_ADD(NOW(), INTERVAL pin_minutes MINUTE)
-                WHERE id = :id
+                WHERE id = :id AND estado = 'pendiente' AND is_pinned = 1
             ");
             return $stmt->execute([':id' => $id]);
         } catch (PDOException $e) {

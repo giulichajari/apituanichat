@@ -148,7 +148,7 @@ class ChatModel
                 else {
                     if (!$this->userInChat($chatId, $userId)) {
                         // Si el usuario no está en el chat, agregarlo
-                        $this->addUserToChat($chatId, $userId);
+                        throw new Exception("No tienes acceso a esta conversación");
                         error_log("➕ Usuario {$userId} agregado al chat existente {$chatId}");
                     }
                     $this->lastUsedChatId = $chatId;
@@ -191,6 +191,15 @@ class ChatModel
 
             // Actualizar last_message_at
             $this->updateChatLastMessage($this->lastUsedChatId);
+
+            // HTTP and WebSocket share persistence; the outbox deduplicates by message/device.
+            try {
+                \App\Services\MessagePush::enqueue($db, $messageId, (int)$userId);
+            } catch (\Throwable $e) {
+                // The saved message must not become a failed send because delivery is unavailable.
+                error_log('MessagePush: no se pudo preparar el aviso del mensaje guardado');
+            }
+
 
             error_log("✅ Mensaje enviado - Chat: {$this->lastUsedChatId}, Usuario: {$userId}, Mensaje: {$messageId}");
             return $messageId;
@@ -514,8 +523,9 @@ class ChatModel
     public function getMessages($chatId, $userId = null): array
     {
         try {
-            $limit = (int)($_GET['limit'] ?? 50);
-            $offset = (int)($_GET['offset'] ?? 0);
+            if (!$userId || !$this->userInChat($chatId, $userId)) throw new \RuntimeException('No tienes acceso a esta conversación');
+            $limit = max(1, min(100, (int)($_GET['limit'] ?? 50)));
+            $offset = max(0, (int)($_GET['offset'] ?? 0));
 
             $stmt = $this->conn()->prepare("
                 SELECT 
@@ -532,8 +542,8 @@ class ChatModel
                 FROM mensajes m
                 LEFT JOIN users u ON m.user_id = u.id
                 LEFT JOIN files f ON m.file_id = f.id
-                WHERE m.chat_id = :chat_id AND leido=0
-                ORDER BY m.enviado_en ASC
+                WHERE m.chat_id = :chat_id
+                ORDER BY m.enviado_en DESC, m.id DESC
                 LIMIT :limit OFFSET :offset
             ");
             $stmt->bindValue(':chat_id', $chatId, PDO::PARAM_INT);
@@ -542,7 +552,7 @@ class ChatModel
             $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
             $stmt->execute();
 
-            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+            return array_reverse($stmt->fetchAll(PDO::FETCH_ASSOC));
         } catch (PDOException $e) {
             error_log("Error obteniendo mensajes: " . $e->getMessage());
             throw $e;
@@ -797,6 +807,7 @@ class ChatModel
     }
     public function markMessagesAsRead($chatId, $currentUserId)
     {
+        if (!$this->userInChat($chatId, $currentUserId)) throw new \RuntimeException("Acceso denegado");
         $stmt = $this->conn()->prepare("
         UPDATE mensajes 
         SET leido = 1

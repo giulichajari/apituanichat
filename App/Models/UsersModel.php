@@ -11,8 +11,9 @@ class UsersModel
     public function setRestrictedMode(int $userId, string $pin): bool
     {
         $hashed = password_hash($pin, PASSWORD_BCRYPT);
-        $stmt = $this->db->prepare("UPDATE users SET restricted_mode = 1, restricted_pin = :pin WHERE id = :id");
-        return $stmt->execute([':pin' => $hashed, ':id' => $userId]);
+        $stmt = $this->db->prepare("UPDATE users SET restricted_mode = 1, restricted_pin = :pin WHERE id = :id AND COALESCE(restricted_mode, 0) = 0 AND (restricted_pin IS NULL OR restricted_pin = '')");
+        $stmt->execute([':pin' => $hashed, ':id' => $userId]);
+        return $stmt->rowCount() === 1;
     }
 
     public function disableRestrictedMode(int $userId, string $pin): bool
@@ -23,8 +24,9 @@ class UsersModel
         if (!$row || !$row['restricted_pin'] || !password_verify($pin, $row['restricted_pin'])) {
             return false;
         }
-        $upd = $this->db->prepare("UPDATE users SET restricted_mode = 0, restricted_pin = NULL WHERE id = :id");
-        return $upd->execute([':id' => $userId]);
+        $upd = $this->db->prepare("UPDATE users SET restricted_mode = 0, restricted_pin = NULL WHERE id = :id AND restricted_pin = :old_pin");
+        $upd->execute([':id' => $userId, ':old_pin' => $row['restricted_pin']]);
+        return $upd->rowCount() === 1;
     }
 
     public function getAgeVerificationStatus(int $userId): string
@@ -51,14 +53,14 @@ class UsersModel
     }
 
     // Obtener todos los usuarios paginados
-    public function getUsers(int $page, int $perPage = 10, int $excludeUserId): array|bool
+    public function getUsers(int $page, int $perPage, int $excludeUserId): array|bool
     {
         try {
             $offset = ($page - 1) * $perPage;
 
             if ($excludeUserId) {
                 $stmt = $this->db->prepare("
-                SELECT id, name, email, phone, is_verified, online, rol, created_at 
+                SELECT id, name, is_verified, online, rol, created_at 
                 FROM users 
                 WHERE id != :exclude_user_id
                 ORDER BY created_at DESC 
@@ -67,7 +69,7 @@ class UsersModel
                 $stmt->bindValue(':exclude_user_id', $excludeUserId, PDO::PARAM_INT);
             } else {
                 $stmt = $this->db->prepare("
-                SELECT id, name, email, phone, is_verified, online, rol, created_at 
+                SELECT id, name, is_verified, online, rol, created_at 
                 FROM users 
                 ORDER BY created_at DESC 
                 LIMIT :limit OFFSET :offset
@@ -397,6 +399,8 @@ class UsersModel
     // Obtener usuario a partir de token de reseteo
     public function getUserIdByResetToken(string $token): int|false
     {
+        // Recovery links use random_bytes(16), never the old six-digit login OTP.
+        if (!preg_match('/^[a-f0-9]{32}$/D', $token)) return false;
         try {
             $stmt = $this->db->prepare(
                 "SELECT id FROM users
@@ -446,5 +450,17 @@ class UsersModel
             error_log("searchUsers ERROR: " . $e->getMessage());
             return [];
         }
+    }
+    public function hasActiveSession(int $userId, string $token): bool
+    {
+        $stmt=$this->db->prepare('SELECT token FROM user_tokens WHERE user_id = ? AND token = ? AND expires_at > CURRENT_TIMESTAMP');
+        $stmt->execute([$userId,$token]);
+        $stored=$stmt->fetchColumn();
+        return is_string($stored) && hash_equals($stored,$token);
+    }
+
+    public function resetPasswordWithToken(string $token, string $hash): bool
+    {
+        return \App\Services\AccountSecurity::reset($this->db,$token,$hash);
     }
 }

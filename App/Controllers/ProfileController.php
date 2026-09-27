@@ -73,7 +73,10 @@ class ProfileController
     // Crear perfil
     public function createProfile()
     {
-        $userId = Router::$request->body->userId;
+        $userId = Router::$request->body->userId ?? null;
+        if (!$this->requireOwner($userId)) {
+            return;
+        }
         $data = [
             'bio' => Router::$request->body->bio ?? '',
             'email' => Router::$request->body->email ?? '',
@@ -106,7 +109,10 @@ class ProfileController
     // Actualizar perfil
     public function updateProfile()
     {
-        $userId = Router::$request->params->userId;
+        $userId = Router::$request->params->userId ?? null;
+        if (!$this->requireOwner($userId)) {
+            return;
+        }
         $currentProfile = $this->profileModel->getProfile((int)$userId);
 
         if ($currentProfile === false) {
@@ -178,6 +184,25 @@ class ProfileController
         }
     }
 
+    private function requireOwner($targetId): bool
+    {
+        $userId = filter_var(Router::$request->user->id ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if (!$userId) {
+            Router::$response->status(401)->send(['message' => 'No autenticado']);
+            return false;
+        }
+        $target = filter_var($targetId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if (!$target) {
+            Router::$response->status(400)->send(['message' => 'Usuario inválido']);
+            return false;
+        }
+        if ($target !== $userId) {
+            Router::$response->status(403)->send(['message' => 'Solo puedes modificar tu propio perfil']);
+            return false;
+        }
+        return true;
+    }
+
     private function requestValue(array $fieldNames, $default = null)
     {
         $body = Router::$request->body ?? null;
@@ -196,7 +221,10 @@ class ProfileController
 
   public function updateAvatar()
     {
-        $userId = Router::$request->params->userId;
+        $userId = Router::$request->params->userId ?? null;
+        if (!$this->requireOwner($userId)) {
+            return;
+        }
 
         if (!isset($_FILES['avatar'])) {
             Router::$response->status(400)->json([
@@ -205,7 +233,13 @@ class ProfileController
             return;
         }
 
-        $file = array_map('trim', $_FILES['avatar']);
+        $file = $_FILES['avatar'];
+        try {
+            $media = \App\Services\UploadedMedia::validate($file);
+        } catch (\InvalidArgumentException $e) {
+            Router::$response->status(400)->json(['message' => $e->getMessage()]);
+            return;
+        }
 
         // Guardar en public/uploads/avatars para que sea accesible vía web:
         // https://tuanichat.com/apituanichat/public/uploads/avatars/...
@@ -216,7 +250,7 @@ class ProfileController
             mkdir($targetDir, 0755, true);
         }
 
-        $filename = uniqid() . "_" . basename($file['name']);
+        $filename = $media['filename'];
         $targetFile = $targetDir . $filename;
 
         if (move_uploaded_file($file['tmp_name'], $targetFile)) {

@@ -27,7 +27,7 @@ class OrderModel
                 ':restaurant_id' => $data['restaurant_id'],
                 ':items' => is_string($data['items']) ? $data['items'] : json_encode($data['items']),
                 ':total' => $data['total'],
-                ':currency' => $data['currency'] ?? 'ARS',
+                ':currency' => $data['currency'] ?? 'USD',
                 ':payment_link_url' => $data['payment_link_url'] ?? null,
                 ':idempotency_key' => $data['idempotency_key'] ?? null,
                 ':is_delivery' => !empty($data['is_delivery']) ? 1 : 0,
@@ -50,7 +50,7 @@ class OrderModel
             SELECT o.*, u.name as user_name, u.email as user_email
             FROM food_orders o
             LEFT JOIN users u ON o.user_id = u.id
-            WHERE o.restaurant_id = ? AND o.status = 'paid'
+            WHERE o.restaurant_id = ? AND o.status IN ('paid', 'confirmed')
             ORDER BY o.created_at DESC
         ");
         $stmt->execute([$restaurantId]);
@@ -74,9 +74,10 @@ class OrderModel
     {
         $stmt = $this->db->prepare("
             UPDATE food_orders SET status = 'confirmed' 
-            WHERE id = ? AND restaurant_id = ? AND status = 'pending'
+            WHERE id = ? AND restaurant_id = ? AND status = 'paid'
         ");
-        return $stmt->execute([$id, $restaurantId]);
+        $stmt->execute([$id, $restaurantId]);
+        return $stmt->rowCount() === 1;
     }
 
     // Actualiza el estado de despacho del delivery (busqueda/asignacion de conductor)
@@ -86,7 +87,7 @@ class OrderModel
         if (!in_array($status, $allowed, true)) {
             return false;
         }
-        $stmt = $this->db->prepare("UPDATE food_orders SET delivery_status = ? WHERE id = ?");
+        $stmt = $this->db->prepare("UPDATE food_orders SET delivery_status = ? WHERE id = ? AND status IN ('paid', 'confirmed') AND delivery_status NOT IN ('cancelled', 'delivered')");
         return $stmt->execute([$status, $orderId]);
     }
 
@@ -122,8 +123,8 @@ class OrderModel
         $stmt = $this->db->prepare("
             SELECT o.*, r.nombre as restaurant_name
             FROM food_orders o
-            LEFT JOIN restaurants r ON r.id = o.restaurant_id
-            WHERE o.user_id = ? AND o.status = 'confirmed'
+            LEFT JOIN restaurantes r ON r.id = o.restaurant_id
+            WHERE o.user_id = ? AND o.status = 'confirmed' AND NOT EXISTS (SELECT 1 FROM food_wallet_payments wp WHERE wp.order_id = o.id)
             ORDER BY o.created_at DESC
         ");
         $stmt->execute([$userId]);

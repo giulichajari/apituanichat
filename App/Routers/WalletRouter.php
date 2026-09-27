@@ -57,5 +57,10 @@ class WalletRouter
             fn() => $tokenMiddleware->strict(),
             fn() => $walletController->payWithWallet()
         );
+        $router->post(
+            '/wallet/withdraw',
+            fn() => $tokenMiddleware->strict(),
+            fn() => $walletController->requestWithdrawal()
+        );
     }
 }

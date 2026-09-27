@@ -203,130 +203,43 @@ class EncuestasController
     // Crear (o reutilizar) el link de pago de Square para desbloquear una encuesta privada
     public function createEncuestaPayment()
     {
-        $idGroup = (int) (Router::$request->params->idGroup ?? 0);
-        $idEncuesta = (int) (Router::$request->params->idEncuesta ?? 0);
+        $groupId = (int) (Router::$request->params->idGroup ?? 0);
+        $pollId = (int) (Router::$request->params->idEncuesta ?? 0);
         $userId = (int) (Router::$request->user->id ?? 0);
-
-        if (!$idGroup || !$idEncuesta || !$userId) {
-            Router::$response->status(400)->send(["message" => "Datos invalidos"]);
-            return;
+        if (!$userId || !$this->groupsModel->isUserInGroup($groupId, $userId)) {
+            Router::$response->status(403)->send(['message' => 'No tienes acceso a este grupo.']); return;
         }
-        if (!$this->groupsModel->isUserInGroup($idGroup, $userId)) {
-            Router::$response->status(403)->send(["message" => "No perteneces a este grupo"]);
-            return;
+        $poll = $this->encuestasModel->getEncuestaForPayment($pollId, $groupId);
+        if (!$poll || $poll['visibilidad'] !== 'privado' || empty($poll['precio'])) {
+            Router::$response->status(400)->send(['message' => 'La encuesta no requiere pago o no existe.']); return;
         }
-
-        $pagosModel = new EncuestasPagosModel();
-
-        $pending = $pagosModel->getPendingForEncuestaAndUser($idEncuesta, $userId);
-        if ($pending && !empty($pending['payment_link_url'])) {
-            Router::$response->status(200)->send([
-                "paymentUrl" => $pending['payment_link_url'],
-                "pago_id" => (int) $pending['id']
-            ]);
-            return;
+        try {
+            $amount = (float) \App\Services\UsdMoney::decimal(\App\Services\UsdMoney::cents($poll['precio']));
+            $result = (new \App\Services\WalletCheckout())->run($userId, 'group-poll', (string) $pollId, ['poll' => $pollId], function () use ($poll, $userId, $pollId, $amount, $groupId) {
+                $db = \App\Configs\Database::getInstance()->getConnection();
+                $lock = $db->prepare('SELECT id, user_id, group_id, visibilidad, precio FROM encuestas_grupos WHERE id = ? AND group_id = ? FOR UPDATE');
+                $lock->execute([$pollId, $groupId]);$poll = $lock->fetch(\PDO::FETCH_ASSOC);
+                if (!$poll || !$this->groupsModel->isUserInGroup($groupId, $userId) || $poll['visibilidad'] !== 'privado') throw new \DomainException('Contenido no disponible');
+                if (\App\Services\UsdMoney::cents($poll['precio']) !== \App\Services\UsdMoney::cents($amount)) throw new \DomainException('El precio cambió; actualiza el contenido');
+                $db = \App\Configs\Database::getInstance()->getConnection();
+                $stmt = $db->prepare("SELECT id FROM encuestas_pagos WHERE encuesta_id = ? AND usuario_id = ? AND estado = 'completado' LIMIT 1");
+                $stmt->execute([$pollId, $userId]);
+                if ($id = $stmt->fetchColumn()) return ['paid' => true, 'alreadyPaid' => true, 'pago_id' => (int) $id];
+                $debit = (new \App\Models\WalletModel())->debitForPurchase($userId, $amount, 'group_poll_' . $pollId);
+                if (!$debit['success']) throw new \DomainException($debit['message']);
+                $model = new EncuestasPagosModel();
+                $id = $model->createPaymentRequest($pollId, $userId, $amount, 'wallet_poll_' . $pollId . '_' . $userId, '', 'wallet_poll_' . $pollId . '_' . $userId);
+                if (!$id || !$model->markCompleted($id)) throw new \RuntimeException('No se pudo desbloquear la encuesta');
+                (new \App\Services\CommerceSettlement())->hold('group_poll_' . $id, $debit['transaction_id'], (int) $poll['user_id']);
+                (new \App\Services\CommerceSettlement())->resolve('group_poll_' . $id, 'release', $userId, 'Entrega digital confirmada');
+                return ['paid' => true, 'pago_id' => $id, 'new_balance' => $debit['new_balance']];
+            });
+            Router::$response->status(200)->send($result + ['message' => 'Encuesta desbloqueada con Wallet.']);
+        } catch (\Throwable $e) {
+            error_log('Poll Wallet checkout: ' . $e->getMessage());
+            Router::$response->status($e instanceof \DomainException ? 402 : 503)->send(['message' => $e instanceof \DomainException ? $e->getMessage() : 'No se completó el pago. Puedes reintentar.']);
         }
-
-        $encuesta = $this->encuestasModel->getEncuestaForPayment($idEncuesta, $idGroup);
-        if (!$encuesta) {
-            Router::$response->status(404)->send(["message" => "Encuesta no encontrada"]);
-            return;
-        }
-        if ($encuesta['visibilidad'] !== 'privado' || empty($encuesta['precio'])) {
-            Router::$response->status(400)->send(["message" => "Esta encuesta no requiere pago"]);
-            return;
-        }
-
-        $monto = (float) $encuesta['precio'];
-        $link = $this->createEncuestaPaymentLink($idEncuesta, $monto);
-
-        if (empty($link['url']) || empty($link['payment_link_id'])) {
-            Router::$response->status(500)->send([
-                "message" => $link['error'] ?? "No se pudo crear el link de pago"
-            ]);
-            return;
-        }
-
-        $pagoId = $pagosModel->createPaymentRequest(
-            $idEncuesta,
-            $userId,
-            $monto,
-            $link['payment_link_id'],
-            $link['url'],
-            $link['idempotency_key']
-        );
-
-        Router::$response->status(201)->send([
-            "paymentUrl" => $link['url'],
-            "pago_id" => $pagoId
-        ]);
     }
 
-    private function createEncuestaPaymentLink(int $encuestaId, float $amount): array
-    {
-        $appEnv = isset($_ENV['APP_ENV']) ? strtolower((string) $_ENV['APP_ENV']) : '';
-        $isProd = ($appEnv === 'production');
 
-        if ($isProd) {
-            $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_PROD'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
-            $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_PROD'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
-        } else {
-            $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_SANDBOX'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
-            $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_SANDBOX'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
-        }
-        $locationId = preg_replace('/[^a-zA-Z0-9_-]/', '', trim($locationId));
-
-        $sandboxEnv = $_ENV['SQUARE_SANDBOX'] ?? '';
-        $sandbox = ($sandboxEnv === 'true' || $sandboxEnv === '1') ? true : !$isProd;
-        $squareBaseUrl = $sandbox ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com';
-
-        if (empty($accessToken) || empty($locationId)) {
-            return [
-                'url' => null,
-                'payment_link_id' => null,
-                'idempotency_key' => null,
-                'error' => empty($accessToken) ? 'SQUARE_ACCESS_TOKEN no configurado' : 'SQUARE_LOCATION_ID no configurado'
-            ];
-        }
-
-        $amountCents = (int) round($amount * 100);
-        $idempotencyKey = uniqid('encuesta_', true);
-        $postData = [
-            "idempotency_key" => $idempotencyKey,
-            "quick_pay" => [
-                "name" => "Encuesta de grupo #{$encuestaId}",
-                "price_money" => [
-                    "amount" => $amountCents,
-                    "currency" => "USD"
-                ],
-                "location_id" => $locationId
-            ]
-        ];
-
-        $ch = curl_init($squareBaseUrl . "/v2/online-checkout/payment-links");
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            "Content-Type: application/json",
-            "Authorization: Bearer $accessToken",
-            "Square-Version: 2024-11-20"
-        ]);
-        curl_setopt($ch, CURLOPT_POST, 1);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-
-        $response = curl_exec($ch);
-        $curlError = curl_error($ch);
-        curl_close($ch);
-
-        $result = is_string($response) ? json_decode($response, true) : [];
-        $paymentLinkUrl = $result['payment_link']['url'] ?? null;
-        $squarePaymentLinkId = $result['payment_link']['id'] ?? null;
-
-        return [
-            'url' => $paymentLinkUrl,
-            'payment_link_id' => $squarePaymentLinkId,
-            'idempotency_key' => $idempotencyKey,
-            'error' => $curlError ?: ($paymentLinkUrl ? null : 'Square no devolvio un link de pago')
-        ];
-    }
 }

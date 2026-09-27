@@ -3,6 +3,8 @@
 namespace App\Routers;
 
 use App\Controllers\PaymentController;
+use App\Controllers\RideCheckoutController;
+use App\Controllers\RideActivityController;
 use App\Middlewares\TokenMiddleware;
 use EasyProjects\SimpleRouter\Router;
 
@@ -16,9 +18,13 @@ class PaymentsRouter
         $router->post(
             '/payments/create-link',
             fn() => $tokenMiddleware->strict(),
-            fn() => $paymentController->createPaymentLink()
+            fn() => (new RideCheckoutController())->purchase()
         );
 
+        $router->post('/payments/ride-quote', fn() => $tokenMiddleware->strict(), fn() => (new RideCheckoutController())->quote());
+
+        $router->get('/payments/ride-history', fn() => $tokenMiddleware->strict(), fn() => (new RideActivityController())->history());
+        $router->post('/payments/ride-action', fn() => $tokenMiddleware->strict(), fn() => (new RideActivityController())->transition());
         $router->patch(
             '/payments/{id}/status',
             fn() => $tokenMiddleware->strict(),

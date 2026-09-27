@@ -20,52 +20,56 @@ class TokenMiddleware
         $this->secret = JwtSecret::get();
     }
 
+    private function unauthorized(string $message): never
+    {
+        Router::$request->user = null;
+        Router::$response->status(401)->send(['message' => $message]);
+        // El router ejecuta varios callbacks; return no detiene el controlador siguiente.
+        exit;
+    }
+
     public function strict()
     {
-        $authHeader = Router::$request->headers->Authorization ?? null;
-
-        if (!$authHeader || !str_starts_with($authHeader, 'Bearer ')) {
-            Router::$response->status(401)->send([
-                "message" => "Token requerido"
-            ]);
+        Router::$request->user = null;
+        $header = Router::$request->headers->Authorization
+            ?? Router::$request->headers->authorization ?? null;
+        if (!is_string($header) || !preg_match('/^Bearer\s+(\S+)$/i', trim($header), $matches)) {
+            $this->unauthorized('Token requerido');
         }
-
-        $jwt = substr($authHeader, 7); // quitar "Bearer "
-
         try {
-            // 🔑 Decodificar el JWT
-            $decoded = JWT::decode($jwt, new Key($this->secret, 'HS256'));
-
-
-            $user = $this->usersModel->getUser($decoded->user_id);
-
-
-            if (!$user) {
-                Router::$response->status(401)->send([
-                    "message" => "Usuario inválido"
-                ]);
+            $decoded = JWT::decode($matches[1], new Key($this->secret, 'HS256'));
+            $id = filter_var($decoded->user_id ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+            if (!$id || !isset($decoded->exp) || !is_numeric($decoded->exp) || $decoded->exp <= time()) {
+                $this->unauthorized('Token inválido o expirado');
             }
-            Router::$request->user = (object)$user;
-
-            return $user;
-        } catch (\Exception $e) {
-            Router::$response->status(401)->send([
-                "message" => "Token inválido o expirado",
-                "error" => $e->getMessage()
-            ]);
+        } catch (\UnexpectedValueException | \DomainException | \InvalidArgumentException $e) {
+            $this->unauthorized('Token inválido o expirado');
         }
+        // Un fallo de base de datos no se convierte en un rechazo de credenciales.
+        if (!$this->usersModel->hasActiveSession($id, $matches[1])) $this->unauthorized('Sesión revocada o expirada');
+        $user = $this->usersModel->getUser($id);
+        if (!$user) {
+            $this->unauthorized('Usuario inválido');
+        }
+        Router::$request->user = (object)$user;
+        return $user;
     }
 
     public function optional()
     {
-        $authHeader = Router::$request->headers->Authorization ?? null;
+        Router::$request->user = null;
+        $authHeader = Router::$request->headers->Authorization ?? Router::$request->headers->authorization ?? null;
 
-        if ($authHeader && str_starts_with($authHeader, 'Bearer ')) {
+        if (is_string($authHeader) && str_starts_with($authHeader, 'Bearer ')) {
             $jwt = substr($authHeader, 7);
 
             try {
                 $decoded = JWT::decode($jwt, new Key($this->secret, 'HS256'));
-                Router::$request->user = $this->usersModel->getUser($decoded->user_id);
+                $id = filter_var($decoded->user_id ?? null, FILTER_VALIDATE_INT, ['options'=>['min_range'=>1]]);
+                if (!$id || !isset($decoded->exp) || !is_numeric($decoded->exp) || $decoded->exp <= time()
+                    || !$this->usersModel->hasActiveSession($id, $jwt)) return;
+                $user = $this->usersModel->getUser($id);
+                Router::$request->user = $user ? (object)$user : null;
             } catch (\Exception $e) {
                 Router::$request->user = null; // sigue siendo opcional
             }

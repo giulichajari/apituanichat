@@ -24,6 +24,7 @@ class OrdersRouter
         ?OrderController $orderController = new OrderController(),
         ?SquareWebhookController $webhookController = new SquareWebhookController()
     ) {
+        new CommerceRouter($router);
         // Webhook de Square (público, sin autenticación)
         $router->post('/webhooks/square', fn() => $webhookController->handle());
 

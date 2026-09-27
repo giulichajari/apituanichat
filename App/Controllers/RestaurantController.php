@@ -105,12 +105,8 @@ class RestaurantController
                 Router::$response->status(500)->json([
                     'success' => false,
                     'message' => 'Error al guardar el archivo en el servidor',
-                    'error' => $e->getMessage(),
-                    'debug_info' => [
-                        'tmp_file' => $uploadedFile['tmp_name'],
-                        'destination' => $filePath,
-                        'file_size' => $uploadedFile['size']
-                    ]
+                    'error' => 'No se pudo completar la operación',
+
                 ]);
                 return;
             }

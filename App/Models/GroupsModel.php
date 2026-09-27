@@ -489,7 +489,7 @@ class GroupsModel
     {
         try {
             $stmt = $this->db->prepare("
-                SELECT id, group_id, visibilidad, precio
+                SELECT id, user_id, group_id, visibilidad, precio
                 FROM mensajes_grupos
                 WHERE id = :id AND group_id = :group_id
                 LIMIT 1

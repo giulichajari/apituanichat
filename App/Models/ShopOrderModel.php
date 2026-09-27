@@ -11,10 +11,10 @@ class ShopOrderModel
     private PDO $db;
     private WalletModel $walletModel;
 
-    public function __construct(?WalletModel $walletModel = null)
+    public function __construct(?WalletModel $walletModel = null, ?PDO $db = null)
     {
-        $this->db = Database::getInstance()->getConnection();
-        $this->walletModel = $walletModel ?? new WalletModel();
+        $this->db = $db ?? Database::getInstance()->getConnection();
+        $this->walletModel = $walletModel ?? new WalletModel($this->db);
     }
 
     // Compra un producto: valida disponibilidad, descuenta stock de forma
@@ -22,111 +22,31 @@ class ShopOrderModel
     // precio real del producto, nunca confiando en un monto del cliente), y
     // registra el pedido. Si el cobro falla despues de descontar stock, el
     // stock se repone.
-    public function checkout(
-        int $buyerId,
-        int $productId,
-        int $quantity,
-        string $envioTipo = 'local',
-        ?string $deliveryAddress = null,
-        ?float $deliveryLat = null,
-        ?float $deliveryLng = null
-    ): array
+    public function checkout(int $buyerId, int $productId, int $quantity, string $envioTipo = 'local', ?string $deliveryAddress = null, ?float $deliveryLat = null, ?float $deliveryLng = null, string $requestKey = ''): array
     {
-        if ($quantity <= 0) {
-            return ['success' => false, 'message' => 'Cantidad inválida'];
-        }
-
+        if ($quantity < 1 || $quantity > 100) return ['success' => false, 'message' => 'Cantidad inválida'];
         try {
-            $stmt = $this->db->prepare("
-                SELECT id, price, stock_quantity, seller_id, is_active, is_approved
-                FROM products
-                WHERE id = :id
-                LIMIT 1
-            ");
-            $stmt->execute([':id' => $productId]);
-            $product = $stmt->fetch(PDO::FETCH_ASSOC);
-
-            if (!$product) {
-                return ['success' => false, 'message' => 'Producto no encontrado'];
-            }
-            if (!$product['is_active'] || !$product['is_approved']) {
-                return ['success' => false, 'message' => 'Este producto no está disponible'];
-            }
-            if ((int) $product['seller_id'] === $buyerId) {
-                return ['success' => false, 'message' => 'No podés comprar tu propio producto'];
-            }
-
-            // Descuento atomico: la condicion stock_quantity >= :qty en el WHERE
-            // hace que esta UPDATE sea segura ante compras simultaneas, sin
-            // necesitar una transaccion explicita para este paso.
-            $stmtDecrement = $this->db->prepare("
-                UPDATE products
-                SET stock_quantity = stock_quantity - :qty
-                WHERE id = :id AND is_active = 1 AND is_approved = 1 AND stock_quantity >= :qty_check
-            ");
-            $stmtDecrement->execute([':qty' => $quantity, ':id' => $productId, ':qty_check' => $quantity]);
-
-            if ($stmtDecrement->rowCount() !== 1) {
-                return ['success' => false, 'message' => 'Stock insuficiente'];
-            }
-
-            $unitPrice = (float) $product['price'];
-            $total = round($unitPrice * $quantity, 2);
-            $sellerId = (int) $product['seller_id'];
-            $reference = 'shop_order_product_' . $productId . '_' . time();
-
-            $paymentResult = $this->walletModel->debitForPurchase($buyerId, $total, $reference);
-
-            if (!$paymentResult['success']) {
-                // Reponer el stock que se descuento antes de saber si el cobro iba a funcionar
-                $stmtRestore = $this->db->prepare("
-                    UPDATE products SET stock_quantity = stock_quantity + :qty WHERE id = :id
-                ");
-                $stmtRestore->execute([':qty' => $quantity, ':id' => $productId]);
-
-                return ['success' => false, 'message' => $paymentResult['message'] ?? 'Error al procesar el pago'];
-            }
-
-            $stmtOrder = $this->db->prepare("
-                INSERT INTO shop_orders (
-                    product_id, buyer_id, seller_id, quantity, unit_price, total, status,
-                    envio_tipo, delivery_address, delivery_lat, delivery_lng, payment_reference
-                )
-                VALUES (
-                    :product_id, :buyer_id, :seller_id, :quantity, :unit_price, :total, 'pendiente_envio',
-                    :envio_tipo, :delivery_address, :delivery_lat, :delivery_lng, :payment_reference
-                )
-            ");
-            $stmtOrder->execute([
-                ':product_id' => $productId,
-                ':buyer_id' => $buyerId,
-                ':seller_id' => $sellerId,
-                ':quantity' => $quantity,
-                ':unit_price' => $unitPrice,
-                ':total' => $total,
-                ':envio_tipo' => $envioTipo,
-                ':delivery_address' => $deliveryAddress,
-                ':delivery_lat' => $deliveryLat,
-                ':delivery_lng' => $deliveryLng,
-                ':payment_reference' => $reference,
-            ]);
-
-            if ($stmtOrder->rowCount() !== 1) {
-                // El cobro ya se hizo pero el pedido no quedo registrado -- caso raro,
-                // requiere resolucion manual de un admin. Se loguea como critico.
-                error_log("CRITICO: cobro exitoso (ref=$reference) pero fallo el INSERT en shop_orders para product_id=$productId buyer_id=$buyerId");
-                return ['success' => false, 'message' => 'El pago se proceso pero hubo un error registrando el pedido. Contactá a soporte con la referencia: ' . $reference];
-            }
-
-            return [
-                'success' => true,
-                'order_id' => (int) $this->db->lastInsertId(),
-                'total' => $total,
-                'new_balance' => $paymentResult['new_balance'] ?? null,
-            ];
-        } catch (PDOException $e) {
-            error_log("ShopOrderModel checkout ERROR: " . $e->getMessage());
-            return ['success' => false, 'message' => 'Error interno al procesar la compra'];
+            return (new \App\Services\WalletCheckout($this->db))->run($buyerId, 'shop', $requestKey, compact('productId', 'quantity', 'envioTipo', 'deliveryAddress', 'deliveryLat', 'deliveryLng'), function () use ($buyerId, $productId, $quantity, $envioTipo, $deliveryAddress, $deliveryLat, $deliveryLng, $requestKey) {
+                $stmt = $this->db->prepare('SELECT * FROM products WHERE id = ? FOR UPDATE');
+                $stmt->execute([$productId]);
+                $product = $stmt->fetch(PDO::FETCH_ASSOC);
+                if (!$product || !$product['is_active'] || !$product['is_approved'] || (int) $product['seller_id'] === $buyerId) throw new \DomainException('Producto no disponible');
+                if ((int) $product['stock_quantity'] < $quantity) throw new \DomainException('Stock insuficiente');
+                $total = \App\Services\UsdMoney::decimal(\App\Services\UsdMoney::cents($product['price']) * $quantity);
+                $reference = 'shop_' . $buyerId . '_' . $requestKey;
+                $debit = $this->walletModel->debitForPurchase($buyerId, (float) $total, $reference);
+                if (!$debit['success']) throw new \DomainException($debit['message']);
+                $stmt = $this->db->prepare('UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?');
+                $stmt->execute([$quantity, $productId]);
+                $stmt = $this->db->prepare("INSERT INTO shop_orders (product_id, buyer_id, seller_id, quantity, unit_price, total, status, envio_tipo, delivery_address, delivery_lat, delivery_lng, payment_reference) VALUES (?, ?, ?, ?, ?, ?, 'pendiente_envio', ?, ?, ?, ?, ?)");
+                $stmt->execute([$productId, $buyerId, $product['seller_id'], $quantity, $product['price'], $total, $envioTipo, $deliveryAddress, $deliveryLat, $deliveryLng, $reference]);
+                $orderId = (int) $this->db->lastInsertId();
+                (new \App\Services\CommerceSettlement($this->db))->hold('shop_order_' . $orderId, $debit['transaction_id'], (int) $product['seller_id']);
+                return ['success' => true, 'order_id' => $orderId, 'total' => $total, 'new_balance' => $debit['new_balance']];
+            });
+        } catch (\Throwable $e) {
+            error_log('Shop checkout: ' . $e->getMessage());
+            return ['success' => false, 'message' => $e instanceof \DomainException || $e instanceof \InvalidArgumentException ? $e->getMessage() : 'No se completó la compra. Puedes reintentar.'];
         }
     }
 
@@ -138,7 +58,7 @@ class ShopOrderModel
             return false;
         }
         try {
-            $stmt = $this->db->prepare("UPDATE shop_orders SET delivery_status = :status WHERE id = :id");
+            $stmt = $this->db->prepare("UPDATE shop_orders SET delivery_status = :status WHERE id = :id AND status NOT IN ('cancelado', 'entregado')");
             return $stmt->execute([':status' => $status, ':id' => $orderId]);
         } catch (PDOException $e) {
             error_log("ShopOrderModel updateDeliveryStatus ERROR: " . $e->getMessage());

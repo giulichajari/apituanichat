@@ -4,6 +4,7 @@ namespace App\Routers;
 
 use App\Controllers\DriverApplicationController;
 use App\Controllers\DriverController;
+use App\Controllers\RideCheckoutController;
 use App\Middlewares\TokenMiddleware;
 use EasyProjects\SimpleRouter\Router;
 
@@ -96,7 +97,7 @@ class DriversRouter
         $router->post(
             '/drivers/request',
             fn() => $tokenMiddleware->strict(),
-            fn() => $driverController->requestDriver()
+            fn() => (new RideCheckoutController())->purchase()
         );
     }
 }

@@ -61,18 +61,21 @@ class GroupLiveGiftModel
     // Marca el pago como completado y suma los puntos al host del live (1 dolar = 1 punto)
     public function markAsCompleted(int $id): bool
     {
+        $ownsTransaction = !$this->db->inTransaction();
         try {
-            $this->db->beginTransaction();
+            if ($ownsTransaction) $this->db->beginTransaction();
 
-            $stmt = $this->db->prepare("SELECT post_id, amount FROM group_live_gifts WHERE id = :id");
+            $stmt = $this->db->prepare("SELECT post_id, amount, estado FROM group_live_gifts WHERE id = :id FOR UPDATE");
             $stmt->execute([':id' => $id]);
             $gift = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if (!$gift) {
-                $this->db->rollBack();
+                if ($ownsTransaction && $this->db->inTransaction()) $this->db->rollBack();
                 return false;
             }
 
+            if ($gift['estado'] === 'completado') { if ($ownsTransaction) $this->db->commit(); return true; }
+            if ($gift['estado'] !== 'pendiente') throw new \DomainException('Regalo no pendiente');
             $stmt2 = $this->db->prepare("UPDATE group_live_gifts SET estado = 'completado' WHERE id = :id");
             $stmt2->execute([':id' => $id]);
 
@@ -86,10 +89,10 @@ class GroupLiveGiftModel
                 $stmt4->execute([':points' => $points, ':user_id' => $post['user_id']]);
             }
 
-            $this->db->commit();
+            if ($ownsTransaction) $this->db->commit();
             return true;
-        } catch (PDOException $e) {
-            $this->db->rollBack();
+        } catch (\Throwable $e) {
+            if ($ownsTransaction && $this->db->inTransaction()) $this->db->rollBack();
             error_log("GroupLiveGiftModel markAsCompleted ERROR: " . $e->getMessage());
             return false;
         }

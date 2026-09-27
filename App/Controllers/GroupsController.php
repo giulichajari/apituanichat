@@ -640,192 +640,51 @@ class GroupsController
     // Crea (o reutiliza) el link de pago de Square para desbloquear un mensaje privado de grupo
     public function createGroupMessagePayment()
     {
-        $idGroup = (int) (Router::$request->params->idGroup ?? 0);
-        $idMessage = (int) (Router::$request->params->idMessage ?? 0);
-        $userId = (int) (Router::$request->user->id ?? 0);
-
-        if (!$idGroup || !$idMessage || !$userId) {
-            Router::$response->status(400)->send(["message" => "Datos invalidos"]);
-            return;
-        }
-
-        if (!$this->groupsModel->isUserInGroup($idGroup, $userId)) {
-            Router::$response->status(403)->send(["message" => "No perteneces a este grupo"]);
-            return;
-        }
-
-        $mensajesPagosModel = new MensajesPagosModel();
-
-        // Reutilizar un pago pendiente ya creado en vez de duplicar
-        $pending = $mensajesPagosModel->getPendingForMessageAndUser($idMessage, $userId);
-        if ($pending && !empty($pending['payment_link_url'])) {
-            Router::$response->status(200)->send([
-                "paymentUrl" => $pending['payment_link_url'],
-                "pago_id" => (int) $pending['id']
-            ]);
-            return;
-        }
-
-        $stmt = $this->groupsModel->getMessageForPayment($idMessage, $idGroup);
-        if (!$stmt) {
-            Router::$response->status(404)->send(["message" => "Mensaje no encontrado"]);
-            return;
-        }
-
-        if ($stmt['visibilidad'] !== 'privado' || empty($stmt['precio'])) {
-            Router::$response->status(400)->send(["message" => "Este mensaje no requiere pago"]);
-            return;
-        }
-
-        $monto = (float) $stmt['precio'];
-        $link = $this->createGroupMessagePaymentLink($idMessage, $monto);
-
-        if (empty($link['url']) || empty($link['payment_link_id'])) {
-            Router::$response->status(500)->send([
-                "message" => $link['error'] ?? "No se pudo crear el link de pago"
-            ]);
-            return;
-        }
-
-        $pagoId = $mensajesPagosModel->createPaymentRequest(
-            $idMessage,
-            $userId,
-            $monto,
-            $link['payment_link_id'],
-            $link['url'],
-            $link['idempotency_key']
-        );
-
-        Router::$response->status(201)->send([
-            "paymentUrl" => $link['url'],
-            "pago_id" => $pagoId
-        ]);
+        $this->payGroupMessageWithWallet();
     }
 
-    // Paga y desbloquea un mensaje privado de grupo debitando del wallet interno
     public function payGroupMessageWithWallet()
     {
-        $idGroup = (int) (Router::$request->params->idGroup ?? 0);
-        $idMessage = (int) (Router::$request->params->idMessage ?? 0);
+        $groupId = (int) (Router::$request->params->idGroup ?? 0);
+        $messageId = (int) (Router::$request->params->idMessage ?? 0);
         $userId = (int) (Router::$request->user->id ?? 0);
-
-        if (!$idGroup || !$idMessage || !$userId) {
-            Router::$response->status(400)->send(["message" => "Datos invalidos"]);
-            return;
+        if (!$userId || !$this->groupsModel->isUserInGroup($groupId, $userId)) {
+            Router::$response->status(403)->send(['message' => 'No tienes acceso a este grupo.']); return;
         }
-
-        if (!$this->groupsModel->isUserInGroup($idGroup, $userId)) {
-            Router::$response->status(403)->send(["message" => "No perteneces a este grupo"]);
-            return;
+        $message = $this->groupsModel->getMessageForPayment($messageId, $groupId);
+        if (!$message || $message['visibilidad'] !== 'privado' || empty($message['precio'])) {
+            Router::$response->status(400)->send(['message' => 'El mensaje no requiere pago o no existe.']); return;
         }
-
-        $stmt = $this->groupsModel->getMessageForPayment($idMessage, $idGroup);
-        if (!$stmt) {
-            Router::$response->status(404)->send(["message" => "Mensaje no encontrado"]);
-            return;
+        try {
+            $amount = (float) \App\Services\UsdMoney::decimal(\App\Services\UsdMoney::cents($message['precio']));
+            $checkout = new \App\Services\WalletCheckout();
+            $result = $checkout->run($userId, 'group-message', (string) $messageId, ['message' => $messageId], function () use ($message, $userId, $messageId, $amount, $groupId) {
+                $db = \App\Configs\Database::getInstance()->getConnection();
+                $lock = $db->prepare('SELECT id, user_id, group_id, visibilidad, precio FROM mensajes_grupos WHERE id = ? AND group_id = ? FOR UPDATE');
+                $lock->execute([$messageId, $groupId]);$message = $lock->fetch(\PDO::FETCH_ASSOC);
+                if (!$message || !$this->groupsModel->isUserInGroup($groupId, $userId) || $message['visibilidad'] !== 'privado') throw new \DomainException('Contenido no disponible');
+                if (\App\Services\UsdMoney::cents($message['precio']) !== \App\Services\UsdMoney::cents($amount)) throw new \DomainException('El precio cambió; actualiza el contenido');
+                $db = \App\Configs\Database::getInstance()->getConnection();
+                $stmt = $db->prepare("SELECT id FROM mensajes_pagos WHERE mensaje_id = ? AND usuario_id = ? AND estado = 'completado' LIMIT 1");
+                $stmt->execute([$messageId, $userId]);
+                if ($id = $stmt->fetchColumn()) return ['paid' => true, 'alreadyPaid' => true, 'pago_id' => (int) $id];
+                $debit = (new WalletModel())->debitForPurchase($userId, $amount, 'group_message_' . $messageId);
+                if (!$debit['success']) throw new \DomainException($debit['message']);
+                $id = (new MensajesPagosModel())->createWalletPayment($messageId, $userId, $amount);
+                if (!$id) throw new \RuntimeException('No se pudo desbloquear el mensaje');
+                (new \App\Services\CommerceSettlement())->hold('group_message_' . $id, $debit['transaction_id'], (int) $message['user_id']);
+                (new \App\Services\CommerceSettlement())->resolve('group_message_' . $id, 'release', $userId, 'Entrega digital confirmada');
+                return ['paid' => true, 'pago_id' => $id, 'new_balance' => $debit['new_balance']];
+            });
+            if (empty($result['replayed']) && empty($result['alreadyPaid'])) {
+                try { (new ReceiptModel())->createAndNotify($userId, 'group_message', $messageId, $amount, 'wallet', 'Mensaje privado desbloqueado en un grupo'); }
+                catch (\Throwable $e) { error_log('Group receipt pending: ' . $e->getMessage()); }
+            }
+            Router::$response->status(200)->send($result + ['message' => 'Mensaje desbloqueado con Wallet.']);
+        } catch (\Throwable $e) {
+            error_log('Group Wallet checkout: ' . $e->getMessage());
+            Router::$response->status($e instanceof \DomainException ? 402 : 503)->send(['message' => $e instanceof \DomainException ? $e->getMessage() : 'No se completó el pago. Puedes reintentar.']);
         }
-
-        if ($stmt['visibilidad'] !== 'privado' || empty($stmt['precio'])) {
-            Router::$response->status(400)->send(["message" => "Este mensaje no requiere pago"]);
-            return;
-        }
-
-        $monto = (float) $stmt['precio'];
-
-        $walletModel = new WalletModel();
-        $result = $walletModel->debitForPurchase($userId, $monto, 'group_message_' . $idMessage);
-
-        if (!$result['success']) {
-            Router::$response->status(400)->send(["message" => $result['message']]);
-            return;
-        }
-
-        $mensajesPagosModel = new MensajesPagosModel();
-        $pagoId = $mensajesPagosModel->createWalletPayment($idMessage, $userId, $monto);
-
-        $receiptModel = new ReceiptModel();
-        $receiptModel->createAndNotify(
-            $userId,
-            'group_message',
-            $idMessage,
-            $monto,
-            'wallet',
-            'Mensaje privado desbloqueado en un grupo'
-        );
-
-        Router::$response->status(200)->send([
-            "message" => "Pago con wallet exitoso",
-            "new_balance" => $result['new_balance'],
-            "pago_id" => $pagoId
-        ]);
-    }
-
-    private function createGroupMessagePaymentLink(int $messageId, float $amount): array
-    {
-        $appEnv = isset($_ENV['APP_ENV']) ? strtolower((string) $_ENV['APP_ENV']) : '';
-        $isProd = ($appEnv === 'production');
-
-        if ($isProd) {
-            $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_PROD'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
-            $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_PROD'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
-        } else {
-            $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_SANDBOX'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
-            $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_SANDBOX'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
-        }
-        $locationId = preg_replace('/[^a-zA-Z0-9_-]/', '', trim($locationId));
-
-        $sandboxEnv = $_ENV['SQUARE_SANDBOX'] ?? '';
-        $sandbox = ($sandboxEnv === 'true' || $sandboxEnv === '1') ? true : !$isProd;
-        $squareBaseUrl = $sandbox ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com';
-
-        if (empty($accessToken) || empty($locationId)) {
-            return [
-                'url' => null,
-                'payment_link_id' => null,
-                'idempotency_key' => null,
-                'error' => empty($accessToken) ? 'SQUARE_ACCESS_TOKEN no configurado' : 'SQUARE_LOCATION_ID no configurado'
-            ];
-        }
-
-        $amountCents = (int) round($amount * 100);
-        $idempotencyKey = uniqid('grpmsg_', true);
-        $postData = [
-            "idempotency_key" => $idempotencyKey,
-            "quick_pay" => [
-                "name" => "Contenido de grupo #{$messageId}",
-                "price_money" => [
-                    "amount" => $amountCents,
-                    "currency" => "USD"
-                ],
-                "location_id" => $locationId
-            ]
-        ];
-
-        $ch = curl_init($squareBaseUrl . "/v2/online-checkout/payment-links");
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            "Content-Type: application/json",
-            "Authorization: Bearer $accessToken",
-            "Square-Version: 2024-11-20"
-        ]);
-        curl_setopt($ch, CURLOPT_POST, 1);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-
-        $response = curl_exec($ch);
-        $curlError = curl_error($ch);
-        curl_close($ch);
-
-        $result = is_string($response) ? json_decode($response, true) : [];
-        $paymentLinkUrl = $result['payment_link']['url'] ?? null;
-        $squarePaymentLinkId = $result['payment_link']['id'] ?? null;
-
-        return [
-            'url' => $paymentLinkUrl,
-            'payment_link_id' => $squarePaymentLinkId,
-            'idempotency_key' => $idempotencyKey,
-            'error' => $curlError ?: ($paymentLinkUrl ? null : 'Square no devolvio un link de pago')
-        ];
     }
 
     public function uploadGroupFile()
@@ -896,7 +755,7 @@ class GroupsController
             ]);
         } catch (\Exception $e) {
             Router::$response->status(500)->send([
-                "message" => "Error interno: " . $e->getMessage()
+                "message" => "Error interno: " . 'No se pudo completar la operación'
             ]);
         }
     }

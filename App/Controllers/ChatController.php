@@ -135,7 +135,7 @@ public function uploadFile()
         error_log("❌ Error in uploadFile: " . $e->getMessage());
         return Router::$response->status(500)->send([
             "success" => false,
-            "message" => "Internal server error: " . $e->getMessage()
+            "message" => "Internal server error: " . 'No se pudo completar la operación'
         ]);
     }
 }
@@ -275,7 +275,7 @@ private function notifyWebSocketAfterUpload($uploadResult, $userId, $chatId, $up
             error_log("❌ Error en uploadChatFile: " . $e->getMessage());
             return Router::$response->status(500)->send([
                 "success" => false,
-                "message" => "Error al subir archivo: " . $e->getMessage()
+                "message" => "Error al subir archivo: " . 'No se pudo completar la operación'
             ]);
         }
     }
@@ -393,7 +393,7 @@ private function notifyWebSocketAfterUpload($uploadResult, $userId, $chatId, $up
             error_log("❌ Error en uploadChatImage: " . $e->getMessage());
             return Router::$response->status(500)->send([
                 "success" => false,
-                "message" => "Error al subir imagen: " . $e->getMessage()
+                "message" => "Error al subir imagen: " . 'No se pudo completar la operación'
             ]);
         }
     }
@@ -650,7 +650,7 @@ private function notifyWebSocketAfterUpload($uploadResult, $userId, $chatId, $up
             error_log("❌ Error creating chat: " . $e->getMessage());
             Router::$response->status(500)->send([
                 "success" => false,
-                "message" => "Error creando chat: " . $e->getMessage()
+                "message" => "Error creando chat: " . 'No se pudo completar la operación'
             ]);
         }
     }
@@ -714,7 +714,7 @@ private function notifyWebSocketAfterUpload($uploadResult, $userId, $chatId, $up
             error_log("Error enviando mensaje: " . $e->getMessage());
             return Router::$response->status(500)->send([
                 "success" => false,
-                "message" => "Error sending message: " . $e->getMessage()
+                "message" => "Error sending message: " . 'No se pudo completar la operación'
             ]);
         }
     }
@@ -942,7 +942,7 @@ private function notifyWebSocketAfterUpload($uploadResult, $userId, $chatId, $up
             error_log("Error en sendBotMessage: " . $e->getMessage());
             return Router::$response->status(500)->send([
                 "success" => false,
-                "message" => "Error interno: " . $e->getMessage()
+                "message" => "Error interno: " . 'No se pudo completar la operación'
             ]);
         }
     }
@@ -1032,7 +1032,7 @@ private function notifyWebSocketAfterUpload($uploadResult, $userId, $chatId, $up
             return Router::$response->status(500)->send([
                 "success" => false,
                 "message" => "Error interno del servidor",
-                "error" => $e->getMessage()
+                "error" => 'No se pudo completar la operación'
             ]);
         }
     }
@@ -1062,7 +1062,7 @@ private function notifyWebSocketAfterUpload($uploadResult, $userId, $chatId, $up
             error_log("Error obteniendo chats: " . $e->getMessage());
             Router::$response->status(500)->send([
                 "success" => false,
-                "message" => "Error retrieving chats: " . $e->getMessage()
+                "message" => "Error retrieving chats: " . 'No se pudo completar la operación'
             ]);
         }
     }

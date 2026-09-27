@@ -4,6 +4,8 @@ require_once __DIR__ . '/vendor/autoload.php';
 use Dotenv\Dotenv;
 use App\Models\RestaurantModel;
 use App\Routers\UsersRouter;
+use App\Routers\AnunciosRouter;
+use App\Routers\MonetizacionRouter;
 use App\Routers\ProfileRouter;
 use App\Routers\SignalRouter; // <--- importar tu router nuevo
 use App\Routers\ChatRouter; // <--- importar tu router nuevo
@@ -72,9 +74,12 @@ try {
   
     // Registramos routers
     new UsersRouter($router);
+    new AnunciosRouter($router);
+new MonetizacionRouter($router);
     new ProfileRouter($router);
     new SignalRouter($router);  // <--- aquí sumamos el signaling
     new ChatRouter($router);
+    new \App\Routers\ChatFeaturesRouter($router);
     new AgentRouter($router);
     new DriversRouter($router);
     new PaymentsRouter($router);

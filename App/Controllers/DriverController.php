@@ -134,7 +134,7 @@ class DriverController
         } catch (\Throwable $e) {
             Router::$response->status(400)->json([
                 "message" => "No se pudo calcular la tarifa",
-                "error" => $e->getMessage()
+                "error" => 'No se pudo completar la operación'
             ]);
             return;
         }
@@ -202,8 +202,8 @@ class DriverController
                     "estimated_fare" => (string)$estimatedFare,
                     "user_id" => (string)$userId,
                 ]);
-                if (!$ok) {
-                    $this->deviceTokenModel->deactivateToken($fcmToken);
+                if (!$ok && FcmService::lastTokenWasUnregistered()) {
+                    $this->deviceTokenModel->deactivateTokenForUser((int)$driverId, $fcmToken);
                 }
             }
         } catch (\Exception $e) {

@@ -12,6 +12,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     protected $groupCalls = [];
     protected $statusManager;
     protected $userTimers = [];
+    protected $offlineTimers = [];
     protected $chatModel;
     protected $usersModel;
     protected $profileModel;
@@ -30,6 +31,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         $this->initializeProfileModel();
         $this->initializeDeviceTokenModel();
         $this->initializeRedisPubSub($loop);
+        $this->calls = new \App\Services\CallRegistry(\App\Configs\Database::getInstance()->getConnection());
         echo "🚀 SignalServer refactorizado inicializado\n";
     }
 
@@ -162,6 +164,13 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
 
         try {
+            if (!in_array($type, ['identify', 'auth', 'ping'], true)) {
+                if (empty($from->sessionToken)) throw new \RuntimeException('Autenticación requerida');
+                \App\Services\SessionAuth::authenticate($from->sessionToken);
+                $chatId = $this->normalizeChatId($data);
+                if ($chatId && in_array($type, ['join_chat','typing','mark_as_read','chat_message','file_upload','image_upload'], true)
+                    && (!$this->chatModel || !$this->chatModel->userInChat($chatId, $from->userId))) throw new \RuntimeException('Chat no autorizado');
+            }
             switch ($type) {
                 case 'identify':
                     $this->handleIdentify($from, $data);
@@ -410,6 +419,12 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
 
         $connId = $conn->resourceId;
+
+        if (isset($this->offlineTimers[$userId])) {
+            \React\EventLoop\Loop::cancelTimer($this->offlineTimers[$userId]);
+            unset($this->offlineTimers[$userId]);
+        }
+
         $previousUserId = isset($conn->userId) ? (int)$conn->userId : 0;
         if ($previousUserId > 0 && $previousUserId !== $userId) {
             $this->removeConnectionFromUser($conn, $previousUserId, false);
@@ -456,62 +471,75 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
     private function handleIdentify(ConnectionInterface $from, array $data)
     {
-        $userId = isset($data['user_id']) ? (int)$data['user_id'] : 0;
-        if ($userId < 1) {
-            $this->sendError($from, 'identify requiere user_id');
-            return;
-        }
-
-        $this->bindConnectionToUser($from, $userId, $data['user_data'] ?? [], false, false);
-
-        $this->sendJson($from, [
-            'type' => 'identified',
-            'user_id' => $userId,
-            'connection_id' => $from->resourceId,
-            'timestamp' => $this->nowIso(),
-        ], false);
+        // Legacy identify contains only an ID: acknowledge no identity until signed auth arrives.
+        if (empty($data['token'])) return;
+        $this->handleAuth($from, $data);
     }
 
     private function handleAuth(ConnectionInterface $from, array $data)
     {
-        $userId = isset($data['user_id']) ? (int)$data['user_id'] : 0;
-        if ($userId < 1) {
-            $this->sendError($from, 'auth requiere user_id');
+        try {
+            $token = (string) ($data['token'] ?? '');
+            $claims = \App\Services\SessionAuth::authenticate($token);
+            $userId = (int) $claims->user_id;
+            if ($userId < 1 || (isset($data['user_id']) && (int) $data['user_id'] !== $userId)) {
+                throw new \RuntimeException('Identidad inválida');
+            }
+        } catch (\Throwable $e) {
+            $this->sendError($from, 'Sesión inválida o expirada', [], 'unauthorized');
+            $from->close();
             return;
         }
 
-        $this->bindConnectionToUser($from, $userId, $data['user_data'] ?? [], true, true);
+        // Un fallo operativo no equivale a una credencial rechazada.
+        $stage = 'bind';
+        try {
+            $from->sessionToken = $token;
+            if (!$this->bindConnectionToUser($from, $userId, [], true, true)) {
+                throw new \RuntimeException('No se pudo vincular la conexión');
+            }
+            $stage = 'replay';
+            $this->replayIncomingCalls($from, $userId);
+        } catch (\Throwable $e) {
+            // Solo metadatos: nunca mensajes de excepción, tokens, SQL ni SDP.
+            $driverCode = $e instanceof \PDOException ? ($e->errorInfo[1] ?? '') : '';
+            $driverCode = is_numeric($driverCode) ? (string) $driverCode : '';
+            error_log('TUANI_WS_POST_AUTH ' . json_encode([
+                'stage' => $stage, 'exception' => get_class($e),
+                'code' => (string) $e->getCode(), 'driver_code' => $driverCode,
+                'file' => basename($e->getFile()), 'line' => $e->getLine(),
+            ], JSON_UNESCAPED_SLASHES));
+            $this->sendError($from,
+                $stage === 'replay' ? 'No se pudieron recuperar las llamadas pendientes' : 'Conexión temporalmente no disponible',
+                [], $stage === 'replay' ? 'call_recovery_unavailable' : 'connection_unavailable');
+            if ($stage === 'bind') $from->close();
+        }
+    }
+
+
+    private function replayIncomingCalls(ConnectionInterface $conn, int $userId): void
+    {
+        foreach ($this->calls->incoming($userId) as $call) {
+            if (!$this->chatModel->userInChat($call['chat_id'], $userId)) continue;
+            $this->sendJson($conn, [
+                'type'=>'incoming_call', 'session_id'=>$call['call_id'], 'call_id'=>$call['call_id'],
+                'chat_id'=>$call['chat_id'], 'from'=>$call['caller_id'], 'to'=>$userId, 'target_user_id'=>$userId,
+                'caller_name'=>$call['caller_name'] ?? 'Usuario', 'call_type'=>$call['call_type'],
+                'sdp'=>$call['offer'], 'status'=>'ringing', 'expires_at'=>$call['created_at']+60,
+            ], false);
+            foreach (($call['caller_ice'] ?? []) as $candidate) $this->sendJson($conn, [
+                'type'=>'ice_candidate','session_id'=>$call['call_id'],'call_id'=>$call['call_id'],
+                'chat_id'=>$call['chat_id'],'from'=>$call['caller_id'],'to'=>$userId,'target_user_id'=>$userId,'candidate'=>$candidate,
+            ], false);
+        }
     }
 
     private function resolveSenderUserId(ConnectionInterface $conn, array $data = [])
     {
-        $boundUserId = isset($conn->userId) ? (int)$conn->userId : 0;
-        $declaredUserId = 0;
-        foreach (['user_id', 'from'] as $field) {
-            if (isset($data[$field]) && is_numeric($data[$field])) {
-                $declaredUserId = (int)$data[$field];
-                break;
-            }
-        }
-
-        if ($boundUserId > 0 && $declaredUserId > 0 && $boundUserId !== $declaredUserId) {
-            $this->sendError($conn, 'user_id no coincide con la conexión', [
-                'bound_user_id' => $boundUserId,
-                'declared_user_id' => $declaredUserId,
-            ], 'invalid_user');
-            return null;
-        }
-
-        if ($boundUserId > 0) {
-            return $boundUserId;
-        }
-
-        if ($declaredUserId > 0) {
-            $this->bindConnectionToUser($conn, $declaredUserId, [], false, false);
-            return $declaredUserId;
-        }
-
-        return null;
+        if (empty($conn->sessionToken) || empty($conn->authenticated)) return null;
+        $id = (int) ($conn->userId ?? 0);
+        foreach (['user_id','from'] as $field) if (isset($data[$field]) && (int) $data[$field] !== $id) return null;
+        return $id > 0 ? $id : null;
     }
 
     private function normalizeTargetUserId(array $data)
@@ -654,26 +682,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
     private function sendToUserPreferred($userId, $preferredConnId, array $payload, ConnectionInterface $excludeConnection = null)
     {
-        $targets = $this->getPreferredUserTargets($userId, $preferredConnId);
-        $sent = $this->sendToConnections($targets, $payload, $excludeConnection);
-
-        if ($sent === 0 && $preferredConnId !== null) {
-            $sent = $this->sendToUser($userId, $payload, $excludeConnection);
-        }
-
-        if ($this->isSignalPayloadType($payload['type'] ?? '')) {
-            $this->traceSignal('route_user_preferred', [
-                'type' => $payload['type'] ?? 'unknown',
-                'call_id' => $payload['call_id'] ?? ($payload['session_id'] ?? null),
-                'user_id' => (int)$userId,
-                'preferred_conn_id' => $preferredConnId,
-                'target_conn_ids' => array_keys($targets),
-                'exclude_conn_id' => $excludeConnection ? $excludeConnection->resourceId : null,
-                'sent' => $sent,
-            ]);
-        }
-
-        return $sent;
+        return $this->sendToUser($userId, $payload, $excludeConnection);
     }
 
     private function handlePing(ConnectionInterface $from)
@@ -1218,12 +1227,10 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             if ((int)$participantId === (int)$senderId) {
                 continue;
             }
-            if (!empty($this->getConnectionsForUser($participantId))) {
-                continue;
-            }
 
             $this->sendFcmToUser($participantId, [
                 'type' => 'new_message',
+                'message_id' => (string) ($messageData['message_id'] ?? $messageData['id'] ?? ''),
                 'chat_id' => (string)$chatId,
                 'sender_name' => $senderName,
                 'body' => $this->getMessagePreview($messageData['contenido'] ?? '', $messageData['tipo'] ?? 'texto'),
@@ -1633,38 +1640,14 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
     private function sendFcmToUser($userId, array $data)
     {
-        if (!class_exists("App\\Services\\FcmService")) {
-            return;
-        }
-        $tokens = [];
-        if ($this->deviceTokenModel) {
-            try {
-                $tokens = $this->deviceTokenModel->getActiveTokensForUser((int)$userId);
-                $this->logToFile("🔎 sendFcmToUser: {$userId} tiene " . count($tokens) . " token(s) activo(s) en device_tokens");
-            } catch (\Throwable $e) {
-                $this->logToFile("❌ Error obteniendo device_tokens para {$userId}: {$e->getMessage()}");
+        try {
+            if (!$this->deviceTokenModel) return;
+            $queue = new \App\Services\PushOutbox(\App\Configs\Database::getInstance()->getConnection());
+            foreach ($this->deviceTokenModel->getActiveTokensForUser((int) $userId) as $device) {
+                $queue->enqueue((int) $userId, (string) $device['fcm_token'], $data, time());
             }
-        }
-        if (empty($tokens) && $this->usersModel) {
-            $legacy = $this->usersModel->getFcmToken((int)$userId);
-            if ($legacy) {
-                $tokens = [["fcm_token" => $legacy]];
-            }
-        }
-        foreach ($tokens as $row) {
-            $fcmToken = $row["fcm_token"] ?? null;
-            if (!$fcmToken) {
-                continue;
-            }
-            try {
-                $ok = \App\Services\FcmService::sendDataMessage($fcmToken, $data);
-                $this->logToFile("📤 FCM enviado a token " . substr($fcmToken, 0, 20) . "... resultado: " . ($ok ? "OK" : "FALLO"));
-                if (!$ok && $this->deviceTokenModel) {
-                    $this->deviceTokenModel->deactivateToken($fcmToken);
-                }
-            } catch (\Throwable $e) {
-                $this->logToFile("❌ Error enviando FCM a {$userId}: {$e->getMessage()}");
-            }
+        } catch (\Throwable $e) {
+            $this->logToFile('No se pudo encolar el aviso push; revisar worker y migración push_outbox.');
         }
     }
     private function buildCall(array $data, $callerId, $calleeId, ConnectionInterface $from)
@@ -1680,6 +1663,8 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'caller_id' => (int)$callerId,
             'callee_id' => (int)$calleeId,
             'caller_conn_id' => $from->resourceId,
+            'caller_instance' => $this->instanceId,
+            'caller_name' => $this->getUserDisplayName($callerId),
             'callee_conn_id' => null,
             'call_type' => (($data['call_type'] ?? 'audio') === 'video') ? 'video' : 'audio',
             'status' => 'ringing',
@@ -1702,14 +1687,14 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
 
         $this->calls[$callId] = $call;
-        return $call;
+        return $this->calls[$callId];
     }
 
     private function touchCall(array $call)
     {
         $call['updated_at'] = time();
         $this->calls[$call['call_id']] = $call;
-        return $call;
+        return $this->calls[$call['call_id']];
     }
 
     private function getCallSignalTargets(array $call, $fromUserId, $preferAcceptedPeer = true)
@@ -1852,6 +1837,11 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             return;
         }
 
+        if ($callerId === $calleeId || !$this->chatModel || !$this->chatModel->userInChat($chatId, $callerId) || !$this->chatModel->userInChat($chatId, $calleeId)) {
+            $this->sendError($from, 'Participantes no autorizados para esta conversación');
+            return;
+        }
+
         $call = $this->buildCall($data, $callerId, $calleeId, $from);
         $callerName = trim((string)($data['caller_name'] ?? $this->getUserDisplayName($callerId)));
         $isGroupLeg = !empty($data['is_group_leg']);
@@ -1893,11 +1883,12 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'timestamp' => $this->nowIso(),
         ], false);
 
-        if ($sentToPeer === 0) {
+        if (!$isGroupLeg) {
             $this->sendFcmToUser($calleeId, [
                 'type' => 'incoming_call',
                 'caller_name' => $callerName !== '' ? $callerName : 'Usuario',
                 'session_id' => (string)$call['session_id'],
+                'expires_at' => (string) ($call['created_at'] + 60),
                 'chat_id' => (string)$chatId,
                 'from' => (string)$callerId,
                 'call_type' => $call['call_type'],
@@ -1944,6 +1935,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
         $call['status'] = 'accepted';
         $call['callee_conn_id'] = $from->resourceId;
+        $call['callee_instance'] = $this->instanceId;
         $call['answer'] = $answer;
         $call = $this->touchCall($call);
 
@@ -2003,7 +1995,8 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
         $call['status'] = 'accepted';
         $call['callee_conn_id'] = $from->resourceId;
-        $this->calls[$callId] = $this->touchCall($call);
+        $call['callee_instance'] = $this->instanceId;
+        $this->touchCall($call);
 
         $this->sendToUserPreferred($call['caller_id'], $call['caller_conn_id'] ?? null, [
             'type' => 'call_status',
@@ -2057,21 +2050,10 @@ class SignalServer implements \Ratchet\MessageComponentInterface
 
             $targets = $this->getCallSignalTargets($call, $fromUserId, true);
         } else {
-            if (!$targetUserId) {
-                $this->sendError($from, 'No se pudo resolver target_user_id para candidate');
-                return;
-            }
-            $targets = $this->getConnectionsForUser($targetUserId);
-        }
-
-        if (empty($targets)) {
-            $this->traceSignal('candidate_no_target', [
-                'call_id' => $callId,
-                'from_user_id' => $fromUserId,
-                'target_user_id' => $targetUserId,
-            ]);
+            $this->sendError($from, 'Llamada no encontrada', ['call_id'=>$callId], 'call_not_found');
             return;
         }
+        $this->calls->addCandidate((string)$callId, (int)$fromUserId, $candidate);
 
         $payload = [
             'type' => 'ice_candidate',
@@ -2086,7 +2068,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             'timestamp' => $this->nowIso(),
         ];
 
-        $sent = $this->sendToConnections($targets, $payload);
+        $sent = $this->sendToUser($targetUserId, $payload);
         $this->traceSignal('sent_candidate', [
             'call_id' => $callId,
             'from_user_id' => $fromUserId,
@@ -2192,31 +2174,7 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         }
 
         $call = $this->calls[$callId] ?? null;
-        if (!$call) {
-            $targetUserId = $this->normalizeTargetUserId($data);
-            if ($targetUserId) {
-                $sent = $this->sendToUser($targetUserId, [
-                    'type' => 'call_ended',
-                    'call_id' => $callId,
-                    'session_id' => $callId,
-                    'chat_id' => $this->normalizeChatId($data),
-                    'from' => $endedBy,
-                    'to' => $targetUserId,
-                    'target_user_id' => $targetUserId,
-                    'reason' => $reason,
-                    'timestamp' => $this->nowIso(),
-                ]);
-
-                $this->traceSignal('forward_call_ended_without_call', [
-                    'call_id' => $callId,
-                    'ended_by' => $endedBy,
-                    'target_user_id' => $targetUserId,
-                    'sent' => $sent,
-                    'reason' => $reason,
-                ]);
-            }
-            return;
-        }
+        if (!$call) return;
 
         if ($endedBy !== (int)$call['caller_id'] && $endedBy !== (int)$call['callee_id']) {
             return;
@@ -2345,12 +2303,34 @@ class SignalServer implements \Ratchet\MessageComponentInterface
         if (empty($this->userConnections[$userId])) {
             unset($this->userConnections[$userId]);
             if ($notifyOffline) {
-                $offlineData = $this->statusManager->setOffline($connId, true);
-                if ($offlineData) {
-                    $this->notifyUserStatusChange($userId, 'offline', $offlineData);
-                }
+                $this->scheduleOfflineCheck($userId, $connId);
             }
         }
+    }
+
+    /**
+     * Da un margen de gracia antes de marcar offline: si el usuario reconecta
+     * dentro de este plazo (cierre breve de app, cambio de red, el SO mata la
+     * conexion en background), nunca se notifica como desconectado.
+     */
+    private function scheduleOfflineCheck($userId, $connId, $graceSeconds = 45)
+    {
+        if (isset($this->offlineTimers[$userId])) {
+            \React\EventLoop\Loop::cancelTimer($this->offlineTimers[$userId]);
+        }
+
+        $this->offlineTimers[$userId] = \React\EventLoop\Loop::addTimer($graceSeconds, function () use ($userId, $connId) {
+            unset($this->offlineTimers[$userId]);
+
+            if (!empty($this->userConnections[$userId])) {
+                return;
+            }
+
+            $offlineData = $this->statusManager->setOffline($connId, true);
+            if ($offlineData) {
+                $this->notifyUserStatusChange($userId, 'offline', $offlineData);
+            }
+        });
     }
 
     private function removeConnectionFromSessions(ConnectionInterface $conn, $userId = null)
@@ -2411,18 +2391,18 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             $callerConnId = $call['caller_conn_id'] ?? null;
             $calleeConnId = $call['callee_conn_id'] ?? null;
 
-            if ((string)$callerConnId === (string)$conn->resourceId) {
+            if (($call['caller_instance'] ?? '') === $this->instanceId && (string)$callerConnId === (string)$conn->resourceId) {
                 $this->endCallDueToConnection($conn, $call, 'caller_disconnected');
                 continue;
             }
 
-            if ($calleeConnId !== null && (string)$calleeConnId === (string)$conn->resourceId) {
+            if (($call['callee_instance'] ?? '') === $this->instanceId && $calleeConnId !== null && (string)$calleeConnId === (string)$conn->resourceId) {
                 $this->endCallDueToConnection($conn, $call, 'callee_disconnected');
                 continue;
             }
 
             if ($userId > 0 && (int)$call['callee_id'] === $userId && ($call['status'] ?? '') === 'ringing' && empty($this->getConnectionsForUser($userId))) {
-                $this->endCallDueToConnection($conn, $call, 'recipient_offline');
+                // Keep ringing until its deadline: push can wake the recipient and recover this call.
             }
         }
 
@@ -2466,6 +2446,10 @@ class SignalServer implements \Ratchet\MessageComponentInterface
     {
         try {
             $messageData = json_decode($notification['message_data'] ?? '{}', true);
+            if (!empty($messageData['feature_origin']) || ($notification['message_type'] ?? '') === 'chat_feature_update') {
+                $claimed = $this->chatModel->query("UPDATE websocket_notifications SET status='processed',processed_at=NOW() WHERE id=? AND status='pending'", [$notification['id']]);
+                if ((int)$claimed !== 1) return;
+            }
             if (!is_array($messageData)) {
                 $this->markAsProcessed($notification['id'], 'error');
                 return;
@@ -2478,7 +2462,8 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 'contenido' => $messageData['contenido'] ?? $messageData['file_original_name'] ?? 'Archivo',
                 'tipo' => $messageData['tipo'] ?? (($notification['message_type'] ?? '') === 'image_upload' ? 'imagen' : 'archivo'),
                 'timestamp' => $notification['created_at'] ?? $this->nowIso(),
-                'message_id' => $notification['id'],
+                'message_id' => $messageData['message_id'] ?? $messageData['id'] ?? $notification['id'],
+                'id' => $messageData['message_id'] ?? $messageData['id'] ?? $notification['id'],
                 'file_url' => $messageData['file_url'] ?? '',
                 'file_original_name' => $messageData['file_original_name'] ?? '',
                 'file_size' => $messageData['file_size'] ?? 0,
@@ -2487,7 +2472,14 @@ class SignalServer implements \Ratchet\MessageComponentInterface
             ];
 
             $this->broadcastToChat($payload['chat_id'], $payload);
-            $this->notifyChatListUpdate($payload['chat_id'], $payload);
+            if ($payload['type'] !== 'chat_feature_update') $this->notifyChatListUpdate($payload['chat_id'], $payload);
+            if (!empty($messageData['feature_origin'])) {
+                $this->updateUnreadCounts($payload['chat_id'], $payload['user_id']);
+                if (empty($messageData['view_once'])) {
+                    $this->maybeSendUnavailableAutoReply($payload['chat_id'], $payload['user_id']);
+                    $this->forwardToN8nIfActive($payload['chat_id'], $payload['user_id'], $payload['contenido'], $payload['message_id']);
+                }
+            }
             $this->markAsProcessed($notification['id'], 'processed');
         } catch (\Throwable $e) {
             $this->logToFile("❌ Error procesando notificación {$notification['id']}: {$e->getMessage()}");
@@ -2552,8 +2544,8 @@ class SignalServer implements \Ratchet\MessageComponentInterface
                 continue;
             }
 
-            if ($status === 'ringing' && ($now - $updatedAt) > 60) {
-                $call = $this->markCallEnded($callId, 'timeout', $call['caller_id'] ?? null);
+            if ($status === 'ringing' && ($now - (int)$call['created_at']) >= 60) {
+                $call = $this->calls->expireRinging((string)$callId, $now);
                 if ($call) {
                     $this->sendToUserPreferred($call['caller_id'], $call['caller_conn_id'] ?? null, [
                         'type' => 'call_ended',

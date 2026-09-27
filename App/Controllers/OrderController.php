@@ -25,8 +25,8 @@ class OrderController
     }
 
     /**
-     * Crear pedido de comida y cobrar de inmediato (link Square).
-     * El restaurante solo ve el pedido cuando el webhook marca status=paid.
+     * Crear pedido de comida y cobrar de forma atómica con Wallet.
+     * El restaurante recibe únicamente pedidos con pago confirmado.
      */
     public function createFoodOrder()
     {
@@ -35,15 +35,16 @@ class OrderController
         } catch (\Throwable $e) {
             error_log("OrderController createFoodOrder: " . $e->getMessage() . "\n" . $e->getTraceAsString());
             Router::$response->json([
-                "message" => "Error al crear el pedido",
-                "detail" => $e->getMessage()
-            ], 500);
+                "message" => $e instanceof \DomainException || $e instanceof \InvalidArgumentException ? $e->getMessage() : "Error al crear el pedido",
+                "detail" => "No se completó el pedido. No vuelvas a pagar con un método externo."
+            ], $e instanceof \DomainException ? 402 : ($e instanceof \InvalidArgumentException ? 422 : 500));
         }
     }
 
     private function createFoodOrderInternal()
     {
         $body = json_decode(file_get_contents('php://input'), true);
+        if (!is_array($body)) throw new \InvalidArgumentException('Solicitud inválida');
 
         // Comprador autenticado (opcional) o invitado solo con teléfono
         $user = Router::$request->user ?? null;
@@ -51,10 +52,15 @@ class OrderController
         $guestEmail = trim((string)($body['guest_email'] ?? ''));
         $restaurantId = (int)($body['restaurantId'] ?? 0);
         $items = $body['items'] ?? [];
-        $total = (float)($body['total'] ?? 0);
+        $total = 0.0;
         $deliveryPhone = trim((string)($body['delivery_phone'] ?? ''));
 
-        if (!$restaurantId || empty($items) || $total <= 0) {
+        if (!$userId) { Router::$response->json(['message' => 'Inicia sesión para pagar con tu Wallet.'], 401); return; }
+        $requestKey = (string) ($_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? '');
+        $intent = $body;
+        $completed = (new \App\Services\WalletCheckout())->completed((int) $userId, 'food', $requestKey, $intent);
+        if ($completed !== null) { Router::$response->json($completed, 200); return; }
+        if (!$restaurantId || !is_array($items) || empty($items) || count($items) > 100) {
             Router::$response->json([
                 "message" => "Campos obligatorios: restaurantId, items, total"
             ], 400);
@@ -81,17 +87,6 @@ class OrderController
             if ($guestEmail !== '' && !filter_var($guestEmail, FILTER_VALIDATE_EMAIL)) {
                 $guestEmail = '';
             }
-        }
-
-        $restaurant = $this->restaurantModel->getRestaurantById($restaurantId);
-        if (!$restaurant) {
-            Router::$response->json(["message" => "Restaurante no encontrado"], 404);
-            return;
-        }
-
-        if ($total <= 0) {
-            Router::$response->json(["message" => "El total debe ser mayor a 0"], 400);
-            return;
         }
 
         $isDelivery = !empty($body['delivery']);
@@ -137,7 +132,37 @@ class OrderController
             $reservationAt = date('Y-m-d H:i:s', $ts);
         }
 
-        $orderId = $this->orderModel->create([
+        $requestKey = (string) ($_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? '');
+        $intent = $body;
+        $result = (new \App\Services\WalletCheckout())->run((int) $userId, 'food', $requestKey, $intent, function () use ($userId, $restaurantId, $items, $isDelivery, $body, $deliveryPhone, $orderType, $reservationAt, $guestEmail) {
+        $db = \App\Configs\Database::getInstance()->getConnection();
+        $stmt = $db->prepare('SELECT * FROM restaurantes WHERE id = ? FOR UPDATE');
+        $stmt->execute([$restaurantId]);$restaurant = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if (!$restaurant) {
+            throw new \DomainException('Restaurante no encontrado');
+        }
+
+        $normalizedItems = [];
+        $totalCents = 0;
+        foreach ($items as $item) {
+            $quantity = filter_var($item['quantity'] ?? null, FILTER_VALIDATE_INT);
+            $stmt = $db->prepare('SELECT * FROM platos WHERE restaurant_id = ? AND id = ? AND activo = 1 FOR UPDATE');
+            $stmt->execute([$restaurantId, (int) ($item['id'] ?? 0)]);$dish = $stmt->fetch(\PDO::FETCH_ASSOC);
+            if (!$dish || empty($dish['disponible']) || !$quantity || $quantity < 1 || $quantity > 100) {
+                throw new \DomainException('Un plato no está disponible o la cantidad no es válida.');
+            }
+            $priceCents = \App\Services\UsdMoney::cents($dish['precio']);
+            $totalCents += $priceCents * $quantity;
+            $normalizedItems[] = ['id' => (int) $dish['id'], 'name' => $dish['nombre'], 'price' => (float) \App\Services\UsdMoney::decimal($priceCents), 'quantity' => $quantity];
+        }
+        $items = $normalizedItems;
+        $total = (float) \App\Services\UsdMoney::decimal($totalCents);
+        if (\App\Services\UsdMoney::cents($body['total'] ?? null) !== $totalCents) {
+            throw new \DomainException('El precio del menú cambió. Actualiza el carrito antes de confirmar.');
+        }
+
+
+            $orderId = $this->orderModel->create([
             'user_id' => $userId,
             'guest_email' => $userId ? null : ($guestEmail !== '' ? $guestEmail : null),
             'restaurant_id' => $restaurantId,
@@ -153,127 +178,30 @@ class OrderController
             'reservation_at' => $reservationAt
         ]);
 
-        if (!$orderId) {
-            Router::$response->json(["message" => "Error al crear el pedido"], 500);
-            return;
+
+            if (!$orderId) throw new \RuntimeException('No se pudo crear el pedido');
+            $debit = (new WalletModel())->debitForPurchase((int) $userId, $total, 'food_order_' . $orderId);
+            if (!$debit['success']) throw new \DomainException($debit['message']);
+            (new \App\Services\CommerceSettlement())->hold('food_order_' . $orderId, $debit['transaction_id'], (int) $restaurant['user_id']);
+            if (!$this->orderModel->markAsPaid($orderId)) throw new \RuntimeException('No se pudo registrar el pago');
+            $db = \App\Configs\Database::getInstance()->getConnection();
+            $stmt = $db->prepare('INSERT INTO food_wallet_payments (order_id, user_id, amount) VALUES (?, ?, ?)');
+            $stmt->execute([$orderId, $userId, $total]);
+            return ['orderId' => $orderId, 'paid_via_wallet' => true, 'new_balance' => $debit['new_balance'], 'total' => $total, 'currency' => 'USD'];
+        });
+        if (empty($result['replayed'])) {
+            try { (new ReceiptModel())->createAndNotify((int) $userId, 'food_order', $result['orderId'], $result['total'], 'wallet', 'Pedido de comida #' . $result['orderId']); }
+            catch (\Throwable $e) { error_log('Food receipt pending: ' . $e->getMessage()); }
         }
-
-        // Cobro inmediato: crear link Square y devolverlo al cliente
-        $order = $this->orderModel->getById($orderId);
-        $square = $this->createSquarePaymentLink($orderId, $order, $restaurant);
-
-        if (empty($square['url']) || empty($square['id'])) {
-            $this->orderModel->deleteUnpaid($orderId);
-            Router::$response->json([
-                "message" => "No se pudo iniciar el pago. Intentá de nuevo.",
-                "detail" => $square['error'] ?? 'Square payment link no disponible'
-            ], 502);
-            return;
-        }
-
-        $this->orderModel->updatePaymentLink($orderId, $square['url'], $square['id']);
-
-        Router::$response->json([
-            "message" => "Pedido creado. Completá el pago para enviarlo al restaurante.",
-            "orderId" => $orderId,
-            "paymentUrl" => $square['url']
-        ], 201);
+        Router::$response->json($result + ['message' => 'Pedido pagado con Wallet y enviado al restaurante.'], 201);
     }
 
     /**
      * Crea un payment link de Square (quick_pay) para un food order.
      * @return array{url:?string,id:?string,error:?string}
      */
-    private function createSquarePaymentLink(int $orderId, ?array $order, ?array $restaurant): array
-    {
-        $appEnv = isset($_ENV['APP_ENV']) ? strtolower((string) $_ENV['APP_ENV']) : '';
-        $isProd = ($appEnv === 'production');
 
-        if ($isProd) {
-            $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_PROD'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
-            $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_PROD'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
-        } else {
-            $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_SANDBOX'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
-            $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_SANDBOX'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
-        }
-        $locationId = preg_replace('/[^a-zA-Z0-9_-]/', '', trim($locationId));
 
-        $sandboxEnv = $_ENV['SQUARE_SANDBOX'] ?? '';
-        $sandbox = ($sandboxEnv === 'true' || $sandboxEnv === '1') ? true : !$isProd;
-        $squareBaseUrl = $sandbox ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com';
-
-        if (empty($accessToken) || empty($locationId)) {
-            return [
-                'url' => null,
-                'id' => null,
-                'error' => empty($accessToken) ? 'SQUARE_ACCESS_TOKEN no configurado' : 'SQUARE_LOCATION_ID no configurado'
-            ];
-        }
-
-        $amountCents = (int) round((float) ($order['total'] ?? 0) * 100);
-        if ($amountCents <= 0) {
-            return ['url' => null, 'id' => null, 'error' => 'Total inválido para cobro'];
-        }
-
-        $currency = strtoupper((string) ($order['currency'] ?? 'USD'));
-        $idempotencyKey = uniqid('food_', true);
-        $postData = [
-            "idempotency_key" => $idempotencyKey,
-            "quick_pay" => [
-                "name" => "Pedido #{$orderId} Tuani Eats - " . ($restaurant['nombre'] ?? 'Restaurante'),
-                "price_money" => [
-                    "amount" => $amountCents,
-                    "currency" => $currency
-                ],
-                "location_id" => $locationId
-            ]
-        ];
-
-        $ch = curl_init($squareBaseUrl . "/v2/online-checkout/payment-links");
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            "Content-Type: application/json",
-            "Authorization: Bearer $accessToken",
-            "Square-Version: 2024-11-20"
-        ]);
-        curl_setopt($ch, CURLOPT_POST, 1);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-
-        $response = curl_exec($ch);
-        $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlError = curl_error($ch);
-        curl_close($ch);
-
-        $this->paymentLog("createSquarePaymentLink HTTP", $httpcode);
-        $this->paymentLog("createSquarePaymentLink RESP", substr($response ?: '', 0, 800));
-
-        $result = is_string($response) ? json_decode($response, true) : [];
-        $paymentLinkUrl = $result['payment_link']['url'] ?? null;
-        $squarePaymentLinkId = $result['payment_link']['id'] ?? null;
-
-        $error = null;
-        if ($curlError) {
-            $error = $curlError;
-        } elseif (($httpcode !== 200 && $httpcode !== 201) || !$paymentLinkUrl) {
-            if (!empty($result['errors']) && is_array($result['errors'])) {
-                $first = $result['errors'][0] ?? [];
-                $error = ($first['code'] ?? '') . ': ' . ($first['detail'] ?? $first['message'] ?? json_encode($first));
-            } else {
-                $error = 'Square no devolvió payment link';
-            }
-        }
-
-        return [
-            'url' => $paymentLinkUrl,
-            'id' => $squarePaymentLinkId,
-            'error' => $error
-        ];
-    }
-
-    /**
-     * Obtener pedidos de un restaurante (solo propietario)
-     */
     public function getOrdersByRestaurant($restaurantId)
     {
         $restaurantId = (int)$restaurantId;
@@ -327,7 +255,7 @@ class OrderController
     
     /**
      * Confirmar pedido (solo propietario del restaurante).
-     * Crea link de pago Square y envía email al comprador.
+     * Confirma un pedido ya pagado sin generar otro cobro.
      */
     public function confirmOrder($orderId)
     {
@@ -338,283 +266,69 @@ class OrderController
             error_log("OrderController confirmOrder: " . $e->getMessage() . "\n" . $e->getTraceAsString());
             Router::$response->json([
                 "message" => "Error al confirmar el pedido",
-                "detail" => $e->getMessage()
+                "detail" => 'No se pudo completar la operación'
             ], 500);
         }
     }
 
     private function confirmOrderInternal($orderId)
     {
-    $this->paymentLog("==== confirmOrder START ====", $orderId);
-
-    $orderId = (int)$orderId;
-    $userId = Router::$request->user->id ?? null;
-
-    $this->paymentLog("UserId", $userId);
-
-    if (!$userId) {
-        $this->paymentLog("ERROR: No autenticado");
-        Router::$response->json(["message" => "No autenticado"], 401);
-        return;
-    }
-
-    if (!$this->orderModel->belongsToRestaurantOwner($orderId, $userId)) {
-        $this->paymentLog("ERROR: No pertenece al restaurante");
-        Router::$response->json(["message" => "No tienes permisos"], 403);
-        return;
-    }
-
-    $order = $this->orderModel->getById($orderId);
-    $this->paymentLog("Order", $order);
-
-    if (!$order) {
-        $this->paymentLog("ERROR: Pedido no encontrado");
-        Router::$response->json(["message" => "Pedido no encontrado"], 404);
-        return;
-    }
-
-    $ok = $this->orderModel->confirmOrder($orderId, $order['restaurant_id']);
-    $this->paymentLog("ConfirmOrder DB result", $ok);
-
-    if (!$ok) {
-        Router::$response->json(["message" => "No se pudo confirmar"], 400);
-        return;
-    }
-
-    // Despacho automatico a conductores cercanos si es delivery
-    if (($order['order_type'] ?? '') === 'delivery' && !empty($restaurantId = $order['restaurant_id'])) {
-        $this->dispatchDeliveryDrivers($orderId, $order);
-    }
-
-    // ================== COBRO ==================
-    // Usuarios logueados: se cobra del wallet interno, es el unico metodo de pago.
-    // Invitados sin cuenta (sin wallet propio): siguen el flujo viejo de Square por email.
-    $isGuestOrder = empty($order['user_id']);
-    $paidViaWallet = false;
-    $walletErrorDetail = null;
-
-    if (!$isGuestOrder) {
-        $walletModel = new WalletModel();
-        $walletResult = $walletModel->debitForPurchase((int) $order['user_id'], (float) $order['total'], 'food_order_' . $orderId);
-        if ($walletResult['success']) {
-            $this->orderModel->markAsPaid($orderId);
-            $paidViaWallet = true;
-            $receiptModel = new ReceiptModel();
-            $receiptModel->createAndNotify(
-                (int) $order['user_id'],
-                'food_order',
-                $orderId,
-                (float) $order['total'],
-                'wallet',
-                'Pedido de comida #' . $orderId
-            );
-            $this->paymentLog("Pagado con wallet", $walletResult['new_balance']);
-        } else {
-            $walletErrorDetail = $walletResult['message'];
-            $this->paymentLog("Wallet insuficiente", $walletErrorDetail);
+        $orderId = (int) $orderId;
+        $userId = (int) (Router::$request->user->id ?? 0);
+        if (!$userId || !$this->orderModel->belongsToRestaurantOwner($orderId, $userId)) {
+            Router::$response->json(['message' => 'No tienes permisos.'], 403); return;
         }
-    }
-
-    $paymentLinkUrl = null;
-    $squarePaymentLinkId = null;
-    $squareErrorDetail = null;
-
-    if ($isGuestOrder) {
-    // ================== SQUARE (solo pedidos de invitados sin cuenta) ==================
-    // Soporte: SQUARE_ACCESS_TOKEN / SQUARE_LOCATION_ID o bien _PROD / _SANDBOX según APP_ENV
-    $appEnv = isset($_ENV['APP_ENV']) ? strtolower((string) $_ENV['APP_ENV']) : '';
-    $isProd = ($appEnv === 'production');
-
-    if ($isProd) {
-        $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_PROD'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
-        $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_PROD'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
-    } else {
-        $accessToken = trim((string) ($_ENV['SQUARE_ACCESS_TOKEN_SANDBOX'] ?? $_ENV['SQUARE_ACCESS_TOKEN'] ?? ''));
-        $locationId = (string) ($_ENV['SQUARE_LOCATION_ID_SANDBOX'] ?? $_ENV['SQUARE_LOCATION_ID'] ?? '');
-    }
-    // Square solo acepta location_id con letras, números, guión y guión bajo; quitar todo lo demás
-    $locationId = preg_replace('/[^a-zA-Z0-9_-]/', '', trim($locationId));
-
-    $sandboxEnv = $_ENV['SQUARE_SANDBOX'] ?? '';
-    $sandbox = ($sandboxEnv === 'true' || $sandboxEnv === '1') ? true : !$isProd;
-    $squareBaseUrl = $sandbox ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com';
-
-    $this->paymentLog("Square token present", !empty($accessToken));
-    $this->paymentLog("Square location", $locationId);
-    $this->paymentLog("Square sandbox", $sandbox);
-
-    $restaurant = $this->restaurantModel->getRestaurantById($order['restaurant_id']);
-
-    $paymentLinkUrl = null;
-    $squarePaymentLinkId = null;
-    $squareErrorDetail = null;
-
-    if (!empty($accessToken) && !empty($locationId)) {
-        // La app envía el total en dólares y currency USD; Square recibe eso tal cual
-        $amountCents = (int) round((float) $order['total'] * 100);
-        $currency = strtoupper((string)($order['currency'] ?? 'USD'));
-        $idempotencyKey = uniqid('food_', true);
-        $locationIdForSquare = preg_replace('/[^a-zA-Z0-9_-]/', '', trim((string) $locationId));
-        $this->paymentLog("Square location_id ENVIADO (length " . strlen($locationIdForSquare) . ")", $locationIdForSquare);
-
-        $postData = [
-            "idempotency_key" => $idempotencyKey,
-            "quick_pay" => [
-                "name" => "Pedido #{$orderId} Tuani Eats - " . ($restaurant['nombre'] ?? 'Restaurante'),
-                "price_money" => [
-                    "amount" => $amountCents,
-                    "currency" => $currency
-                ],
-                "location_id" => $locationIdForSquare
-            ]
-        ];
-
-        $ch = curl_init($squareBaseUrl . "/v2/online-checkout/payment-links");
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            "Content-Type: application/json",
-            "Authorization: Bearer $accessToken",
-            "Square-Version: 2024-11-20"
-        ]);
-        curl_setopt($ch, CURLOPT_POST, 1);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postData));
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-
-        $response = curl_exec($ch);
-        $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $curlError = curl_error($ch);
-        curl_close($ch);
-
-        $this->paymentLog("Square HTTP CODE", $httpcode);
-        $this->paymentLog("Square RESPONSE", substr($response ?: '', 0, 800));
-        if ($curlError) {
-            $this->paymentLog("Square CURL ERROR", $curlError);
-            $squareErrorDetail = $curlError;
+        $order = $this->orderModel->getById($orderId);
+        if (!$order || !in_array($order['status'], ['paid', 'confirmed'], true)) {
+            Router::$response->json(['message' => 'El pedido todavía no tiene un pago confirmado.'], 409); return;
         }
-
-        $result = is_string($response) ? json_decode($response, true) : [];
-        $paymentLinkUrl = $result['payment_link']['url'] ?? null;
-        $squarePaymentLinkId = $result['payment_link']['id'] ?? null;
-
-        if (($httpcode !== 200 && $httpcode !== 201) || !$paymentLinkUrl) {
-            $squareErrorDetail = $squareErrorDetail ?? '';
-            if (!empty($result['errors']) && is_array($result['errors'])) {
-                $first = $result['errors'][0] ?? [];
-                $squareErrorDetail = ($first['code'] ?? '') . ': ' . ($first['detail'] ?? $first['message'] ?? json_encode($first));
-            }
+        if ($order['status'] === 'confirmed') {
+            Router::$response->json(['message' => 'El pedido ya estaba confirmado.', 'data' => $order], 200); return;
         }
-    } else {
-        $squareErrorDetail = empty($accessToken) ? 'SQUARE_ACCESS_TOKEN no configurado' : 'SQUARE_LOCATION_ID no configurado';
-    }
-
-    if ($paymentLinkUrl && $squarePaymentLinkId) {
-        $this->orderModel->updatePaymentLink($orderId, $paymentLinkUrl, $squarePaymentLinkId);
-        $this->paymentLog("PaymentLink", $paymentLinkUrl);
-    }
-    } // fin bloque Square (solo invitados)
-
-    // ================== EMAIL (siempre si hay comprador: con link, pagado, o aviso de saldo insuficiente) ==================
-
-    $buyerEmail = $order['user_email'] ?? null;
-
-    if (!$buyerEmail && !empty($order['guest_email'])) {
-        $buyerEmail = $order['guest_email'];
-    }
-
-    if (!$buyerEmail && !empty($order['user_id'])) {
-        $buyer = $this->usersModel->getUser((int)$order['user_id']);
-        $this->paymentLog("Buyer lookup", $buyer);
-        $buyerEmail = $buyer['email'] ?? null;
-    }
-
-    $this->paymentLog("EMAIL FINAL (comprador del pedido)", ['email' => $buyerEmail, 'user_id' => $order['user_id'] ?? null]);
-
-    $emailSent = false;
-
-    if ($buyerEmail) {
-        if ($paidViaWallet) {
-            $emailSent = $this->sendPaymentEmailWalletPaid($buyerEmail, $order);
-        } elseif ($paymentLinkUrl) {
-            $emailSent = $this->sendPaymentEmail($buyerEmail, $order, $paymentLinkUrl);
-        } elseif (!$isGuestOrder) {
-            $emailSent = $this->sendInsufficientWalletEmail($buyerEmail, $order, $walletErrorDetail);
-        } else {
-            $emailSent = $this->sendPaymentEmailConfirmOnly($buyerEmail, $order, $squareErrorDetail);
+        if (!$this->orderModel->confirmOrder($orderId, (int) $order['restaurant_id'])) {
+            Router::$response->json(['message' => 'El estado cambió. Actualiza el pedido.'], 409); return;
         }
-    } else {
-        $this->paymentLog("NO HAY EMAIL PARA ENVIAR");
+        if (($order['order_type'] ?? '') === 'delivery') $this->dispatchDeliveryDrivers($orderId, $order);
+        Router::$response->json(['message' => 'Pedido confirmado. No se realizó un nuevo cobro.', 'data' => $this->orderModel->getById($orderId)], 200);
     }
-
-    // El pedido ya está confirmado en BD. Si Square falló, no devolver 500 para no desloguear al usuario.
-    if (!$paymentLinkUrl) {
-        $this->paymentLog("WARN: link de pago no generado", $squareErrorDetail);
-    }
-
-    $this->paymentLog("EMAIL SENT RESULT", $emailSent);
-
-    Router::$response->json([
-        "message" => "Pedido confirmado",
-        "paid_via_wallet" => $paidViaWallet,
-        "payment_link_sent" => (bool)$paymentLinkUrl,
-        "detail" => (!$paymentLinkUrl && !$paidViaWallet) ? ($walletErrorDetail ?? $squareErrorDetail ?? 'Pago pendiente') : null,
-        "data" => $this->orderModel->getById($orderId)
-    ], 200);
-}
 
 /**
  * Reintenta el cobro por wallet de un pedido confirmado (el comprador recargo y quiere reintentar).
  */
 public function retryWalletPayment($orderId)
 {
+    $userId = (int) (Router::$request->user->id ?? 0);
+    if (!$userId) { Router::$response->json(['message' => 'No autenticado'], 401); return; }
     try {
-        $orderId = (int) $orderId;
-        $userId = Router::$request->user->id ?? null;
-        if (!$userId) {
-            Router::$response->json(["message" => "No autenticado"], 401);
-            return;
-        }
-
-        $order = $this->orderModel->getById($orderId);
-        if (!$order || (int) ($order['user_id'] ?? 0) !== (int) $userId) {
-            Router::$response->json(["message" => "Pedido no encontrado"], 404);
-            return;
-        }
-        if ($order['status'] !== 'confirmed') {
-            Router::$response->json(["message" => "Este pedido no esta esperando pago"], 400);
-            return;
-        }
-
-        $walletModel = new WalletModel();
-        $result = $walletModel->debitForPurchase($userId, (float) $order['total'], 'food_order_' . $orderId);
-        if (!$result['success']) {
-            Router::$response->json(["message" => $result['message']], 400);
-            return;
-        }
-
-        $this->orderModel->markAsPaid($orderId);
-        $receiptModel = new ReceiptModel();
-        $receiptModel->createAndNotify(
-            $userId,
-            'food_order',
-            $orderId,
-            (float) $order['total'],
-            'wallet',
-            'Pedido de comida #' . $orderId
-        );
-
-        Router::$response->json([
-            "message" => "Pago realizado con wallet",
-            "new_balance" => $result['new_balance']
-        ], 200);
+        $result = (new \App\Services\WalletCheckout())->run($userId, 'food-existing', (string) (int) $orderId, ['order' => (int) $orderId], function () use ($orderId, $userId) {
+            $db = \App\Configs\Database::getInstance()->getConnection();
+            $stmt = $db->prepare('SELECT * FROM food_orders WHERE id = ? AND user_id = ? FOR UPDATE');
+            $stmt->execute([(int) $orderId, $userId]);
+            $order = $stmt->fetch(\PDO::FETCH_ASSOC);
+            if (!$order) throw new \DomainException('Pedido no encontrado.');
+            $stmt = $db->prepare('SELECT order_id FROM food_wallet_payments WHERE order_id = ?');
+            $stmt->execute([(int) $orderId]);
+            if ($stmt->fetchColumn() || $order['status'] === 'paid') return ['alreadyPaid' => true, 'message' => 'El pedido ya fue pagado.'];
+            if ($order['status'] !== 'confirmed' || $order['currency'] !== 'USD') throw new \DomainException('Este pedido requiere revisión antes de pagarlo.');
+            if (!empty($order['payment_link_url']) || !empty($order['square_payment_link_id'])) throw new \DomainException('Pedido con pago externo anterior: requiere conciliación, no se cobrará nuevamente.');
+            $amount = (float) \App\Services\UsdMoney::decimal(\App\Services\UsdMoney::cents($order['total']));
+            $debit = (new WalletModel())->debitForPurchase($userId, $amount, 'food_order_' . (int) $orderId);
+            if (!$debit['success']) throw new \DomainException($debit['message']);
+            $restaurant = $this->restaurantModel->getRestaurantById((int) $order['restaurant_id']);
+            if (!$restaurant) throw new \RuntimeException('Restaurante no disponible');
+            (new \App\Services\CommerceSettlement())->hold('food_order_' . (int) $orderId, $debit['transaction_id'], (int) $restaurant['user_id']);
+            if (!$this->orderModel->markAsPaid((int) $orderId)) throw new \RuntimeException('No se pudo registrar el pago.');
+            $stmt = $db->prepare('INSERT INTO food_wallet_payments (order_id, user_id, amount) VALUES (?, ?, ?)');
+            $stmt->execute([(int) $orderId, $userId, $amount]);
+            return ['message' => 'Pago realizado con Wallet.', 'new_balance' => $debit['new_balance']];
+        });
+        Router::$response->json($result, 200);
     } catch (\Throwable $e) {
-        error_log("OrderController retryWalletPayment: " . $e->getMessage());
-        Router::$response->json(["message" => "Error al procesar el pago"], 500);
+        error_log('Food retry failed: ' . $e->getMessage());
+        Router::$response->json(['message' => $e instanceof \DomainException ? $e->getMessage() : 'No se completó el pago. Puedes reintentar.'], $e instanceof \DomainException ? 409 : 503);
     }
 }
 
-/**
- * Pedidos confirmados del comprador logueado que todavia estan esperando pago.
- */
 public function getMyPendingPayment()
 {
     $userId = Router::$request->user->id ?? null;
@@ -637,7 +351,7 @@ private function sendPaymentEmailConfirmOnly(string $to, array $order, ?string $
 
     $body = "Hola,\n\n";
     $body .= "Tu pedido #{$order['id']} ha sido confirmado por el restaurante.\n\n";
-    $body .= "Total: \${$total} " . ($order['currency'] ?? 'ARS') . "\n\n";
+    $body .= "Total: \${$total} " . ($order['currency'] ?? 'USD') . "\n\n";
     $body .= "No pudimos generar el link de pago en este momento. El restaurante te contactará para indicarte cómo completar el pago.\n\n";
     $body .= "Gracias por usar Tuani Eats.";
 
@@ -653,7 +367,7 @@ private function sendPaymentEmail(string $to, array $order, string $paymentUrl):
 
     $body = "Hola,\n\n";
     $body .= "Tu pedido #{$order['id']} ha sido confirmado.\n\n";
-    $body .= "Total: \${$total} " . ($order['currency'] ?? 'ARS') . "\n\n";
+    $body .= "Total: \${$total} " . ($order['currency'] ?? 'USD') . "\n\n";
     $body .= "Pagar aquí:\n$paymentUrl\n\n";
     $body .= "Gracias por usar Tuani Eats.";
 

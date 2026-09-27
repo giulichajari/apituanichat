@@ -257,23 +257,14 @@ public function getTotalActiveStatuses(): int
     /**
      * Eliminar un estado
      */
-    public function deleteStatus(int $statusId): bool
+    public function deleteStatus(int $statusId, int $userId): bool
     {
-        try {
-            // Verificar que el estado pertenezca al usuario
-            $stmt = $this->db->prepare("
-                DELETE FROM statuses 
-                WHERE id = :status_id 
-            ");
-
-            return $stmt->execute([
-                ':status_id' => $statusId,
-                
-            ]);$this->logError($stmt);
-        } catch (PDOException $e) {
-            error_log("DeleteStatus ERROR: " . $e->getMessage());
+        if ($statusId < 1 || $userId < 1) {
             return false;
         }
+        $stmt = $this->db->prepare('DELETE FROM statuses WHERE id = :status_id AND user_id = :user_id');
+        $stmt->execute([':status_id' => $statusId, ':user_id' => $userId]);
+        return $stmt->rowCount() === 1;
     }
 private function logError(string $message): void
 {
@@ -362,7 +353,7 @@ private function logError(string $message): void
     /**
      * Obtener estadísticas de estados
      */
-    public function getStatusStats(int $userId = null): array
+    public function getStatusStats(?int $userId = null): array
     {
         try {
             $whereClause = $userId ? "WHERE s.user_id = :user_id" : "";

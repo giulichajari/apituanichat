@@ -48,16 +48,19 @@ class SquareWebhookController
         $rawBody = file_get_contents('php://input');
         $payload = json_decode($rawBody, true);
 
-        // Validar firma si está configurada
-        $signatureKey = $_ENV['SQUARE_WEBHOOK_SIGNATURE_KEY'] ?? '';
-        $notificationUrl = $_ENV['SQUARE_WEBHOOK_NOTIFICATION_URL'] ?? '';
+        // Fail closed: no payment mutation without the configured Square signature.
+        $signatureKey = trim((string) ($_ENV['SQUARE_WEBHOOK_SIGNATURE_KEY'] ?? ''));
+        $notificationUrl = trim((string) ($_ENV['SQUARE_WEBHOOK_NOTIFICATION_URL'] ?? ''));
         $signature = $_SERVER['HTTP_X_SQUARE_HMACSHA256_SIGNATURE'] ?? '';
-
-        if ($signatureKey && $notificationUrl && $signature) {
-            if (!$this->verifySignature($rawBody, $signature, $signatureKey, $notificationUrl)) {
-                Router::$response->status(403)->json(['error' => 'Invalid signature']);
-                return;
-            }
+        if ($signatureKey === '' || $notificationUrl === '') {
+            error_log('Square webhook signature configuration missing');
+            Router::$response->status(503)->json(['error' => 'Webhook temporarily unavailable']);
+            return;
+        }
+        if (!is_string($signature) || $signature === '' || !is_string($rawBody)
+            || !$this->verifySignature($rawBody, $signature, $signatureKey, $notificationUrl)) {
+            Router::$response->status(403)->json(['error' => 'Invalid signature']);
+            return;
         }
 
         if (!$payload) {

@@ -70,7 +70,7 @@ class DeviceTokenController
             return;
         }
 
-        $ok = $this->deviceTokenModel->deactivateToken($fcmToken);
+        $ok = $this->deviceTokenModel->deactivateTokenForUser((int)$userId, $fcmToken);
 
         Router::$response->status(200)->json([
             "message" => $ok ? "Token desactivado" : "No se pudo desactivar el token"

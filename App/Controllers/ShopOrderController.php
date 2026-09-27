@@ -51,7 +51,7 @@ class ShopOrderController
             return;
         }
 
-        $result = $this->model->checkout($userId, $productId, $quantity, $envioTipo, $deliveryAddress, $deliveryLat, $deliveryLng);
+        $result = $this->model->checkout($userId, $productId, $quantity, $envioTipo, $deliveryAddress, $deliveryLat, $deliveryLng, (string) ($_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? '')); 
 
         if (!$result['success']) {
             Router::$response->status(400)->json(["message" => $result['message']]);
@@ -60,9 +60,9 @@ class ShopOrderController
 
         $orderId = (int) $result['order_id'];
 
-        if ($envioTipo === 'local') {
+        if (empty($result['replayed']) && $envioTipo === 'local') {
             $this->dispatchLocalDelivery($orderId, $result, $deliveryAddress, $deliveryLat, $deliveryLng);
-        } else {
+        } elseif (empty($result['replayed'])) {
             $this->notifyAdminNonLocalOrder($orderId, $envioTipo, $result, $deliveryAddress);
         }
 

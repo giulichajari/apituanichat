@@ -21,48 +21,32 @@ class StatusController
     public function uploadStatus()
     {
         try {
-            // El usuario ya está autenticado por el middleware
-            $userId = Router::$request->user->id;
-
-            // Verificar si se ha subido un archivo
-            if (!isset($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) {
-                Router::$response->status(400)->send([
-                    "error" => "No se ha subido ningún archivo"
-                ]);
+            $userId = Router::$request->user->id ?? null;
+            if (!$userId) {
+                Router::$response->status(401)->send(['error'=>'No autenticado']);
+                return;
             }
-
-            $file = $_FILES['file'];
+            $file = $_FILES['file'] ?? [];
+            try {
+                $media = \App\Services\UploadedMedia::validate($file, true);
+            } catch (\InvalidArgumentException $e) {
+                Router::$response->status(400)->send(['error'=>$e->getMessage()]);
+                return;
+            }
             $textContent = $_POST['text'] ?? '';
-
-            // Validar tipo de archivo
-            $allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'video/mp4', 'video/quicktime'];
-            if (!in_array($file['type'], $allowedTypes)) {
-                Router::$response->status(400)->send([
-                    "error" => "Tipo de archivo no permitido. Solo se permiten imágenes y videos."
-                ]);
+            if (!is_string($textContent) || strlen($textContent) > 10000) {
+                Router::$response->status(400)->send(['error'=>'Texto de estado inválido']);
+                return;
             }
-
-            // Validar tamaño (máximo 50MB)
-            $maxSize = 50 * 1024 * 1024; // 50MB
-            if ($file['size'] > $maxSize) {
-                Router::$response->status(400)->send([
-                    "error" => "El archivo es demasiado grande. El tamaño máximo es 50MB."
-                ]);
-            }
-
-            // Determinar tipo (image o video)
-            $fileType = strpos($file['type'], 'image/') === 0 ? 'image' : 'video';
+            $fileType = $media['type'];
 
             // Crear directorio de uploads si no existe
             $uploadDir = __DIR__ . '/../../public/uploads/statuses/';
             if (!is_dir($uploadDir)) {
-                mkdir($uploadDir, 0777, true);
+                mkdir($uploadDir, 0755, true);
             }
 
-            // Generar nombre único
-            $fileName = uniqid('status_', true) . '_' . time();
-            $fileExt = pathinfo($file['name'], PATHINFO_EXTENSION);
-            $fullFileName = $fileName . '.' . $fileExt;
+            $fullFileName = $media['filename'];
             $filePath = $uploadDir . $fullFileName;
 
             // Mover archivo
@@ -70,6 +54,7 @@ class StatusController
                 Router::$response->status(500)->send([
                     "error" => "Error al guardar el archivo en el servidor"
                 ]);
+                return;
             }
 
             // URL accesible (evitar localhost en VPS).
@@ -91,9 +76,11 @@ class StatusController
             $statusId = $this->statusModel->createStatus($userId, $fileType, $fileUrl, $textContent);
 
             if (!$statusId) {
+                @unlink($filePath);
                 Router::$response->status(500)->send([
                     "error" => "Error al crear el estado en la base de datos"
                 ]);
+                return;
             }
 
             // Obtener el estado recién creado
@@ -107,7 +94,7 @@ class StatusController
 
         } catch (Exception $e) {
             Router::$response->status(500)->send([
-                "error" => "Error interno del servidor: " . $e->getMessage()
+                "error" => "Error interno del servidor"
             ]);
         }
     }
@@ -141,7 +128,7 @@ class StatusController
 
         } catch (Exception $e) {
             Router::$response->status(500)->send([
-                "error" => "Error interno del servidor: " . $e->getMessage()
+                "error" => "Error interno del servidor"
             ]);
         }
     }
@@ -163,7 +150,7 @@ class StatusController
 
         } catch (Exception $e) {
             Router::$response->status(500)->send([
-                "error" => "Error interno del servidor: " . $e->getMessage()
+                "error" => "Error interno del servidor"
             ]);
         }
     }
@@ -192,7 +179,7 @@ class StatusController
 
         } catch (Exception $e) {
             Router::$response->status(500)->send([
-                "error" => "Error interno del servidor: " . $e->getMessage()
+                "error" => "Error interno del servidor"
             ]);
         }
     }
@@ -200,46 +187,29 @@ class StatusController
     /**
      * Eliminar un estado
      */
-    public function deleteStatus()
-{
-    try {
-
-      $statusId = $_SERVER['REQUEST_URI'];
-$statusId = explode('/', trim($statusId, '/'));
-$statusId = end($statusId);
-
-
-        if (empty($statusId)) {
-            Router::$response->status(400)->send([
-                "error" => "ID de estado no especificado"
-            ]);
+    public function deleteStatus($routeId = null)
+    {
+        $userId = filter_var(Router::$request->user->id ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if (!$userId) {
+            Router::$response->status(401)->send(['error' => 'No autenticado']);
             return;
         }
-
-        $success = $this->statusModel->deleteStatus( $statusId);
-
-        if (!$success) {
-            Router::$response->status(404)->send([
-                "error" => "Estado no encontrado o no tienes permisos para eliminarlo"
-            ]);
+        $statusId = filter_var(Router::$request->params->id ?? $routeId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if (!$statusId) {
+            Router::$response->status(400)->send(['error' => 'ID de estado inválido']);
             return;
         }
-
-        Router::$response->send([
-            "success" => true,
-            "message" => $statusId
-        ]);
-
-    } catch (Throwable $e) {
-
-        error_log($e->getMessage());
-
-        Router::$response->status(500)->send([
-            "error" => "Error interno del servidor"
-        ]);
+        try {
+            if (!$this->statusModel->deleteStatus($statusId, $userId)) {
+                Router::$response->status(404)->send(['error' => 'Estado no encontrado o no tienes permisos para eliminarlo']);
+                return;
+            }
+            Router::$response->send(['success' => true, 'message' => (string)$statusId]);
+        } catch (\Throwable $e) {
+            error_log('Status delete failed: ' . get_class($e));
+            Router::$response->status(500)->send(['error' => 'Error interno del servidor']);
+        }
     }
-}
-
 
     /**
      * Obtener un estado específico
@@ -271,7 +241,7 @@ $statusId = end($statusId);
 
         } catch (Exception $e) {
             Router::$response->status(500)->send([
-                "error" => "Error interno del servidor: " . $e->getMessage()
+                "error" => "Error interno del servidor"
             ]);
         }
     }
